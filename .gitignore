@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Local SQLite artifacts if ever created inside the repo during manual testing
+*.db
+*.db-shm
+*.db-wal
+*.sock
+
+# Logs
+*.log
+
+# OS
+.DS_Store

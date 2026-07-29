@@ -1,0 +1,12 @@
+{
+  "name": "fleetd",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "doctor": "bun run bin/fleetd-doctor.ts"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}
