@@ -5,7 +5,7 @@ belakang (`fleetd`) memegang seluruh logika dan penyimpanan untuk beberapa
 bot sekaligus, lepas dari sesi Claude Code mana pun — sehingga bot tetap
 hidup walau sesi di-reset, di-`/clear`, atau crash.
 
-Arsitektur lengkapnya (tiga komponen: `fleetd`, `mirza-cc`, `cc-plugin`)
+Arsitektur lengkapnya (tiga komponen: `fleetd`, `bot-cc`, `cc-plugin`)
 didesain di repo `mirza-marketplace`
 (`docs/superpowers/specs/2026-07-27-fleet-harness-rebuild-design.md`) — README
 ini sengaja tidak menduplikasinya, hanya mendokumentasikan apa yang **sudah
@@ -32,7 +32,7 @@ sama sekali**. Yang sudah berjalan:
   yang ada, dan kesiapan kedua database.
 
 Yang **belum** ada (menyusul di tahap berikutnya): poller Telegram, PTY
-`mirza-cc`, plugin Claude Code, handoff/delegasi antar-bot.
+`bot-cc`, plugin Claude Code, handoff/delegasi antar-bot.
 
 ## Instalasi
 
