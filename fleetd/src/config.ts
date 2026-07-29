@@ -2,12 +2,12 @@ import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { configPath } from "./paths";
 
-export const BotConfigSchema = z.object({
+export const BotConfigSchema = z.strictObject({
   home: z.string().min(1),
   token: z.string().min(1),
 });
 
-export const ConfigSchema = z.object({
+export const ConfigSchema = z.strictObject({
   allowFrom: z.array(z.string()),
   bots: z.record(z.string(), BotConfigSchema),
 });

@@ -39,9 +39,19 @@ describe("fleetd end-to-end", () => {
   test("doctor reports 1 registered bot and all fleet tables", async () => {
     const sockPath = join(home, "fleetd.sock");
     let waited = 0;
-    while (!existsSync(sockPath) && waited < 5000) {
+    while (!existsSync(sockPath) && waited < 3000) {
       await Bun.sleep(100);
       waited += 100;
+    }
+    if (!existsSync(sockPath)) {
+      const [stdout, stderr] = await Promise.all([
+        new Response(fleetdProc.stdout).text(),
+        new Response(fleetdProc.stderr).text(),
+      ]);
+      throw new Error(
+        `fleetd socket never appeared at ${sockPath} after ${waited}ms.\n` +
+          `--- fleetd stdout ---\n${stdout}\n--- fleetd stderr ---\n${stderr}`
+      );
     }
     expect(existsSync(sockPath)).toBe(true);
 

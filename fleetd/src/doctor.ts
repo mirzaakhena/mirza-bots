@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { FLEET_TABLES } from "./db/fleet-schema";
+import { botCount } from "./config";
 import type { Config } from "./config";
 import type { DoctorReport } from "./socket/protocol";
 
@@ -22,7 +23,7 @@ export function buildDoctorReport(
   const conversationsReady = convTableRows.length === 1;
 
   return {
-    botCount: Object.keys(config.bots).length,
+    botCount: botCount(config),
     socketPath,
     fleetTables: [...fleetTables],
     conversationsReady,

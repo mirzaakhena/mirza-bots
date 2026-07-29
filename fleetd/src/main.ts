@@ -5,8 +5,9 @@ import { openConversationsDb } from "./db/conversations-schema";
 import { startSocketServer } from "./socket/server";
 import { buildDoctorReport } from "./doctor";
 import type { Request, Response } from "./socket/protocol";
+import pkg from "../package.json";
 
-const VERSION = "0.1.0";
+const VERSION = pkg.version;
 
 export function main(): void {
   ensureStateDirs();

@@ -49,4 +49,16 @@ describe("config", () => {
   test("rejects a missing file", () => {
     expect(() => loadConfig(join(tmp, "does-not-exist.json"))).toThrow(ConfigError);
   });
+
+  test("rejects a config with an unrecognized top-level key", () => {
+    writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        allowFrom: ["123456"],
+        bots: { "bot-01": { home: "/Users/mirza/Workspace/bot-01", token: "abc:def" } },
+        extraJunkField: true,
+      })
+    );
+    expect(() => loadConfig(cfgPath)).toThrow(ConfigError);
+  });
 });

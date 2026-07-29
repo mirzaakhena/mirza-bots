@@ -17,6 +17,7 @@ function askDoctor(sockPath: string): Promise<unknown> {
       }
     });
     client.on("error", reject);
+    client.on("close", () => reject(new Error("connection closed before a response was received")));
   });
 }
 
