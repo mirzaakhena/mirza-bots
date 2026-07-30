@@ -184,11 +184,20 @@ export function main(): void {
         const bot = bots.get(conn.boundBot);
         if (!bot) return { ok: false, error: "unknown_bot" };
         const replyMarkup = req.buttons ? buildInlineKeyboard(req.buttons) : undefined;
-        await bot.api.sendMessage(
-          chatId,
-          req.text,
-          replyMarkup ? { reply_markup: replyMarkup } : undefined
-        );
+        // Telegram can reject a send for reasons entirely outside our control (429
+        // rate limit, bot blocked by the user, text over 4096 chars, malformed
+        // request). Without this catch the rejection escapes the socket server's
+        // data handler and the client waits forever for a response line that never
+        // comes -- so always answer, even when the send failed.
+        try {
+          await bot.api.sendMessage(
+            chatId,
+            req.text,
+            replyMarkup ? { reply_markup: replyMarkup } : undefined
+          );
+        } catch (err) {
+          return { ok: false, error: `send_failed: ${err}` };
+        }
         return { ok: true };
       }
       return { ok: false, error: "unknown_type" };

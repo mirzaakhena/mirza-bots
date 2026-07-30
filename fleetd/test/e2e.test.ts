@@ -17,7 +17,13 @@ type FakeTelegram = {
   answeredCallbackIds: string[];
 };
 
-function startFakeTelegramApi(queuedUpdates: unknown[]): FakeTelegram {
+// `failSendMessageForText` makes /sendMessage answer like a real Telegram
+// rejection (HTTP 400 + ok:false) for exactly one message text, so a test can
+// prove fleetd still writes a response line instead of hanging its client.
+function startFakeTelegramApi(
+  queuedUpdates: unknown[],
+  opts: { failSendMessageForText?: string } = {}
+): FakeTelegram {
   const sentMessages: Array<{ chat_id: string; text: string; reply_markup?: unknown }> = [];
   const answeredCallbackIds: string[] = [];
   let getUpdatesCalls = 0;
@@ -50,6 +56,12 @@ function startFakeTelegramApi(queuedUpdates: unknown[]): FakeTelegram {
           text: string;
           reply_markup?: unknown;
         };
+        if (opts.failSendMessageForText !== undefined && body.text === opts.failSendMessageForText) {
+          return Response.json(
+            { ok: false, error_code: 400, description: "Bad Request: chat not found" },
+            { status: 400 }
+          );
+        }
         sentMessages.push({
           chat_id: String(body.chat_id),
           text: body.text,
@@ -95,6 +107,30 @@ async function connectToFleetd(sockPath: string): Promise<{
   });
   await new Promise<void>((resolve) => client.on("connect", resolve));
   return { client, lines };
+}
+
+// Polls conversations.db directly (no socket query API yet) until `term` shows up
+// or the budget runs out; returns how many matches were found.
+async function waitForStoredMessage(convDbPath: string, term: string, budgetMs = 8000) {
+  const { openConversationsDb, searchMessages } = await import("../src/db/conversations-schema");
+  let count = 0;
+  for (let waited = 0; waited < budgetMs && count === 0; waited += 100) {
+    await Bun.sleep(100);
+    if (!existsSync(convDbPath)) continue;
+    const db = openConversationsDb(convDbPath);
+    count = searchMessages(db, term).length;
+    db.close();
+  }
+  return count;
+}
+
+// Waits for the socket server to have written at least `n` response lines --
+// the assertion that a request was ANSWERED rather than silently dropped.
+async function waitForLines(lines: string[], n: number, budgetMs = 5000) {
+  for (let waited = 0; waited < budgetMs && lines.length < n; waited += 50) {
+    await Bun.sleep(50);
+  }
+  return lines.length;
 }
 
 describe("fleetd end-to-end", () => {
@@ -184,6 +220,10 @@ describe("fleetd Tahap 2 end-to-end: poll, store, push, reply", () => {
     },
   };
 
+  // The one text the fake Telegram API is configured to reject, used by the
+  // send-failure test below.
+  const REJECTED_TEXT = "teks yang ditolak Telegram";
+
   let home: string;
   let fake: FakeTelegram;
   let fleetdProc: Bun.Subprocess;
@@ -200,7 +240,7 @@ describe("fleetd Tahap 2 end-to-end: poll, store, push, reply", () => {
         bots: { "bot-01": { home: "/tmp/bot-01", token: "fake:token" } },
       })
     );
-    fake = startFakeTelegramApi([queuedUpdate]);
+    fake = startFakeTelegramApi([queuedUpdate], { failSendMessageForText: REJECTED_TEXT });
     fleetdProc = Bun.spawn(["bun", "run", "src/main.ts"], {
       cwd: root,
       env: {
@@ -224,16 +264,7 @@ describe("fleetd Tahap 2 end-to-end: poll, store, push, reply", () => {
     // the socket isn't wired for arbitrary queries yet, so poll the file directly
     // for a bounded time instead of sleeping a fixed guess).
     const convDbPath = join(home, "conversations.db");
-    const { openConversationsDb, searchMessages } = await import("../src/db/conversations-schema");
-    let stored = false;
-    for (let waited = 0; waited < 8000 && !stored; waited += 100) {
-      await Bun.sleep(100);
-      if (!existsSync(convDbPath)) continue;
-      const db = openConversationsDb(convDbPath);
-      stored = searchMessages(db, "halo").length > 0;
-      db.close();
-    }
-    expect(stored).toBe(true);
+    expect(await waitForStoredMessage(convDbPath, "halo")).toBeGreaterThan(0);
 
     // Trigger a reply over the socket, identified as bot-01 via hello (matching
     // config.json's bots["bot-01"].home).
@@ -257,6 +288,37 @@ describe("fleetd Tahap 2 end-to-end: poll, store, push, reply", () => {
     client.end();
     // Timeout well above the wait budgets below so a genuine regression fails on a
     // readable expect(), not on bun's default 5s test timeout.
+  }, 20000);
+
+  test("a reply Telegram rejects still gets a response line back -- the client never hangs", async () => {
+    // The reply target comes from the polled update, so make sure it has landed
+    // even when this test runs alone under `bun test -t ...`.
+    const convDbPath = join(home, "conversations.db");
+    expect(await waitForStoredMessage(convDbPath, "halo")).toBeGreaterThan(0);
+
+    const sockPath = join(home, "fleetd.sock");
+    const { encode } = await import("../src/socket/protocol");
+    const { client, lines } = await connectToFleetd(sockPath);
+
+    client.write(encode({ type: "hello", cwd: "/tmp/bot-01" }));
+    expect(await waitForLines(lines, 1)).toBeGreaterThanOrEqual(1);
+    expect(JSON.parse(lines[0]!)).toEqual({ ok: true, bot: "bot-01" });
+
+    // The fake API answers this exact text with HTTP 400 + ok:false, which grammy
+    // surfaces as a thrown GrammyError inside the reply handler.
+    client.write(encode({ type: "reply", text: REJECTED_TEXT }));
+    expect(await waitForLines(lines, 2)).toBe(2);
+
+    const res = JSON.parse(lines[1]!);
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("send_failed");
+
+    // The connection is still usable afterwards -- the failure did not wedge it.
+    client.write(encode({ type: "reply", text: "balasan setelah gagal" }));
+    expect(await waitForLines(lines, 3)).toBe(3);
+    expect(JSON.parse(lines[2]!)).toEqual({ ok: true });
+
+    client.end();
   }, 20000);
 });
 
@@ -323,15 +385,7 @@ describe("fleetd Tahap 2 end-to-end: buttons", () => {
 
     // The press was stored as a message (searchable by its callback data).
     const convDbPath = join(home, "conversations.db");
-    const { openConversationsDb, searchMessages } = await import("../src/db/conversations-schema");
-    let storedCount = 0;
-    for (let waited = 0; waited < 4000 && storedCount === 0; waited += 100) {
-      await Bun.sleep(100);
-      const db = openConversationsDb(convDbPath);
-      storedCount = searchMessages(db, "confirm_yes").length;
-      db.close();
-    }
-    expect(storedCount).toBe(1);
+    expect(await waitForStoredMessage(convDbPath, "confirm_yes", 4000)).toBe(1);
 
     // Now send a reply WITH buttons and confirm the fake API received the right
     // inline_keyboard shape.
