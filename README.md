@@ -203,6 +203,24 @@ menggantung. Sambungkan ulang lewat `/mcp` di Claude Code (koneksi soket akan
 tersambung ulang; flag channel tidak perlu diulang karena itu properti sesi,
 bukan koneksi MCP).
 
+### Protokol giliran ringkas (terse-turn)
+
+Sesi yang dipicu pesan Telegram menerima pesannya dengan awalan
+`[protocol: terse-turn]`. Artinya bagi AI: jawab lewat tool `reply` saja,
+lalu tutup giliran dengan satu titik — jangan menulis prosa di transkrip.
+Alasannya: user yang memakai Telegram memang sedang jauh dari terminal dan
+tidak membaca transkrip itu, sementara isinya tetap dibayar token dan tetap
+menumpuk di context window sesi.
+
+Protokol lengkapnya tinggal di field `instructions` MCP milik `cc-plugin`
+(dibayar sekali per sesi), bukan diulang di tiap pesan. Aturan ini **hanya**
+berlaku untuk giliran yang datang dari Telegram — giliran yang kamu ketik
+langsung di terminal dijawab lengkap seperti biasa.
+
+Ini optimasi yang gagal dengan aman: kalau AI mengabaikannya, yang terjadi
+cuma kembali ke perilaku lama (prosa panjang di transkrip). Tidak ada jalur
+yang putus.
+
 ## Testing
 
 ```bash
