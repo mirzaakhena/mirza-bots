@@ -147,13 +147,13 @@ Syaratnya: `fleetd` sudah jalan lebih dulu, dan identitas yang dikirim plugin
 lewat `hello` sama dengan `home` salah satu bot di `config.json`. Kalau tidak
 cocok, `hello` dijawab `unknown_cwd` dan plugin gagal start dengan pesan itu.
 
-> ⚠️ **Belum terverifikasi di lapangan.** Identitas itu sekarang diambil dari
-> `process.cwd()` (`cc-plugin/src/main.ts`). Dokumentasi Claude Code tidak
-> menjamin `cwd` proses MCP server sama dengan folder proyek sesi — malah
-> menyarankan memakai env var `CLAUDE_PROJECT_DIR` supaya tidak bergantung pada
-> working directory. Kalau saat tes Telegram live `hello` dijawab
-> `unknown_cwd`, inilah tersangka pertamanya, dan perbaikannya satu baris:
-> `process.env.CLAUDE_PROJECT_DIR ?? process.cwd()`.
+Identitas itu diambil lewat `resolveIdentityCwd()` (`cc-plugin/src/main.ts`):
+mengutamakan env var `CLAUDE_PROJECT_DIR` (yang menurut dokumentasi Claude Code
+memang disetel untuk MCP server supaya tidak perlu bergantung pada working
+directory proses), baru jatuh ke `process.cwd()` kalau env var itu tidak ada
+(mis. saat dites manual di luar Claude Code). Tetap **belum diverifikasi di
+lapangan** — kalau saat tes Telegram live `hello` masih dijawab `unknown_cwd`,
+inilah tempat pertama yang perlu dicek.
 
 Kalau `fleetd` di-restart saat sesi hidup, koneksi plugin ikut mati: `reply`
 akan langsung gagal dengan error "connection lost"/"not connected" — bukan
