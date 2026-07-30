@@ -5,7 +5,7 @@
   "mcpServers": {
     "cc-plugin": {
       "command": "bun",
-      "args": ["run", "src/main.ts"]
+      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/src/main.ts"]
     }
   }
 }

@@ -110,3 +110,73 @@ describe("FleetdClient", () => {
     client.close();
   });
 });
+
+// Every await below is bounded by withTimeout: the bug these tests cover is a
+// promise that NEVER settles, so "it settled at all" is the actual assertion --
+// leaning on bun's default test timeout would report it as a timeout, not a bug.
+function withTimeout<T>(promise: Promise<T>, ms = 1000): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`did not settle within ${ms}ms (it hung)`)), ms)
+    ),
+  ]);
+}
+
+describe("FleetdClient when fleetd goes away", () => {
+  test("an in-flight reply rejects when fleetd drops the connection instead of hanging forever", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "fleetd-client-test-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    let capturedConn: net.Socket | undefined;
+    // Answers hello, then deliberately never answers the reply -- it dies instead,
+    // which is exactly what a fleetd restart looks like to the plugin.
+    server = startFakeFleetd(sockPath, (line, conn) => {
+      capturedConn = conn;
+      const req = JSON.parse(line);
+      if (req.type === "hello") conn.write(JSON.stringify({ ok: true, bot: "bot-01" }) + "\n");
+      if (req.type === "reply") conn.destroy();
+    });
+
+    const client = new FleetdClient();
+    await withTimeout(client.connect(sockPath, "/fake/cwd"));
+
+    const inFlight = client.reply("balasan yang tidak akan pernah dijawab");
+    await expect(withTimeout(inFlight)).rejects.toThrow(/connection lost/i);
+
+    expect(capturedConn).toBeDefined();
+    client.close();
+  });
+
+  test("a reply issued after the connection died fails fast with not connected", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "fleetd-client-test-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    let capturedConn: net.Socket | undefined;
+    server = startFakeFleetd(sockPath, (line, conn) => {
+      capturedConn = conn;
+      const req = JSON.parse(line);
+      if (req.type === "hello") conn.write(JSON.stringify({ ok: true, bot: "bot-01" }) + "\n");
+    });
+
+    const client = new FleetdClient();
+    await withTimeout(client.connect(sockPath, "/fake/cwd"));
+
+    // fleetd disappears while the plugin is idle.
+    capturedConn!.destroy();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The dead socket must have been dropped, so this fails immediately rather
+    // than writing into a socket nobody is reading and waiting forever.
+    await expect(withTimeout(client.reply("halo?"))).rejects.toThrow(/not connected/);
+    client.close();
+  });
+
+  test("connect rejects when the socket path does not exist", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "fleetd-client-test-"));
+    const sockPath = join(tmp, "nothing-here.sock");
+
+    const client = new FleetdClient();
+    // No pending request exists yet at this point, so this must be rejected by the
+    // connect promise directly -- not swallowed by the lost-connection path.
+    await expect(withTimeout(client.connect(sockPath, "/fake/cwd"))).rejects.toThrow();
+  });
+});
