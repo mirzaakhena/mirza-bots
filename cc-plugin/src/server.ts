@@ -2,6 +2,24 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { FleetdClient } from "./fleetd-client";
 
+// The single copy of this contract (K-15): the marker the push forwarder stamps
+// onto Telegram-triggered turns, and the marker SERVER_INSTRUCTIONS teaches the
+// AI to recognize. Two literals would drift apart silently -- the AI would keep
+// looking for a marker that no longer arrives, and nothing anywhere would error.
+export const TERSE_TURN_MARKER = "[protocol: terse-turn]";
+
+// Lives in the MCP server's `instructions`, which Claude Code holds for the
+// whole session: paid once, not once per turn. English on purpose (K-16 -- this
+// is a machine-to-AI instruction, not a message to the user); the AI's `reply`
+// content still follows the user's own language.
+export const SERVER_INSTRUCTIONS = [
+  "Messages from Telegram arrive in this session as notifications. The person you are talking to reads Telegram, not this transcript: the ONLY thing that reaches them is a `reply` tool call. Your transcript output reaches nobody.",
+  "",
+  `When an incoming message is prefixed with ${TERSE_TURN_MARKER}, do not write prose in that turn. Say everything you have to say through the \`reply\` tool, then end the turn with a single "." and nothing else. Never restate, summarize, or explain in the transcript what you already sent via \`reply\` -- nobody reads it, and it keeps costing tokens on every later turn of the session.`,
+  "",
+  "This applies only to turns carrying that prefix. Turns the user types directly into this terminal are ordinary turns -- answer those in full, as usual.",
+].join("\n");
+
 export function buildServer(client: FleetdClient): McpServer {
   const server = new McpServer(
     { name: "cc-plugin", version: "0.1.0" },
@@ -13,6 +31,7 @@ export function buildServer(client: FleetdClient): McpServer {
         // sees an error, the message just never arrives.
         experimental: { "claude/channel": {} },
       },
+      instructions: SERVER_INSTRUCTIONS,
     }
   );
 

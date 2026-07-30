@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { buildServer } from "../src/server";
+import { buildServer, TERSE_TURN_MARKER } from "../src/server";
 import type { FleetdClient, PushMessage } from "../src/fleetd-client";
 
 function fakeFleetdClient(overrides: Partial<FleetdClient> = {}): FleetdClient {
@@ -163,6 +163,27 @@ describe("cc-plugin MCP server", () => {
     }
     expect(received.params.meta.count).toBe("3");
     expect(received.params.meta.missing).toBe("undefined");
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("the server declares MCP instructions that name the reply tool and the terse-turn marker", async () => {
+    const client = fakeFleetdClient();
+    const server = buildServer(client);
+
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+
+    const instructions = mcpClient.getInstructions();
+
+    // The protocol lives here (once per session) instead of being re-sent with
+    // every push. If this is ever dropped, the per-turn marker becomes a
+    // meaningless string the AI has no definition for.
+    expect(instructions).toBeTruthy();
+    expect(instructions).toContain(TERSE_TURN_MARKER);
+    expect(instructions).toContain("reply");
 
     await mcpClient.close();
     await server.close();
