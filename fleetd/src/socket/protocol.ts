@@ -1,5 +1,8 @@
 export type DoctorRequest = { type: "doctor" };
-export type Request = DoctorRequest;
+export type HelloRequest = { type: "hello"; cwd: string };
+export type ButtonRow = Array<{ text: string; data: string }>;
+export type ReplyRequest = { type: "reply"; text: string; buttons?: ButtonRow[] };
+export type Request = DoctorRequest | HelloRequest | ReplyRequest;
 
 export type DoctorReport = {
   botCount: number;
@@ -9,7 +12,17 @@ export type DoctorReport = {
   version: string;
 };
 
-export type Response = { ok: true; report: DoctorReport } | { ok: false; error: string };
+export type PushMessage = {
+  type: "push_message";
+  text: string;
+  meta: Record<string, string>;
+};
+
+export type Response =
+  | { ok: true; report: DoctorReport }
+  | { ok: true; bot: string }
+  | { ok: true }
+  | { ok: false; error: string };
 
 export function encode(msg: unknown): string {
   return JSON.stringify(msg) + "\n";

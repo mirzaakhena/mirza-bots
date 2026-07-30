@@ -3,9 +3,16 @@ import net from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startSocketServer } from "../src/socket/server";
-import { encode } from "../src/socket/protocol";
-import type { Response } from "../src/socket/protocol";
+import { startSocketServer } from "../../src/socket/server";
+import { encode } from "../../src/socket/protocol";
+import type { Response } from "../../src/socket/protocol";
+import { ConnectionRegistry } from "../../src/socket/registry";
+import type { Config } from "../../src/config";
+
+const testConfig: Config = {
+  allowFrom: ["1"],
+  bots: { "bot-01": { home: "/fake/bot-01/home", token: "t" } },
+};
 
 let tmp: string;
 let server: ReturnType<typeof startSocketServer> | undefined;
@@ -36,16 +43,21 @@ describe("socket server", () => {
   test("responds to a known request type", async () => {
     tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
     const sockPath = join(tmp, "fleetd.sock");
-    server = startSocketServer(sockPath, () => ({
-      ok: true,
-      report: {
-        botCount: 1,
-        socketPath: sockPath,
-        fleetTables: [],
-        conversationsReady: true,
-        version: "0.1.0",
-      },
-    }));
+    server = startSocketServer(
+      sockPath,
+      testConfig,
+      () => ({
+        ok: true,
+        report: {
+          botCount: 1,
+          socketPath: sockPath,
+          fleetTables: [],
+          conversationsReady: true,
+          version: "0.1.0",
+        },
+      }),
+      new ConnectionRegistry()
+    );
 
     const line = await sendRaw(sockPath, encode({ type: "doctor" }));
     const res = JSON.parse(line) as Response;
@@ -55,16 +67,21 @@ describe("socket server", () => {
   test("malformed JSON gets a bad_request response without crashing the server", async () => {
     tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
     const sockPath = join(tmp, "fleetd.sock");
-    server = startSocketServer(sockPath, () => ({
-      ok: true,
-      report: {
-        botCount: 1,
-        socketPath: sockPath,
-        fleetTables: [],
-        conversationsReady: true,
-        version: "0.1.0",
-      },
-    }));
+    server = startSocketServer(
+      sockPath,
+      testConfig,
+      () => ({
+        ok: true,
+        report: {
+          botCount: 1,
+          socketPath: sockPath,
+          fleetTables: [],
+          conversationsReady: true,
+          version: "0.1.0",
+        },
+      }),
+      new ConnectionRegistry()
+    );
 
     const badLine = await sendRaw(sockPath, "{ not json\n");
     expect(JSON.parse(badLine)).toEqual({ ok: false, error: "bad_request" });
@@ -77,16 +94,21 @@ describe("socket server", () => {
   test("handles a request split across two separate data events", async () => {
     tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
     const sockPath = join(tmp, "fleetd.sock");
-    server = startSocketServer(sockPath, () => ({
-      ok: true,
-      report: {
-        botCount: 1,
-        socketPath: sockPath,
-        fleetTables: [],
-        conversationsReady: true,
-        version: "0.1.0",
-      },
-    }));
+    server = startSocketServer(
+      sockPath,
+      testConfig,
+      () => ({
+        ok: true,
+        report: {
+          botCount: 1,
+          socketPath: sockPath,
+          fleetTables: [],
+          conversationsReady: true,
+          version: "0.1.0",
+        },
+      }),
+      new ConnectionRegistry()
+    );
 
     const full = encode({ type: "doctor" });
     const mid = Math.floor(full.length / 2);
@@ -120,16 +142,21 @@ describe("socket server", () => {
   test("handles two requests arriving in a single data event on the same connection", async () => {
     tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
     const sockPath = join(tmp, "fleetd.sock");
-    server = startSocketServer(sockPath, () => ({
-      ok: true,
-      report: {
-        botCount: 1,
-        socketPath: sockPath,
-        fleetTables: [],
-        conversationsReady: true,
-        version: "0.1.0",
-      },
-    }));
+    server = startSocketServer(
+      sockPath,
+      testConfig,
+      () => ({
+        ok: true,
+        report: {
+          botCount: 1,
+          socketPath: sockPath,
+          fleetTables: [],
+          conversationsReady: true,
+          version: "0.1.0",
+        },
+      }),
+      new ConnectionRegistry()
+    );
 
     const twoLines = encode({ type: "doctor" }) + encode({ type: "doctor" });
 
@@ -156,5 +183,55 @@ describe("socket server", () => {
     for (const line of lines) {
       expect((JSON.parse(line) as Response).ok).toBe(true);
     }
+  });
+
+  test("hello binds a connection to the bot whose config home matches the declared cwd", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    server = startSocketServer(sockPath, testConfig, () => ({ ok: true }), new ConnectionRegistry());
+
+    const line = await sendRaw(sockPath, encode({ type: "hello", cwd: "/fake/bot-01/home" }));
+    expect(JSON.parse(line)).toEqual({ ok: true, bot: "bot-01" });
+  });
+
+  test("hello with an unrecognized cwd is rejected", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    server = startSocketServer(sockPath, testConfig, () => ({ ok: true }), new ConnectionRegistry());
+
+    const line = await sendRaw(sockPath, encode({ type: "hello", cwd: "/nowhere" }));
+    expect(JSON.parse(line)).toEqual({ ok: false, error: "unknown_cwd" });
+  });
+
+  test("a bound connection receives a push_message sent via the registry", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    const registry = new ConnectionRegistry();
+    server = startSocketServer(sockPath, testConfig, () => ({ ok: true }), registry);
+
+    const client = net.createConnection(sockPath);
+    const lines: string[] = [];
+    let buf = "";
+    client.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      let idx: number;
+      while ((idx = buf.indexOf("\n")) !== -1) {
+        lines.push(buf.slice(0, idx));
+        buf = buf.slice(idx + 1);
+      }
+    });
+    await new Promise<void>((resolve) => client.on("connect", resolve));
+
+    client.write(encode({ type: "hello", cwd: "/fake/bot-01/home" }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(JSON.parse(lines[0]!)).toEqual({ ok: true, bot: "bot-01" });
+
+    const delivered = registry.push("bot-01", { type: "push_message", text: "new message", meta: { chat_id: "1" } });
+    expect(delivered).toBe(true);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(JSON.parse(lines[1]!)).toEqual({ type: "push_message", text: "new message", meta: { chat_id: "1" } });
+
+    client.end();
   });
 });
