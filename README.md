@@ -206,7 +206,9 @@ bukan koneksi MCP).
 ### Protokol giliran ringkas (terse-turn)
 
 Sesi yang dipicu pesan Telegram menerima pesannya dengan awalan
-`[protocol: terse-turn]`. Artinya bagi AI: jawab lewat tool `reply` saja,
+`[protocol: terse-turn]` (definisi otoritatifnya adalah `TERSE_TURN_MARKER`
+di `cc-plugin/src/server.ts` — kalau nilainya berubah, dokumen ini harus
+ikut diperbarui). Artinya bagi AI: jawab lewat tool `reply` saja,
 lalu tutup giliran dengan satu titik — jangan menulis prosa di transkrip.
 Alasannya: user yang memakai Telegram memang sedang jauh dari terminal dan
 tidak membaca transkrip itu, sementara isinya tetap dibayar token dan tetap
@@ -225,7 +227,7 @@ yang putus.
 
 ```bash
 cd fleetd && bun test        # 59 test
-cd ../cc-plugin && bun test  # 16 test
+cd ../cc-plugin && bun test  # 19 test
 ```
 
 `fleetd` — mencakup validasi config, kedua skema database (termasuk
@@ -239,4 +241,6 @@ membuktikan pesan yang masuk saat tidak ada plugin tersambung tetap terkirim
 setelah plugin menyambung.
 
 `cc-plugin` — handshake `hello`, tool `reply` (dengan dan tanpa tombol),
-penerusan push, dan perilaku saat `fleetd` menghilang.
+penerusan push, perilaku saat `fleetd` menghilang, deklarasi `instructions`
+MCP, serta pembubuhan marker terse-turn pada pesan yang diteruskan (baik
+pesan biasa maupun penekanan tombol).

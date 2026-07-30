@@ -13,7 +13,7 @@ export const TERSE_TURN_MARKER = "[protocol: terse-turn]";
 // is a machine-to-AI instruction, not a message to the user); the AI's `reply`
 // content still follows the user's own language.
 export const SERVER_INSTRUCTIONS = [
-  "Messages from Telegram arrive in this session as notifications. The person you are talking to reads Telegram, not this transcript: the ONLY thing that reaches them is a `reply` tool call. Your transcript output reaches nobody.",
+  "Messages that arrive from Telegram appear in this session as notifications. The person who sent them is reading Telegram, not this transcript, so a `reply` tool call is the only thing that reaches them -- your transcript output does not.",
   "",
   `When an incoming message is prefixed with ${TERSE_TURN_MARKER}, do not write prose in that turn. Say everything you have to say through the \`reply\` tool, then end the turn with a single "." and nothing else. Never restate, summarize, or explain in the transcript what you already sent via \`reply\` -- nobody reads it, and it keeps costing tokens on every later turn of the session.`,
   "",
@@ -22,6 +22,10 @@ export const SERVER_INSTRUCTIONS = [
 
 export function buildServer(client: FleetdClient): McpServer {
   const server = new McpServer(
+    // "version" here is the MCP protocol identity of this server, not the
+    // plugin/package version -- it is deliberately independent of
+    // plugin.json / package.json (which have moved on ahead of this) and
+    // nothing reads it. Do not "fix" this to match the manifest version.
     { name: "cc-plugin", version: "0.1.0" },
     {
       capabilities: {
