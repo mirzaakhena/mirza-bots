@@ -168,9 +168,29 @@ claude plugin marketplace add /Users/mirza/Workspace/mirza-bots
 claude plugin install cc-plugin@mirza-bots
 ```
 
-Ulangi `claude plugin install cc-plugin@mirza-bots` setiap kali `cc-plugin`
-diubah — instalasi tidak otomatis mengikuti perubahan source (lihat
-`claude plugin update cc-plugin@mirza-bots` sebagai alternatif).
+### Setiap kali `cc-plugin` diubah
+
+**`claude plugin install` TIDAK cukup** — kalau plugin-nya sudah terpasang, ia
+menjawab *"already installed"* dan diam-diam tetap memakai build lama. Terbukti
+2026-07-31: perbaikan yang sudah di-commit tidak pernah sampai ke sesi sampai
+langkah di bawah dijalankan. Urutan yang benar, ketiganya:
+
+1. **Naikkan versi** di `cc-plugin/.claude-plugin/plugin.json` (dan
+   `package.json` supaya selaras). Tanpa ini, `update` tidak melihat ada yang
+   perlu diambil.
+2. **Segarkan marketplace lalu update plugin-nya:**
+
+```bash
+claude plugin marketplace update mirza-bots
+claude plugin update cc-plugin@mirza-bots
+```
+
+3. **Restart sesi Claude Code** yang memakai plugin itu — `update` sendiri
+   mengingatkan *"Restart to apply changes"*; sesi yang sedang berjalan tetap
+   menjalankan kode lama sampai dibuka ulang.
+
+Pastikan dengan `claude plugin list | grep -A 2 cc-plugin` bahwa versinya
+memang yang baru.
 
 ### Setiap sesi
 
