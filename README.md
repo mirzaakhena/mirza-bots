@@ -134,31 +134,66 @@ Contoh keluaran:
 
 ## Memasang `cc-plugin` di Claude Code
 
-`cc-plugin/.claude-plugin/plugin.json` mendaftarkan satu MCP server yang
-dijalankan dengan `bun run ${CLAUDE_PLUGIN_ROOT}/src/main.ts`.
+**Verifikasi lapangan (Task 10, 2026-07-30):** pesan masuk sampai ke `fleetd`
+dan ke proses `cc-plugin` dengan benar lewat `.mcp.json`/`--plugin-dir` biasa —
+tapi notifikasinya **tidak pernah muncul di sesi Claude Code**, tanpa error apa
+pun. Root cause: Claude Code hanya meneruskan `notifications/claude/channel`
+dari MCP server yang (a) mendeklarasikan capability `experimental: {
+"claude/channel": {} }`, DAN (b) sesi itu dijalankan dengan
+`--dangerously-load-development-channels plugin:<nama>@<marketplace>` di mana
+`<nama>@<marketplace>` menunjuk plugin yang **benar-benar terinstal**
+(`--plugin-dir` session-scoped saja TIDAK cukup — errornya `plugin not
+installed`). Sistem lama (`plugins/telegram` di `mirza-marketplace`) sudah
+memenuhi keduanya sejak awal; `cc-plugin` tadinya tidak (capability-nya
+hilang). Prosedur di bawah ini sudah teruji hidup, bukan asumsi.
 
-`${CLAUDE_PLUGIN_ROOT}` itu penting dan bukan hiasan: working directory proses
-MCP server **bukan** folder plugin-nya, jadi path relatif (`src/main.ts`) tidak
-akan ketemu. `${CLAUDE_PLUGIN_ROOT}` diganti Claude Code dengan folder tempat
-plugin itu terpasang — dokumentasi resmi menyebut variabel ini memang
-di-*expand* di dalam `command`, `args`, dan `env` sebuah MCP stdio server,
-baik ditulis inline di `plugin.json` maupun di `.mcp.json`.
+### Sekali saja: registrasi lokal
+
+`cc-plugin/src/server.ts` sudah mendeklarasikan capability yang diperlukan.
+`cc-plugin` juga perlu ada di sebuah *marketplace* supaya bisa di-`install`
+(bukan cuma dimuat sesi) — repo ini punya marketplace lokalnya sendiri di
+`.claude-plugin/marketplace.json` (tidak untuk distribusi, cuma supaya
+`claude plugin install` punya sesuatu untuk ditunjuk). Jalankan sekali:
+
+```bash
+claude plugin marketplace add /Users/mirza/Workspace/mirza-bots
+claude plugin install cc-plugin@mirza-bots
+```
+
+Ulangi `claude plugin install cc-plugin@mirza-bots` setiap kali `cc-plugin`
+diubah — instalasi tidak otomatis mengikuti perubahan source (lihat
+`claude plugin update cc-plugin@mirza-bots` sebagai alternatif).
+
+### Setiap sesi
 
 Syaratnya: `fleetd` sudah jalan lebih dulu, dan identitas yang dikirim plugin
 lewat `hello` sama dengan `home` salah satu bot di `config.json`. Kalau tidak
 cocok, `hello` dijawab `unknown_cwd` dan plugin gagal start dengan pesan itu.
-
 Identitas itu diambil lewat `resolveIdentityCwd()` (`cc-plugin/src/main.ts`):
-mengutamakan env var `CLAUDE_PROJECT_DIR` (yang menurut dokumentasi Claude Code
-memang disetel untuk MCP server supaya tidak perlu bergantung pada working
-directory proses), baru jatuh ke `process.cwd()` kalau env var itu tidak ada
-(mis. saat dites manual di luar Claude Code). Tetap **belum diverifikasi di
-lapangan** — kalau saat tes Telegram live `hello` masih dijawab `unknown_cwd`,
-inilah tempat pertama yang perlu dicek.
+mengutamakan env var `CLAUDE_PROJECT_DIR`, baru jatuh ke `process.cwd()` kalau
+env var itu tidak ada — **terverifikasi bekerja** persis dengan `home` di
+`config.json` untuk `bot-01` (`/Users/mirza/Workspace/mirza-bots`), tanpa
+masalah symlink `/var` vs `/private/var`.
+
+Buka sesi Claude Code dengan working directory **persis** `home` bot itu, dan
+flag channel menunjuk plugin yang sudah terinstal di atas:
+
+```bash
+cd /Users/mirza/Workspace/mirza-bots
+claude --dangerously-load-development-channels "plugin:cc-plugin@mirza-bots"
+```
+
+Flag ini *research-preview* (belum di allowlist Anthropic) — sama seperti yang
+sudah dipakai produksi untuk `plugins/telegram@mirza-marketplace`, bukan hal
+baru yang berisiko di repo ini. Notifikasi masuk (▎ *Channels (experimental)…*)
+akan muncul begitu sesi terbuka; pesan Telegram sungguhan langsung tampil
+sebagai giliran baru di sesi.
 
 Kalau `fleetd` di-restart saat sesi hidup, koneksi plugin ikut mati: `reply`
 akan langsung gagal dengan error "connection lost"/"not connected" — bukan
-menggantung. Sambungkan ulang lewat `/mcp` di Claude Code.
+menggantung. Sambungkan ulang lewat `/mcp` di Claude Code (koneksi soket akan
+tersambung ulang; flag channel tidak perlu diulang karena itu properti sesi,
+bukan koneksi MCP).
 
 ## Testing
 

@@ -3,7 +3,18 @@ import { z } from "zod";
 import type { FleetdClient } from "./fleetd-client";
 
 export function buildServer(client: FleetdClient): McpServer {
-  const server = new McpServer({ name: "cc-plugin", version: "0.1.0" });
+  const server = new McpServer(
+    { name: "cc-plugin", version: "0.1.0" },
+    {
+      capabilities: {
+        tools: {},
+        // Without this, Claude Code silently drops every
+        // notifications/claude/channel push below -- the session never even
+        // sees an error, the message just never arrives.
+        experimental: { "claude/channel": {} },
+      },
+    }
+  );
 
   server.registerTool(
     "reply",

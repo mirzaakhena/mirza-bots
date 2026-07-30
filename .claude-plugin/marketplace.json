@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "mirza-bots",
+  "description": "Local marketplace for the mirza-bots fleet's Claude Code plugin (cc-plugin). Not for distribution -- exists only so cc-plugin can be installed and referenced by --dangerously-load-development-channels during Tahap 2 live verification.",
+  "owner": {
+    "name": "Mirza"
+  },
+  "plugins": [
+    {
+      "name": "cc-plugin",
+      "description": "MCP server that proxies the reply tool to fleetd over a Unix socket and forwards incoming Telegram messages as notifications/claude/channel.",
+      "category": "productivity",
+      "source": "./cc-plugin"
+    }
+  ]
+}
