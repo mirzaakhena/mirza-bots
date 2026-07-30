@@ -13,8 +13,14 @@ import { openConversationsDb } from "./db/conversations-schema";
 import { startSocketServer } from "./socket/server";
 import { ConnectionRegistry } from "./socket/registry";
 import { buildDoctorReport } from "./doctor";
-import { handleIncomingMessage, startPolling, type NormalizedMessage } from "./telegram/poller";
+import {
+  handleIncomingMessage,
+  startPolling,
+  type NormalizedMessage,
+  type PollerDeps,
+} from "./telegram/poller";
 import { AlbumBuffer } from "./telegram/album-buffer";
+import { drainQueue } from "./db/bot-inbox";
 import type { Request, Response, ButtonRow } from "./socket/protocol";
 import pkg from "../package.json";
 
@@ -34,6 +40,55 @@ function makeBot(token: string): Bot {
 // that way tests route file downloads to the fake server too.
 function fileUrl(token: string, filePath: string): string {
   return `${apiRoot()}/file/bot${token}/${filePath}`;
+}
+
+/**
+ * Builds a NormalizedMessage out of the identity fields every Telegram handler
+ * has in common, plus whatever payload that particular handler carries.
+ *
+ * Exported for tests. This existing as one function is what keeps the four
+ * handlers below from each re-deriving the same five fields -- the duplication
+ * that let the reply-hijack bug (lastChatByBot written before the allowlist gate)
+ * exist in four separate copies.
+ */
+export function normalizeMessage(
+  botName: string,
+  ids: {
+    chatId: string | number;
+    userId: string | number;
+    userName?: string;
+    dateSeconds?: number;
+  },
+  payload: Pick<NormalizedMessage, "text" | "photoUrls" | "callbackData">
+): NormalizedMessage {
+  return {
+    bot: botName,
+    chatId: String(ids.chatId),
+    userId: String(ids.userId),
+    userName: ids.userName,
+    ts: new Date((ids.dateSeconds ?? Date.now() / 1000) * 1000).toISOString(),
+    ...payload,
+  };
+}
+
+/**
+ * The ONLY place `lastChatByBot` is ever written, and it happens strictly after
+ * handleIncomingMessage's allowlist gate has accepted the message.
+ *
+ * Writing it before the gate (the old behaviour, duplicated across all four
+ * handlers) meant any stranger who messaged the bot became the target of the AI's
+ * next `reply` -- an information-disclosure bug, since their own message was
+ * dropped but the AI's answer would have gone to them.
+ *
+ * Exported for tests.
+ */
+export async function deliverIncoming(
+  msg: NormalizedMessage,
+  deps: PollerDeps,
+  lastChatByBot: Map<string, string>
+): Promise<void> {
+  const accepted = await handleIncomingMessage(msg, deps);
+  if (accepted) lastChatByBot.set(msg.bot, msg.chatId);
 }
 
 function buildInlineKeyboard(rows: ButtonRow[]): InlineKeyboard {
@@ -70,13 +125,15 @@ export function main(): void {
     const bot = makeBot(botConfig.token);
     bots.set(botName, bot);
 
-    const deps = {
+    const deps: PollerDeps = {
       config,
       conversationsDb,
       fleetDb,
       registry,
       inboxRoot: stateRoot(),
     };
+
+    const deliver = (msg: NormalizedMessage) => deliverIncoming(msg, deps, lastChatByBot);
 
     // One album buffer per bot, keyed by Telegram's media_group_id. onFlush fires
     // once the debounce window closes (all photos of the album have arrived) or
@@ -85,33 +142,43 @@ export function main(): void {
     const albumBuffer = new AlbumBuffer<{ ctx: Filter<Context, "message:photo">; url: string }>(
       1500,
       8000,
-      async (_mediaGroupId, items) => {
-        const first = items[0]!.ctx;
-        const msg: NormalizedMessage = {
-          bot: botName,
-          chatId: String(first.chat.id),
-          userId: String(first.from?.id ?? first.chat.id),
-          userName: first.from?.username,
-          text: first.message.caption,
-          photoUrls: items.map((i) => i.url),
-          ts: new Date((first.message.date ?? Date.now() / 1000) * 1000).toISOString(),
-        };
-        lastChatByBot.set(botName, msg.chatId);
-        await handleIncomingMessage(msg, deps);
+      async (mediaGroupId, items) => {
+        // onFlush runs off a timer, detached from any grammy middleware chain, so a
+        // rejection here would surface as a bare unhandled-rejection log with no
+        // clue which bot or album it came from.
+        try {
+          const first = items[0]!.ctx;
+          await deliver(
+            normalizeMessage(
+              botName,
+              {
+                chatId: first.chat.id,
+                userId: first.from?.id ?? first.chat.id,
+                userName: first.from?.username,
+                dateSeconds: first.message.date,
+              },
+              { text: first.message.caption, photoUrls: items.map((i) => i.url) }
+            )
+          );
+        } catch (err) {
+          console.error(`fleetd: album flush failed for ${botName}/${mediaGroupId}: ${err}`);
+        }
       }
     );
 
     bot.on("message:text", async (ctx) => {
-      const msg: NormalizedMessage = {
-        bot: botName,
-        chatId: String(ctx.chat.id),
-        userId: String(ctx.from?.id ?? ctx.chat.id),
-        userName: ctx.from?.username,
-        text: ctx.message.text,
-        ts: new Date((ctx.message.date ?? Date.now() / 1000) * 1000).toISOString(),
-      };
-      lastChatByBot.set(botName, msg.chatId);
-      await handleIncomingMessage(msg, deps);
+      await deliver(
+        normalizeMessage(
+          botName,
+          {
+            chatId: ctx.chat.id,
+            userId: ctx.from?.id ?? ctx.chat.id,
+            userName: ctx.from?.username,
+            dateSeconds: ctx.message.date,
+          },
+          { text: ctx.message.text }
+        )
+      );
     });
 
     bot.on("message:photo", async (ctx) => {
@@ -127,39 +194,58 @@ export function main(): void {
         return;
       }
 
-      const msg: NormalizedMessage = {
-        bot: botName,
-        chatId: String(ctx.chat.id),
-        userId: String(ctx.from?.id ?? ctx.chat.id),
-        userName: ctx.from?.username,
-        text: ctx.message.caption,
-        photoUrls: [url],
-        ts: new Date((ctx.message.date ?? Date.now() / 1000) * 1000).toISOString(),
-      };
-      lastChatByBot.set(botName, msg.chatId);
-      await handleIncomingMessage(msg, deps);
+      await deliver(
+        normalizeMessage(
+          botName,
+          {
+            chatId: ctx.chat.id,
+            userId: ctx.from?.id ?? ctx.chat.id,
+            userName: ctx.from?.username,
+            dateSeconds: ctx.message.date,
+          },
+          { text: ctx.message.caption, photoUrls: [url] }
+        )
+      );
     });
 
     bot.on("callback_query:data", async (ctx) => {
       // MUST be first and unconditional -- otherwise the button spins forever on
       // the user's Telegram client. See spec §10's own recorded lesson from the
       // old rewrite (457 green unit tests, this exact call missing in production).
-      await ctx.answerCallbackQuery();
+      //
+      // But it must not be *fatal* either: Telegram rejects acks for queries that
+      // are too old (common right after a restart), and letting that throw meant
+      // the human saw a stuck spinner AND the AI never learned the button was
+      // pressed. Log and carry on -- storing/pushing the press matters more.
+      try {
+        await ctx.answerCallbackQuery();
+      } catch (err) {
+        console.error(`fleetd: answerCallbackQuery failed for ${botName} (continuing): ${err}`);
+      }
 
-      const chatId = ctx.callbackQuery.message?.chat.id ?? ctx.from.id;
-      const msg: NormalizedMessage = {
-        bot: botName,
-        chatId: String(chatId),
-        userId: String(ctx.from.id),
-        userName: ctx.from.username,
-        callbackData: ctx.callbackQuery.data,
-        ts: new Date().toISOString(),
-      };
-      lastChatByBot.set(botName, msg.chatId);
-      await handleIncomingMessage(msg, deps);
+      await deliver(
+        normalizeMessage(
+          botName,
+          {
+            chatId: ctx.callbackQuery.message?.chat.id ?? ctx.from.id,
+            userId: ctx.from.id,
+            userName: ctx.from.username,
+          },
+          { callbackData: ctx.callbackQuery.data }
+        )
+      );
+    });
+
+    // Safety net, registered AFTER the `:data` handler above (which terminates the
+    // middleware chain, so this never double-answers it): acknowledge any callback
+    // query that carries no `data` field, which nothing this stage sends but which
+    // would otherwise spin forever on the user's client.
+    bot.on("callback_query", async (ctx) => {
+      await ctx.answerCallbackQuery().catch(() => {});
     });
 
     startPolling(bot, {
+      name: botName,
       start: () => bot.start(),
       onGiveUp: (err) => {
         console.error(`fleetd: poller for ${botName} gave up permanently: ${err}`);
@@ -202,7 +288,16 @@ export function main(): void {
       }
       return { ok: false, error: "unknown_type" };
     },
-    registry
+    registry,
+    // The delivery half of the offline queue: messages that arrived while no
+    // plugin was connected were safely written to bot_inbox but never handed over
+    // to anyone. A plugin connecting is exactly the moment to flush them.
+    (bot, conn) => {
+      const queued = drainQueue(fleetDb, bot);
+      if (queued.length === 0) return;
+      console.log(`fleetd: delivering ${queued.length} queued message(s) to ${bot}`);
+      for (const msg of queued) conn.send(msg);
+    }
   );
 
   console.log(`fleetd listening on ${sockPath}, ${Object.keys(config.bots).length} bot(s) polling`);

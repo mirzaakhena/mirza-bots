@@ -6,6 +6,11 @@ import { ConnectionRegistry, type BoundConnection } from "./registry";
 
 export type Handler = (req: Request, conn: BoundConnection) => Response | Promise<Response>;
 
+// Fired right after a `hello` binds a connection to a bot, with that connection
+// already registered and able to receive pushes. main.ts uses it to drain
+// bot_inbox -- messages that arrived while no plugin was connected.
+export type OnBind = (bot: string, conn: BoundConnection) => void;
+
 function resolveBotByCwd(config: Config, cwd: string): string | null {
   for (const [name, bot] of Object.entries(config.bots)) {
     if (bot.home === cwd) return name;
@@ -17,7 +22,8 @@ export function startSocketServer(
   sockPath: string,
   config: Config,
   handle: Handler,
-  registry: ConnectionRegistry
+  registry: ConnectionRegistry,
+  onBind?: OnBind
 ): net.Server {
   if (existsSync(sockPath)) unlinkSync(sockPath);
 
@@ -55,10 +61,26 @@ export function startSocketServer(
           conn.boundBot = bot;
           registry.register(bot, conn);
           rawConn.write(encode({ ok: true, bot }));
+          // After the hello response, so the client reads its handshake answer
+          // before any drained push. Guarded: a throwing onBind must not take
+          // down the connection or the server.
+          try {
+            onBind?.(bot, conn);
+          } catch (err) {
+            console.error(`fleetd: onBind failed for ${bot}: ${err}`);
+          }
           continue;
         }
 
-        const res = await handle(req, conn);
+        // A handler throwing used to escape this data handler entirely: no
+        // response line was ever written and the caller waited forever. Always
+        // answer, whatever the handler does.
+        let res: Response;
+        try {
+          res = await handle(req, conn);
+        } catch (err) {
+          res = { ok: false, error: `handler_failed: ${err}` };
+        }
         rawConn.write(encode(res));
       }
     });

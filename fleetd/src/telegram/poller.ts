@@ -28,8 +28,20 @@ export type PollerDeps = {
   inboxRoot: string;
 };
 
-export async function handleIncomingMessage(msg: NormalizedMessage, deps: PollerDeps): Promise<void> {
-  if (!isAllowed(deps.config, msg.chatId)) return;
+/**
+ * Stores and delivers one incoming message, or drops it if the sender is not
+ * allowlisted.
+ *
+ * Returns whether the message passed the allowlist gate. Callers MUST NOT act on
+ * a message's chat id (e.g. record it as the target for the AI's next reply)
+ * before this reports `true`: doing so let a non-allowlisted stranger hijack the
+ * reply target even though their own message was correctly dropped here.
+ */
+export async function handleIncomingMessage(
+  msg: NormalizedMessage,
+  deps: PollerDeps
+): Promise<boolean> {
+  if (!isAllowed(deps.config, msg.chatId)) return false;
 
   const attachments: string[] = [];
   for (const [i, url] of (msg.photoUrls ?? []).entries()) {
@@ -71,17 +83,31 @@ export async function handleIncomingMessage(msg: NormalizedMessage, deps: Poller
   if (!delivered) {
     queueMessage(deps.fleetDb, msg.bot, pushMsg);
   }
+
+  return true;
 }
 
+/**
+ * Runs `opts.start` (grammy's long-polling loop) and retries it with linear
+ * backoff capped at 15s. The loop exits only when `start` resolves, which for a
+ * real grammy bot means a deliberate `bot.stop()` -- so there is no
+ * "reset the attempt counter after a while of healthy polling" behaviour here,
+ * because `start` never resolves to report health.
+ *
+ * `opts.name` labels the retry logs; without them a bot with a revoked token
+ * span silently forever with zero visible output.
+ */
 export function startPolling(
   bot: Bot,
   opts: {
+    name?: string;
     start: () => Promise<void>;
     sleep?: (ms: number) => Promise<void>;
     onGiveUp?: (err: unknown) => void;
   }
 ): void {
   const sleep = opts.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const label = opts.name ?? "unnamed";
 
   // Optional chaining: a real grammy `Bot` always has `.catch`, but unit tests
   // exercising just the retry/backoff loop pass a bare stub (`{} as any`) with
@@ -97,6 +123,9 @@ export function startPolling(
         return; // clean stop (e.g. bot.stop() called deliberately)
       } catch (err) {
         const delay = Math.min(1000 * attempt, 15000);
+        console.error(
+          `poller[${label}]: start failed (attempt ${attempt}, retry in ${delay}ms): ${err}`
+        );
         await sleep(delay);
       }
     }

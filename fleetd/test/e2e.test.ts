@@ -88,25 +88,41 @@ function startFakeTelegramApi(
   return { server, sentMessages, answeredCallbackIds };
 }
 
-// Opens a socket client to fleetd and collects newline-delimited response lines.
+// Opens a socket client to fleetd and collects newline-delimited lines, split into
+// two streams: `lines` for request/response traffic and `pushes` for unsolicited
+// push_message notifications. They must be separated -- fleetd pushes the offline
+// queue right after a hello, so a single flat array would interleave a drained
+// message in between a request and its response and make positional assertions
+// (lines[0], lines[1], ...) depend on whether anything happened to be queued.
 async function connectToFleetd(sockPath: string): Promise<{
   client: import("node:net").Socket;
   lines: string[];
+  pushes: string[];
 }> {
   const net = await import("node:net");
   const client = net.createConnection(sockPath);
   const lines: string[] = [];
+  const pushes: string[] = [];
   let buf = "";
   client.on("data", (chunk) => {
     buf += chunk.toString("utf8");
     let idx: number;
     while ((idx = buf.indexOf("\n")) !== -1) {
-      lines.push(buf.slice(0, idx));
+      const line = buf.slice(0, idx);
       buf = buf.slice(idx + 1);
+      let parsed: any;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        lines.push(line);
+        continue;
+      }
+      if (parsed?.type === "push_message") pushes.push(line);
+      else lines.push(line);
     }
   });
   await new Promise<void>((resolve) => client.on("connect", resolve));
-  return { client, lines };
+  return { client, lines, pushes };
 }
 
 // Polls conversations.db directly (no socket query API yet) until `term` shows up
@@ -270,11 +286,21 @@ describe("fleetd Tahap 2 end-to-end: poll, store, push, reply", () => {
     // config.json's bots["bot-01"].home).
     const sockPath = join(home, "fleetd.sock");
     const { encode } = await import("../src/socket/protocol");
-    const { client, lines } = await connectToFleetd(sockPath);
+    const { client, lines, pushes } = await connectToFleetd(sockPath);
 
     client.write(encode({ type: "hello", cwd: "/tmp/bot-01" }));
     await Bun.sleep(100);
     expect(JSON.parse(lines[0]!)).toEqual({ ok: true, bot: "bot-01" });
+
+    // The offline queue, end to end: "halo bot" was polled while no plugin was
+    // connected, so it went to bot_inbox. Connecting drains it onto this very
+    // connection. Before drainQueue was wired into the socket server's onBind hook,
+    // such messages sat in the database forever and were never delivered to anyone.
+    expect(await waitForLines(pushes, 1)).toBeGreaterThanOrEqual(1);
+    const drained = JSON.parse(pushes[0]!);
+    expect(drained.type).toBe("push_message");
+    expect(drained.text).toBe("halo bot");
+    expect(drained.meta.chat_id).toBe("111");
 
     client.write(encode({ type: "reply", text: "balasan AI" }));
     await Bun.sleep(300);

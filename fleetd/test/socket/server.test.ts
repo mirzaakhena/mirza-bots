@@ -7,6 +7,8 @@ import { startSocketServer } from "../../src/socket/server";
 import { encode } from "../../src/socket/protocol";
 import type { Response } from "../../src/socket/protocol";
 import { ConnectionRegistry } from "../../src/socket/registry";
+import { openFleetDb } from "../../src/db/fleet-schema";
+import { queueMessage, drainQueue } from "../../src/db/bot-inbox";
 import type { Config } from "../../src/config";
 
 const testConfig: Config = {
@@ -274,5 +276,145 @@ describe("socket server", () => {
     expect(deliveredToSecond).toBe(false);
 
     client.end();
+  });
+
+  test("onBind drains bot_inbox on hello: a message queued while nobody was connected is delivered", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    const fleetDb = openFleetDb(":memory:");
+
+    // Arrived while no plugin was connected, so it went to the offline queue.
+    queueMessage(fleetDb, "bot-01", {
+      type: "push_message",
+      text: "pesan saat plugin mati",
+      meta: { chat_id: "1" },
+    });
+
+    // The exact wiring main.ts uses for its onBind callback.
+    const boundBots: string[] = [];
+    server = startSocketServer(
+      sockPath,
+      testConfig,
+      () => ({ ok: true }),
+      new ConnectionRegistry(),
+      (bot, conn) => {
+        boundBots.push(bot);
+        for (const msg of drainQueue(fleetDb, bot)) conn.send(msg);
+      }
+    );
+
+    const client = net.createConnection(sockPath);
+    const lines: string[] = [];
+    let buf = "";
+    client.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      let idx: number;
+      while ((idx = buf.indexOf("\n")) !== -1) {
+        lines.push(buf.slice(0, idx));
+        buf = buf.slice(idx + 1);
+      }
+    });
+    await new Promise<void>((resolve) => client.on("connect", resolve));
+
+    client.write(encode({ type: "hello", cwd: "/fake/bot-01/home" }));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(boundBots).toEqual(["bot-01"]);
+    expect(JSON.parse(lines[0]!)).toEqual({ ok: true, bot: "bot-01" });
+    // The queued message arrives on the freshly bound connection -- this is the
+    // half of the offline queue that used to be missing entirely (queueMessage was
+    // wired, drainQueue was never called in production, so queued messages were
+    // lost forever despite sitting safely in the database).
+    expect(JSON.parse(lines[1]!)).toEqual({
+      type: "push_message",
+      text: "pesan saat plugin mati",
+      meta: { chat_id: "1" },
+    });
+
+    // Drained means drained: reconnecting must not re-deliver it.
+    expect(drainQueue(fleetDb, "bot-01").length).toBe(0);
+    client.end();
+  });
+
+  test("a malformed reply request is answered with an error instead of hanging the caller", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    server = startSocketServer(
+      sockPath,
+      testConfig,
+      // Stand-in for main.ts's real reply handler, which throws on a `buttons`
+      // value that is not an array of rows (rows.entries() is not a function).
+      (req) => {
+        if (req.type === "reply" && req.buttons) {
+          for (const _row of req.buttons.entries()) void _row;
+        }
+        return { ok: true };
+      },
+      new ConnectionRegistry()
+    );
+
+    // `buttons` as a string, and a reply with no text at all: both must be rejected
+    // at the boundary by zod rather than reaching the handler.
+    const badButtons = await sendRaw(sockPath, encode({ type: "reply", text: "hi", buttons: "nope" }));
+    expect(JSON.parse(badButtons)).toEqual({ ok: false, error: "bad_request" });
+
+    const noText = await sendRaw(sockPath, encode({ type: "reply" }));
+    expect(JSON.parse(noText)).toEqual({ ok: false, error: "bad_request" });
+
+    const unknownType = await sendRaw(sockPath, encode({ type: "definitely_not_a_request" }));
+    expect(JSON.parse(unknownType)).toEqual({ ok: false, error: "bad_request" });
+
+    // A well-formed reply still gets through to the handler.
+    const good = await sendRaw(
+      sockPath,
+      encode({ type: "reply", text: "hi", buttons: [[{ text: "Ya", data: "y" }]] })
+    );
+    expect(JSON.parse(good)).toEqual({ ok: true });
+  });
+
+  test("a handler that throws still gets a response line, and the server keeps serving", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    let calls = 0;
+    server = startSocketServer(
+      sockPath,
+      testConfig,
+      () => {
+        calls++;
+        if (calls === 1) throw new Error("boom");
+        return { ok: true };
+      },
+      new ConnectionRegistry()
+    );
+
+    // Without the try/catch around handle(), this throw escaped the socket's data
+    // handler: no line was ever written and the caller waited forever.
+    const failed = await sendRaw(sockPath, encode({ type: "doctor" }));
+    const parsed = JSON.parse(failed);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain("handler_failed");
+    expect(parsed.error).toContain("boom");
+
+    // Server and subsequent connections are unaffected.
+    const after = await sendRaw(sockPath, encode({ type: "doctor" }));
+    expect(JSON.parse(after)).toEqual({ ok: true });
+  });
+
+  test("an async handler that rejects is also answered rather than hanging", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    server = startSocketServer(
+      sockPath,
+      testConfig,
+      async () => {
+        throw new Error("async boom");
+      },
+      new ConnectionRegistry()
+    );
+
+    const line = await sendRaw(sockPath, encode({ type: "doctor" }));
+    const parsed = JSON.parse(line);
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error).toContain("async boom");
   });
 });

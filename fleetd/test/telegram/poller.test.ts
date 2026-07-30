@@ -49,20 +49,41 @@ describe("handleIncomingMessage", () => {
     expect(sent[0]?.text).toBe("halo bot");
   });
 
-  test("ignores a message from a chat id not in allowFrom", async () => {
+  test("reports acceptance (true) for an allowed message so callers may act on its chat id", async () => {
+    const accepted = await handleIncomingMessage(baseMsg(), {
+      config,
+      conversationsDb: openConversationsDb(":memory:"),
+      fleetDb: openFleetDb(":memory:"),
+      registry: new ConnectionRegistry(),
+      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+    });
+
+    expect(accepted).toBe(true);
+  });
+
+  test("ignores a message from a chat id not in allowFrom, and reports rejection (false)", async () => {
     const conversationsDb = openConversationsDb(":memory:");
     const fleetDb = openFleetDb(":memory:");
     const registry = new ConnectionRegistry();
 
-    await handleIncomingMessage(baseMsg({ chatId: "999", userId: "999", text: "bukan siapa-siapa" }), {
-      config,
-      conversationsDb,
-      fleetDb,
-      registry,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
-    });
+    // The boolean is the security-relevant half: callers must be able to tell a
+    // dropped message apart from an accepted one BEFORE they record its chat id as
+    // the target of the AI's next reply. See test/main.test.ts for that guarantee.
+    const accepted = await handleIncomingMessage(
+      baseMsg({ chatId: "999", userId: "999", text: "bukan siapa-siapa" }),
+      {
+        config,
+        conversationsDb,
+        fleetDb,
+        registry,
+        inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      }
+    );
 
+    expect(accepted).toBe(false);
     expect(searchMessages(conversationsDb, "bukan").length).toBe(0);
+    // Nor may a dropped message leak into the offline queue.
+    expect(drainQueue(fleetDb, "bot-01").length).toBe(0);
   });
 
   test("queues to bot_inbox instead of pushing when no connection is registered", async () => {
@@ -173,13 +194,19 @@ describe("handleIncomingMessage", () => {
 });
 
 describe("startPolling retry loop", () => {
-  test("retries with backoff min(1000*attempt,15000) and resets after success, giving up only when told to", async () => {
+  // NOTE ON THE NAME: an earlier version of this test claimed the attempt counter
+  // "resets after success". It never did, and can't: `opts.start` is grammy's
+  // long-polling loop, which only resolves on a deliberate bot.stop() -- so the
+  // loop exits at that point rather than looping again with a fresh counter.
+  // What is actually asserted here: the backoff math, and that the loop stops
+  // retrying as soon as start() resolves.
+  test("retries with backoff min(1000*attempt,15000) and stops retrying once start resolves", async () => {
     const delays: number[] = [];
     let calls = 0;
     const start = async () => {
       calls++;
       if (calls < 3) throw new Error("ETIMEDOUT");
-      // success: resolve and don't throw again
+      // resolves: a clean stop, so the loop must exit rather than retry again
     };
     const sleep = async (ms: number) => {
       delays.push(ms);
@@ -187,6 +214,7 @@ describe("startPolling retry loop", () => {
 
     await new Promise<void>((resolve) => {
       startPolling({} as any, {
+        name: "bot-test",
         start,
         sleep,
         onGiveUp: () => {
