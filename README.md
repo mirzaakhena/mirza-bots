@@ -47,8 +47,9 @@ balik lagi ke Telegram**. Dua paket yang ada sekarang: `fleetd` (daemon) dan
     lewat buffer debounce, bukan tiga pesan terpisah,
   - **tombol inline** (`callback_query`) — selalu di-*acknowledge* supaya
     tombol tidak berputar selamanya di HP, lalu isi tombolnya dikirim ke AI.
-- **Allowlist di depan segalanya.** Pesan dari user ID di luar `allowFrom`
-  dijatuhkan sebelum disimpan, sebelum di-push, dan sebelum chat-nya boleh
+- **Allowlist di depan segalanya.** Pesan dari chat ID di luar `allowFrom`
+  (untuk chat pribadi ini sama dengan user ID pengirim; grup belum didukung,
+  §"belum ada" di bawah) dijatuhkan sebelum disimpan, sebelum di-push, dan sebelum chat-nya boleh
   jadi tujuan balasan AI berikutnya.
 - **Antrean offline (`bot_inbox`).** Kalau pesan masuk saat tidak ada sesi
   Claude Code yang terhubung, pesan itu ditulis ke `bot_inbox`. Begitu ada
@@ -163,7 +164,7 @@ menggantung. Sambungkan ulang lewat `/mcp` di Claude Code.
 
 ```bash
 cd fleetd && bun test        # 59 test
-cd ../cc-plugin && bun test  # 14 test
+cd ../cc-plugin && bun test  # 16 test
 ```
 
 `fleetd` — mencakup validasi config, kedua skema database (termasuk
