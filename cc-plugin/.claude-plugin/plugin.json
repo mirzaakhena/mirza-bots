@@ -1,0 +1,11 @@
+{
+  "name": "cc-plugin",
+  "description": "Minimal Claude Code plugin for the mirza-bots fleet: proxies the reply tool to fleetd over a Unix socket and forwards incoming Telegram messages as notifications/claude/channel.",
+  "version": "0.1.0",
+  "mcpServers": {
+    "cc-plugin": {
+      "command": "bun",
+      "args": ["run", "src/main.ts"]
+    }
+  }
+}
