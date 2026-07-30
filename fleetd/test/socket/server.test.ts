@@ -11,7 +11,10 @@ import type { Config } from "../../src/config";
 
 const testConfig: Config = {
   allowFrom: ["1"],
-  bots: { "bot-01": { home: "/fake/bot-01/home", token: "t" } },
+  bots: {
+    "bot-01": { home: "/fake/bot-01/home", token: "t" },
+    "bot-02": { home: "/fake/bot-02/home", token: "t" },
+  },
 };
 
 let tmp: string;
@@ -231,6 +234,44 @@ describe("socket server", () => {
 
     await new Promise((r) => setTimeout(r, 50));
     expect(JSON.parse(lines[1]!)).toEqual({ type: "push_message", text: "new message", meta: { chat_id: "1" } });
+
+    client.end();
+  });
+
+  test("a second hello on an already-bound connection is rejected and the original binding is unchanged", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    const registry = new ConnectionRegistry();
+    server = startSocketServer(sockPath, testConfig, () => ({ ok: true }), registry);
+
+    const client = net.createConnection(sockPath);
+    const lines: string[] = [];
+    let buf = "";
+    client.on("data", (chunk) => {
+      buf += chunk.toString("utf8");
+      let idx: number;
+      while ((idx = buf.indexOf("\n")) !== -1) {
+        lines.push(buf.slice(0, idx));
+        buf = buf.slice(idx + 1);
+      }
+    });
+    await new Promise<void>((resolve) => client.on("connect", resolve));
+
+    client.write(encode({ type: "hello", cwd: "/fake/bot-01/home" }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(JSON.parse(lines[0]!)).toEqual({ ok: true, bot: "bot-01" });
+
+    client.write(encode({ type: "hello", cwd: "/fake/bot-02/home" }));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(JSON.parse(lines[1]!)).toEqual({ ok: false, error: "already_bound" });
+
+    // Registry must still reflect only the original bot-01 binding: a push to
+    // bot-01 is delivered, and no connection was ever registered under bot-02.
+    const deliveredToOriginal = registry.push("bot-01", { type: "push_message", text: "hi", meta: {} });
+    expect(deliveredToOriginal).toBe(true);
+
+    const deliveredToSecond = registry.push("bot-02", { type: "push_message", text: "hi", meta: {} });
+    expect(deliveredToSecond).toBe(false);
 
     client.end();
   });

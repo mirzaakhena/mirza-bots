@@ -43,6 +43,10 @@ export function startSocketServer(
         }
 
         if (req.type === "hello") {
+          if (conn.boundBot) {
+            rawConn.write(encode({ ok: false, error: "already_bound" }));
+            continue;
+          }
           const bot = resolveBotByCwd(config, req.cwd);
           if (!bot) {
             rawConn.write(encode({ ok: false, error: "unknown_cwd" }));
