@@ -29,9 +29,15 @@ export function buildServer(client: FleetdClient): McpServer {
     // forwarder is the last point of defense: never pass a value through unless
     // it's already a string. Anything else silently drops the WHOLE notification
     // on the Claude Code side with no error surfaced anywhere.
+    //
+    // NOTE: the fallback must be String(value), not JSON.stringify(value) --
+    // JSON.stringify(undefined) returns the *value* undefined, not the string
+    // "undefined", which would silently reintroduce the exact bug this
+    // forwarder exists to prevent. String(value) is always a string for any
+    // input, including undefined and null.
     const safeMeta: Record<string, string> = {};
     for (const [key, value] of Object.entries(msg.meta)) {
-      safeMeta[key] = typeof value === "string" ? value : JSON.stringify(value);
+      safeMeta[key] = typeof value === "string" ? value : String(value);
     }
 
     server.server

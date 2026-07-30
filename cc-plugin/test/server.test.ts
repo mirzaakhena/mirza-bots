@@ -129,4 +129,42 @@ describe("cc-plugin MCP server", () => {
     await mcpClient.close();
     await server.close();
   });
+
+  test("a push_message meta containing genuinely non-string values (number, undefined) is coerced to strings, never passed through as-is", async () => {
+    let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
+    const client = fakeFleetdClient({ onPush: (handler) => { capturedPushHandler = handler; } });
+    const server = buildServer(client);
+
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    let received: any = null;
+    mcpClient.fallbackNotificationHandler = async (n) => {
+      received = n;
+    };
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+
+    // PushMessage.meta is typed Record<string,string> upstream, but this test
+    // pins the runtime-type-lie case SCAR-056 guards against: an upstream
+    // caller that violates the type (e.g. a lost field from a partial spread,
+    // or an optional field accessed but never set) must still never reach the
+    // wire as a non-string. In particular, JSON.stringify(undefined) returns
+    // the JS value `undefined` (not the string "undefined") -- a naive
+    // fallback using JSON.stringify would silently drop this whole
+    // notification. String(value) must be used instead.
+    capturedPushHandler!({
+      type: "push_message",
+      text: "weird meta",
+      meta: { chat_id: "1", count: 3 as any, missing: undefined as any },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    for (const value of Object.values(received.params.meta)) {
+      expect(typeof value).toBe("string");
+    }
+    expect(received.params.meta.count).toBe("3");
+    expect(received.params.meta.missing).toBe("undefined");
+
+    await mcpClient.close();
+    await server.close();
+  });
 });
