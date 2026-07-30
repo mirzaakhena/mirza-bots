@@ -73,7 +73,14 @@ export function buildServer(client: FleetdClient): McpServer {
     server.server
       .notification({
         method: "notifications/claude/channel",
-        params: { content: msg.text, meta: safeMeta },
+        // The marker is the ONLY signal that distinguishes a Telegram-driven
+        // turn from one the user typed in the terminal -- and it needs no flag
+        // or stored state, because this callback is the sole path a Telegram
+        // message can take into the session. The old system used a session-wide
+        // `telegramDriven` flag for the same job and it went sticky: once a
+        // session had ever seen a Telegram message, terminal-typed turns were
+        // misclassified too (audit area-10 §10.2).
+        params: { content: `${TERSE_TURN_MARKER}\n${msg.text}`, meta: safeMeta },
       })
       .catch((err) => {
         console.error(`cc-plugin: failed to forward push notification: ${err}`);

@@ -90,7 +90,7 @@ describe("cc-plugin MCP server", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(received.method).toBe("notifications/claude/channel");
-    expect(received.params.content).toBe("pesan baru dari Telegram");
+    expect(received.params.content).toBe(`${TERSE_TURN_MARKER}\npesan baru dari Telegram`);
     for (const value of Object.values(received.params.meta)) {
       expect(typeof value).toBe("string"); // SCAR-056: every meta value must be a string
     }
@@ -184,6 +184,59 @@ describe("cc-plugin MCP server", () => {
     expect(instructions).toBeTruthy();
     expect(instructions).toContain(TERSE_TURN_MARKER);
     expect(instructions).toContain("reply");
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("a pushed message is stamped with the terse-turn marker while preserving the original text verbatim", async () => {
+    let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
+    const client = fakeFleetdClient({ onPush: (handler) => { capturedPushHandler = handler; } });
+    const server = buildServer(client);
+
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    let received: any = null;
+    mcpClient.fallbackNotificationHandler = async (n) => { received = n; };
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+
+    capturedPushHandler!({
+      type: "push_message",
+      text: "tolong cek status deployment",
+      meta: { chat_id: "1", user_id: "2", kind: "message" },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // The marker leads so the AI reads it before the message itself.
+    expect(received.params.content.startsWith(TERSE_TURN_MARKER)).toBe(true);
+    // The user's own words must survive untouched -- the marker is additive.
+    expect(received.params.content).toContain("tolong cek status deployment");
+    // Structured fields keep travelling in meta, not in the text (SCAR-056).
+    expect(received.params.meta.kind).toBe("message");
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("a button press (kind: callback) gets the same marker -- no special case", async () => {
+    let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
+    const client = fakeFleetdClient({ onPush: (handler) => { capturedPushHandler = handler; } });
+    const server = buildServer(client);
+
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    let received: any = null;
+    mcpClient.fallbackNotificationHandler = async (n) => { received = n; };
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+
+    capturedPushHandler!({
+      type: "push_message",
+      text: "confirm_yes",
+      meta: { chat_id: "1", kind: "callback" },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(received.params.content).toBe(`${TERSE_TURN_MARKER}\nconfirm_yes`);
 
     await mcpClient.close();
     await server.close();
