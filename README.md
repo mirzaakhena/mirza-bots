@@ -17,6 +17,14 @@ Jalur pesan dua arah sudah hidup: **Telegram → `fleetd` → sesi Claude Code �
 balik lagi ke Telegram**. Dua paket yang ada sekarang: `fleetd` (daemon) dan
 `cc-plugin` (plugin Claude Code). PTY `bot-cc` belum ada.
 
+**Diverifikasi hidup dengan bot Telegram sungguhan (2026-07-30, `bot-01`):**
+teks, foto tunggal, album (3 foto → 1 baris tergabung), dan tombol inline
+(termasuk `answerCallbackQuery` scar-tissue check) semua terkonfirmasi
+bekerja end-to-end. Lihat "Memasang `cc-plugin` di Claude Code" di bawah
+untuk prosedur instalasi yang benar-benar teruji (§ berbeda dari desain awal
+— butuh capability `claude/channel` + plugin ter-instal, bukan cuma dimuat
+sesi).
+
 ### Fondasi (Tahap 1)
 
 - **Konfigurasi tervalidasi ketat.** `config.json` divalidasi lewat zod
