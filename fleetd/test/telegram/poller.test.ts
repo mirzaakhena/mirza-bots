@@ -3,7 +3,12 @@ import { openConversationsDb, searchMessages } from "../../src/db/conversations-
 import { openFleetDb } from "../../src/db/fleet-schema";
 import { drainQueue } from "../../src/db/bot-inbox";
 import { ConnectionRegistry, type BoundConnection } from "../../src/socket/registry";
-import { handleIncomingMessage, startPolling, type NormalizedMessage } from "../../src/telegram/poller";
+import {
+  handleIncomingMessage,
+  startPolling,
+  downloadAll,
+  type NormalizedMessage,
+} from "../../src/telegram/poller";
 import type { Config } from "../../src/config";
 import type { PushMessage } from "../../src/socket/protocol";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
@@ -331,6 +336,106 @@ describe("handleIncomingMessage", () => {
     expect(row.metadata).toBeNull();
     expect("quote_text" in sent[0]!.meta).toBe(false);
     expect("quote_is_manual" in sent[0]!.meta).toBe(false);
+  });
+
+  test("one failed photo download no longer drops the whole message -- the good paths still arrive", async () => {
+    // Serves bytes for /ok.jpg and 404s for /gone.jpg, which is exactly what a
+    // photo whose Telegram file link has expired looks like.
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) =>
+        new URL(req.url).pathname === "/gone.jpg"
+          ? new Response("not found", { status: 404 })
+          : new Response(new Uint8Array([9, 9, 9]), { headers: { "content-type": "image/jpeg" } }),
+    });
+    const conversationsDb = openConversationsDb(":memory:");
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+
+    await handleIncomingMessage(
+      baseMsg({
+        text: "tiga foto",
+        photoUrls: [
+          `http://localhost:${server.port}/ok.jpg`,
+          `http://localhost:${server.port}/gone.jpg`,
+          `http://localhost:${server.port}/ok2.jpg`,
+        ],
+      }),
+      { config, conversationsDb, fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+    );
+
+    // The message got through. Before this change, the rejected fetch escaped
+    // handleIncomingMessage and the AI never learned anything had been sent.
+    expect(sent.length).toBe(1);
+    expect(sent[0]?.text).toBe("tiga foto");
+    // Only the failed path is missing; the two that worked are there.
+    expect(sent[0]!.meta.attachments!.split(",").length).toBe(2);
+
+    server.stop(true);
+    rmSync(inboxRoot, { recursive: true, force: true });
+  });
+
+  test("every download failing still delivers the message, just with no attachments", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response("gone", { status: 404 }) });
+    const conversationsDb = openConversationsDb(":memory:");
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+
+    await handleIncomingMessage(
+      baseMsg({ text: "foto yang hilang semua", photoUrls: [`http://localhost:${server.port}/a.jpg`] }),
+      { config, conversationsDb, fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+    );
+
+    expect(sent.length).toBe(1);
+    expect(sent[0]?.text).toBe("foto yang hilang semua");
+    // Absent, not an empty string: an empty `attachments` would read as "there
+    // is one attachment, at path ''".
+    expect("attachments" in sent[0]!.meta).toBe(false);
+
+    server.stop(true);
+    rmSync(inboxRoot, { recursive: true, force: true });
+  });
+
+  test("downloadAll reports how many items failed, and never leaks the bot token when they do", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) =>
+        new URL(req.url).pathname.includes("bad")
+          ? new Response("gone", { status: 404 })
+          : new Response(new Uint8Array([1]), { headers: { "content-type": "image/jpeg" } }),
+    });
+    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+    const TOKEN = "8123456789:AAExampleSecretTokenValue";
+
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (msg: unknown) => errors.push(String(msg));
+    let result;
+    try {
+      result = await downloadAll(
+        [
+          { url: `http://localhost:${server.port}/file/bot${TOKEN}/good.jpg`, fileName: "1.jpg" },
+          { url: `http://localhost:${server.port}/file/bot${TOKEN}/bad.jpg`, fileName: "2.jpg" },
+        ],
+        inboxRoot
+      );
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(result.attachments.length).toBe(1);
+    expect(result.failedCount).toBe(1);
+    // A failure is logged (silence here would make a vanished photo unexplainable)
+    // but the live bot token must not ride along in that log line.
+    expect(errors.join("\n")).not.toContain(TOKEN);
+    expect(errors.join("\n")).toContain("<redacted>");
+
+    server.stop(true);
+    rmSync(inboxRoot, { recursive: true, force: true });
   });
 });
 

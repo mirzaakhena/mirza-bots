@@ -4,7 +4,7 @@ import type { Config } from "../config";
 import type { ConnectionRegistry } from "../socket/registry";
 import type { PushMessage } from "../socket/protocol";
 import { isAllowed } from "./allowlist";
-import { downloadToFile } from "./media";
+import { downloadToFile, redactToken } from "./media";
 import { insertMessage, encodeMetadata, type MessageMetadata } from "../db/conversations-schema";
 import { queueMessage } from "../db/bot-inbox";
 import { join } from "node:path";
@@ -47,18 +47,62 @@ export type PollerDeps = {
  * before this reports `true`: doing so let a non-allowlisted stranger hijack the
  * reply target even though their own message was correctly dropped here.
  */
+export type Downloadable = { url: string; fileName: string };
+export type DownloadResult = { attachments: string[]; failedCount: number };
+
+/**
+ * Downloads every item, tolerating per-item failure (TG-105).
+ *
+ * Two deliberate properties:
+ *  - `Promise.allSettled`, not a sequential await loop: one rejected fetch used
+ *    to escape handleIncomingMessage entirely, so a single expired photo link
+ *    meant the AI never learned the message existed at all.
+ *  - Results are read back in input order, so callers can rely on the surviving
+ *    attachments matching the order they asked for -- which is what makes album
+ *    ordering (SCAR-055a) meaningful downstream.
+ */
+export async function downloadAll(items: Downloadable[], destDir: string): Promise<DownloadResult> {
+  const settled = await Promise.allSettled(
+    items.map(async (item) => {
+      const destPath = join(destDir, item.fileName);
+      await downloadToFile(item.url, destPath);
+      return destPath;
+    })
+  );
+
+  const attachments: string[] = [];
+  let failedCount = 0;
+  for (const [i, outcome] of settled.entries()) {
+    if (outcome.status === "fulfilled") {
+      attachments.push(outcome.value);
+    } else {
+      failedCount++;
+      // redactToken on the URL as well as the reason: the reason from
+      // downloadToFile is already redacted, but the URL here is raw.
+      console.error(
+        `poller: attachment download failed (${redactToken(items[i]!.url)}): ${outcome.reason}`
+      );
+    }
+  }
+  return { attachments, failedCount };
+}
+
 export async function handleIncomingMessage(
   msg: NormalizedMessage,
   deps: PollerDeps
 ): Promise<boolean> {
   if (!isAllowed(deps.config, msg.chatId)) return false;
 
-  const attachments: string[] = [];
-  for (const [i, url] of (msg.photoUrls ?? []).entries()) {
-    const destPath = join(deps.inboxRoot, "inbox", msg.bot, `${Date.now()}-${i}.jpg`);
-    await downloadToFile(url, destPath);
-    attachments.push(destPath);
-  }
+  const inboxDir = join(deps.inboxRoot, "inbox", msg.bot);
+  // Stamped once, outside the map: Date.now() per item could collide when two
+  // downloads land in the same millisecond, and would make the names non-monotonic.
+  const stamp = Date.now();
+  const downloads: Downloadable[] = (msg.photoUrls ?? []).map((url, i) => ({
+    url,
+    fileName: `${stamp}-${i}.jpg`,
+  }));
+  const { attachments, failedCount } = await downloadAll(downloads, inboxDir);
+  void failedCount; // Task 5 turns this into a user-visible notice for albums.
 
   // A button press has no `text` of its own -- its meaning IS the callback data
   // (e.g. "confirm_yes"). Store and push that as the message content so the AI
