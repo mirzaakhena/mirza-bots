@@ -133,6 +133,56 @@ describe("FleetdClient", () => {
     // relying on that silently would break the moment the field became non-optional.
     expect(received[1]).toEqual({ type: "hello", cwd: "/fake/cwd" });
   });
+
+  test("history sends a history request and resolves with the returned messages", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "fleetd-client-test-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    const received: any[] = [];
+    const row = {
+      id: 7, ts: "t", bot: "bot-01", chatId: "111", messageId: "101", source: "user",
+      userName: "mirza", text: "pesan kedua", replyTo: null, metadata: null,
+    };
+    server = startFakeFleetd(sockPath, (line, conn) => {
+      const req = JSON.parse(line);
+      received.push(req);
+      if (req.type === "hello") conn.write(JSON.stringify({ ok: true, bot: "bot-01" }) + "\n");
+      if (req.type === "history") conn.write(JSON.stringify({ ok: true, messages: [row] }) + "\n");
+    });
+
+    const client = new FleetdClient();
+    await client.connect(sockPath, "/fake/cwd");
+    const messages = await client.history({ messageId: "101", after: 3 });
+
+    expect(received[1]).toEqual({ type: "history", messageId: "101", after: 3 });
+    expect(messages).toEqual([row]);
+    client.close();
+  });
+
+  test("search sends a search request and surfaces a rejection as an error, not an empty result", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "fleetd-client-test-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    server = startFakeFleetd(sockPath, (line, conn) => {
+      const req = JSON.parse(line);
+      if (req.type === "hello") conn.write(JSON.stringify({ ok: true, bot: "bot-01" }) + "\n");
+      if (req.type === "search") conn.write(JSON.stringify({ ok: false, error: "bad_search_query: boom" }) + "\n");
+    });
+
+    const client = new FleetdClient();
+    await client.connect(sockPath, "/fake/cwd");
+
+    // An empty array here would tell the AI "nothing matched" for a query that
+    // was never actually run. Caught with try/catch rather than
+    // `expect(...).rejects` for the same reason as the lost-connection test
+    // above: that matcher hangs on Windows when the settle depends on socket I/O.
+    let failure: unknown;
+    try {
+      await client.search({ query: 'backup"' });
+    } catch (err) {
+      failure = err;
+    }
+    expect(String(failure)).toMatch(/bad_search_query/);
+    client.close();
+  });
 });
 
 // Every await below is bounded by withTimeout: the bug these tests cover is a

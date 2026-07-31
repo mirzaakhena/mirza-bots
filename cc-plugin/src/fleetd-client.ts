@@ -5,6 +5,21 @@ export type ButtonRow = Array<{ text: string; data: string }>;
 type HelloResponse = { ok: true; bot: string } | { ok: false; error: string };
 type ReplyResponse = { ok: true } | { ok: false; error: string };
 
+export type HistoryMessage = {
+  id: number;
+  ts: string;
+  bot: string;
+  chatId: string;
+  messageId: string | null;
+  source: string;
+  userName: string | null;
+  text: string | null;
+  replyTo: string | null;
+  metadata: string | null;
+};
+
+type MessagesResponse = { ok: true; messages: HistoryMessage[] } | { ok: false; error: string };
+
 // A request awaiting its response line. `onFail` exists so a lost connection can
 // settle the request instead of leaving it queued forever.
 type PendingRequest = {
@@ -114,6 +129,42 @@ export class FleetdClient {
         onFail: reject,
       });
       this.socket.write(this.encode({ type: "reply", text, ...(buttons ? { buttons } : {}) }));
+    });
+  }
+
+  private requestMessages(request: Record<string, unknown>): Promise<HistoryMessage[]> {
+    return new Promise((resolve, reject) => {
+      if (!this.socket) return reject(new Error("not connected"));
+      this.pending.push({
+        onLine: (line) => {
+          const res = JSON.parse(line) as MessagesResponse;
+          if (res.ok) resolve(res.messages);
+          // Rejecting rather than resolving []: "the query was refused" and
+          // "nothing matched" must never look the same to the AI.
+          else reject(new Error(`request rejected: ${res.error}`));
+        },
+        onFail: reject,
+      });
+      this.socket.write(this.encode(request));
+    });
+  }
+
+  history(opts: { messageId: string; before?: number; after?: number; bot?: string }): Promise<HistoryMessage[]> {
+    return this.requestMessages({
+      type: "history",
+      messageId: opts.messageId,
+      ...(opts.before !== undefined ? { before: opts.before } : {}),
+      ...(opts.after !== undefined ? { after: opts.after } : {}),
+      ...(opts.bot !== undefined ? { bot: opts.bot } : {}),
+    });
+  }
+
+  search(opts: { query: string; limit?: number; bot?: string }): Promise<HistoryMessage[]> {
+    return this.requestMessages({
+      type: "search",
+      query: opts.query,
+      ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+      ...(opts.bot !== undefined ? { bot: opts.bot } : {}),
     });
   }
 

@@ -22,10 +22,29 @@ export const ReplyRequestSchema = z.strictObject({
   buttons: z.array(ButtonRowSchema).optional(),
 });
 
+export const HistoryRequestSchema = z.strictObject({
+  type: z.literal("history"),
+  messageId: z.string().min(1),
+  before: z.number().int().min(0).max(50).optional(),
+  after: z.number().int().min(0).max(50).optional(),
+  // Absent means "the calling bot". Naming another bot is the explicit,
+  // deliberate act K-3 requires for crossing that boundary.
+  bot: z.string().min(1).optional(),
+});
+
+export const SearchRequestSchema = z.strictObject({
+  type: z.literal("search"),
+  query: z.string().min(1),
+  limit: z.number().int().min(1).max(50).optional(),
+  bot: z.string().min(1).optional(),
+});
+
 export const RequestSchema = z.discriminatedUnion("type", [
   DoctorRequestSchema,
   HelloRequestSchema,
   ReplyRequestSchema,
+  HistoryRequestSchema,
+  SearchRequestSchema,
 ]);
 
 // Types are inferred from the schemas rather than hand-written, so the runtime
@@ -34,7 +53,25 @@ export type ButtonRow = z.infer<typeof ButtonRowSchema>;
 export type DoctorRequest = z.infer<typeof DoctorRequestSchema>;
 export type HelloRequest = z.infer<typeof HelloRequestSchema>;
 export type ReplyRequest = z.infer<typeof ReplyRequestSchema>;
+export type HistoryRequest = z.infer<typeof HistoryRequestSchema>;
+export type SearchRequest = z.infer<typeof SearchRequestSchema>;
 export type Request = z.infer<typeof RequestSchema>;
+
+// One stored message as it travels over the socket. Declared here rather than in
+// the db module because both sides of the wire need it, and a contract used by
+// more than one component may only have one copy (K-15).
+export type HistoryMessage = {
+  id: number;
+  ts: string;
+  bot: string;
+  chatId: string;
+  messageId: string | null;
+  source: string;
+  userName: string | null;
+  text: string | null;
+  replyTo: string | null;
+  metadata: string | null;
+};
 
 export type DoctorReport = {
   botCount: number;
@@ -53,6 +90,7 @@ export type PushMessage = {
 export type Response =
   | { ok: true; report: DoctorReport }
   | { ok: true; bot: string }
+  | { ok: true; messages: HistoryMessage[] }
   | { ok: true }
   | { ok: false; error: string };
 

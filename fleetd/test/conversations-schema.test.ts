@@ -1,5 +1,10 @@
 import { describe, test, expect } from "bun:test";
-import { openConversationsDb, insertMessage, searchMessages } from "../src/db/conversations-schema";
+import {
+  openConversationsDb,
+  insertMessage,
+  searchMessages,
+  getMessagesAround,
+} from "../src/db/conversations-schema";
 import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -155,5 +160,65 @@ describe("session_id column", () => {
     expect(row.message_id).toBe("4321");
     expect(row.reply_to).toBe("4300");
     expect(JSON.parse(row.metadata)).toEqual({ quote_text: "yang ini" });
+  });
+});
+
+describe("history queries", () => {
+  function seed() {
+    const db = openConversationsDb(":memory:");
+    const rows: Array<[string, string, string]> = [
+      ["bot-01", "100", "pesan pertama"],
+      ["bot-01", "101", "pesan kedua tentang backup"],
+      ["bot-01", "102", "pesan ketiga"],
+      ["bot-01", "103", "pesan keempat"],
+      ["bot-02", "200", "rahasia bot lain tentang backup"],
+    ];
+    for (const [bot, messageId, text] of rows) {
+      insertMessage(db, { ts: "2026-07-31T00:00:00Z", bot, chatId: "111", source: "user", messageId, text });
+    }
+    return db;
+  }
+
+  test("returns the anchor message and the ones after it", () => {
+    const found = getMessagesAround(seed(), { bot: "bot-01", messageId: "101", before: 0, after: 2 });
+
+    // "trace a few messages after the one I quoted" -- the exact request spec §9.2
+    // uses as the proof that message_id is useful rather than merely stored.
+    expect(found.map((m) => m.messageId)).toEqual(["101", "102", "103"]);
+  });
+
+  test("includes preceding messages when before is greater than zero, in chronological order", () => {
+    const found = getMessagesAround(seed(), { bot: "bot-01", messageId: "102", before: 2, after: 1 });
+
+    expect(found.map((m) => m.messageId)).toEqual(["100", "101", "102", "103"]);
+  });
+
+  test("an unknown message id returns nothing rather than the newest messages", () => {
+    // Silently falling back to "here is some history" would let the AI answer a
+    // question about a message that was never found, with confident wrong data.
+    expect(getMessagesAround(seed(), { bot: "bot-01", messageId: "999", before: 5, after: 5 })).toEqual([]);
+  });
+
+  test("never returns another bot's messages, even when their ids are adjacent", () => {
+    const found = getMessagesAround(seed(), { bot: "bot-01", messageId: "103", before: 0, after: 5 });
+
+    expect(found.every((m) => m.bot === "bot-01")).toBe(true);
+  });
+
+  test("searchMessages filters by bot and honours limit", () => {
+    const db = seed();
+
+    expect(searchMessages(db, "backup").length).toBe(2); // both bots, unfiltered
+    const mine = searchMessages(db, "backup", { bot: "bot-01" });
+    expect(mine.length).toBe(1);
+    expect(mine[0]?.bot).toBe("bot-01");
+    expect(searchMessages(db, "pesan", { bot: "bot-01", limit: 2 }).length).toBe(2);
+  });
+
+  test("a malformed FTS query throws rather than corrupting results, so callers can catch it", () => {
+    // Verified empirically 2026-07-31: an unbalanced double quote produces
+    // SQLiteError "unterminated string". The AI supplies these keywords, so this
+    // WILL happen -- main.ts turns it into an error response (see below).
+    expect(() => searchMessages(seed(), 'backup"')).toThrow();
   });
 });

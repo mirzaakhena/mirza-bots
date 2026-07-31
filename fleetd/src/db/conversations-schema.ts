@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import type { HistoryMessage } from "../socket/protocol";
 
 // Table only. Indexes, FTS and triggers come after addMissingColumns() below,
 // because idx_messages_session cannot be created until session_id exists on a
@@ -135,10 +136,84 @@ export function encodeMetadata(meta: MessageMetadata): string | undefined {
   return entries.length > 0 ? JSON.stringify(Object.fromEntries(entries)) : undefined;
 }
 
-export function searchMessages(db: Database, query: string): Array<{ id: number; text: string }> {
+const HISTORY_COLUMNS = `m.id AS id, m.ts AS ts, m.bot AS bot, m.chat_id AS chatId,
+  m.message_id AS messageId, m.source AS source, m.user_name AS userName, m.text AS text,
+  m.reply_to AS replyTo, m.metadata AS metadata`;
+
+/**
+ * Messages around a given Telegram message id, in chronological order.
+ *
+ * `bot` is required, never defaulted here: K-3 puts the "default to the caller,
+ * cross bots only on request" decision at the socket handler, which is the one
+ * place that knows who is asking. A default in this function would silently
+ * change what every existing caller of the module sees.
+ *
+ * Returns [] when the anchor is unknown -- deliberately NOT "the newest
+ * messages", which would let the AI answer confidently about a message that was
+ * never found.
+ */
+export function getMessagesAround(
+  db: Database,
+  opts: { bot: string; messageId: string; before: number; after: number }
+): HistoryMessage[] {
+  const anchor = db
+    .query("SELECT id FROM messages WHERE bot = ? AND message_id = ? ORDER BY id DESC LIMIT 1")
+    .get(opts.bot, opts.messageId) as { id: number } | null;
+  if (!anchor) return [];
+
+  const preceding = (
+    opts.before > 0
+      ? (db
+          .query(
+            `SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.bot = ? AND m.id < ? ORDER BY m.id DESC LIMIT ?`
+          )
+          .all(opts.bot, anchor.id, opts.before) as HistoryMessage[])
+      : []
+  ).reverse();
+
+  const anchorRow = db
+    .query(`SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.id = ?`)
+    .get(anchor.id) as HistoryMessage;
+
+  const following =
+    opts.after > 0
+      ? (db
+          .query(
+            `SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.bot = ? AND m.id > ? ORDER BY m.id ASC LIMIT ?`
+          )
+          .all(opts.bot, anchor.id, opts.after) as HistoryMessage[])
+      : [];
+
+  return [...preceding, anchorRow, ...following];
+}
+
+/**
+ * FTS5 keyword search. `opts.bot` is optional here for the same reason as above:
+ * the bot-scoping decision lives at the socket handler. Existing callers that
+ * pass no options keep their unfiltered behaviour.
+ *
+ * Throws on a malformed query (verified: an unbalanced quote gives
+ * "unterminated string"). Deliberately not swallowed -- a silent [] would be
+ * indistinguishable from "no matches", and the AI writes these queries.
+ */
+export function searchMessages(
+  db: Database,
+  query: string,
+  opts: { bot?: string; limit?: number } = {}
+): HistoryMessage[] {
+  const limit = opts.limit ?? 20;
+  if (opts.bot !== undefined) {
+    return db
+      .query(
+        `SELECT ${HISTORY_COLUMNS} FROM messages_fts f JOIN messages m ON m.id = f.rowid
+         WHERE messages_fts MATCH ? AND m.bot = ? ORDER BY m.id DESC LIMIT ?`
+      )
+      .all(query, opts.bot, limit) as HistoryMessage[];
+  }
   return db
     .query(
-      `SELECT m.id, m.text FROM messages_fts f JOIN messages m ON m.id = f.rowid WHERE messages_fts MATCH ?`
+      `SELECT ${HISTORY_COLUMNS} FROM messages_fts f JOIN messages m ON m.id = f.rowid
+       WHERE messages_fts MATCH ? ORDER BY m.id DESC LIMIT ?`
     )
-    .all(query) as Array<{ id: number; text: string }>;
+    .all(query, limit) as HistoryMessage[];
 }

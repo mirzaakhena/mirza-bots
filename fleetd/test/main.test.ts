@@ -2,7 +2,15 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deliverIncoming, normalizeMessage, buildAlbumMessage } from "../src/main";
+import {
+  deliverIncoming,
+  normalizeMessage,
+  buildAlbumMessage,
+  handleHistoryRequest,
+  handleSearchRequest,
+} from "../src/main";
+import { insertMessage } from "../src/db/conversations-schema";
+import type { BoundConnection } from "../src/socket/registry";
 import { openConversationsDb, searchMessages } from "../src/db/conversations-schema";
 import { openFleetDb } from "../src/db/fleet-schema";
 import { ConnectionRegistry } from "../src/socket/registry";
@@ -208,5 +216,77 @@ describe("buildAlbumMessage", () => {
     expect(msg.userId).toBe("111");
     expect(msg.userName).toBe("mirza");
     expect(msg.ts).toBe(new Date(1_800_000_000 * 1000).toISOString());
+  });
+});
+
+describe("history and search socket handlers (K-3: default to the caller's own bot)", () => {
+  function seeded() {
+    const db = openConversationsDb(":memory:");
+    insertMessage(db, { ts: "t", bot: "bot-01", chatId: "111", source: "user", messageId: "100", text: "punya bot-01 tentang backup" });
+    insertMessage(db, { ts: "t", bot: "bot-01", chatId: "111", source: "user", messageId: "101", text: "lanjutan bot-01" });
+    insertMessage(db, { ts: "t", bot: "bot-02", chatId: "222", source: "user", messageId: "100", text: "punya bot-02 tentang backup" });
+    return db;
+  }
+  const twoBots: Config = {
+    allowFrom: ["111"],
+    bots: { "bot-01": { home: "/tmp/bot-01", token: "t" }, "bot-02": { home: "/tmp/bot-02", token: "t" } },
+  };
+  const conn = (boundBot: string | null): BoundConnection => ({ send: () => {}, boundBot });
+
+  test("history defaults to the calling bot and never leaks another bot's messages", () => {
+    const res = handleHistoryRequest({ type: "history", messageId: "100" }, conn("bot-01"), twoBots, seeded());
+
+    // bot-02 also has a message_id 100. Defaulting wrong here would hand one
+    // bot's private conversation to another bot's AI with no one asking for it.
+    expect(res).toMatchObject({ ok: true });
+    const messages = (res as { ok: true; messages: any[] }).messages;
+    expect(messages.length).toBeGreaterThan(0);
+    expect(messages.every((m) => m.bot === "bot-01")).toBe(true);
+    expect(messages.some((m) => m.text.includes("bot-02"))).toBe(false);
+  });
+
+  test("history crosses to another bot only when the bot parameter is given explicitly", () => {
+    const res = handleHistoryRequest(
+      { type: "history", messageId: "100", bot: "bot-02" },
+      conn("bot-01"),
+      twoBots,
+      seeded()
+    );
+
+    const messages = (res as { ok: true; messages: any[] }).messages;
+    expect(messages.every((m) => m.bot === "bot-02")).toBe(true);
+  });
+
+  test("search defaults to the calling bot and never leaks another bot's messages", () => {
+    const res = handleSearchRequest({ type: "search", query: "backup" }, conn("bot-01"), twoBots, seeded());
+
+    const messages = (res as { ok: true; messages: any[] }).messages;
+    // Both bots have a message containing "backup"; only one is the caller's.
+    expect(messages.length).toBe(1);
+    expect(messages[0].bot).toBe("bot-01");
+  });
+
+  test("a connection that never said hello cannot read any history at all", () => {
+    expect(handleHistoryRequest({ type: "history", messageId: "100" }, conn(null), twoBots, seeded()))
+      .toEqual({ ok: false, error: "not_identified" });
+    expect(handleSearchRequest({ type: "search", query: "backup" }, conn(null), twoBots, seeded()))
+      .toEqual({ ok: false, error: "not_identified" });
+  });
+
+  test("naming a bot that is not in the config is rejected rather than silently returning nothing", () => {
+    expect(
+      handleSearchRequest({ type: "search", query: "backup", bot: "bot-99" }, conn("bot-01"), twoBots, seeded())
+    ).toEqual({ ok: false, error: "unknown_bot" });
+  });
+
+  test("a malformed FTS query is answered with an error instead of throwing out of the handler", () => {
+    // Verified: an unbalanced quote makes SQLite throw. The AI writes these
+    // queries, so this is a normal input, not an exotic one. Throwing here would
+    // reach the socket server's catch-all as handler_failed -- answerable, but
+    // useless to the AI, which cannot tell it should just rephrase.
+    const res = handleSearchRequest({ type: "search", query: 'backup"' }, conn("bot-01"), twoBots, seeded());
+
+    expect(res).toMatchObject({ ok: false });
+    expect((res as { ok: false; error: string }).error).toContain("bad_search_query");
   });
 });

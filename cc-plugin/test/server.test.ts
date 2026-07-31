@@ -241,4 +241,87 @@ describe("cc-plugin MCP server", () => {
     await mcpClient.close();
     await server.close();
   });
+
+  test("the read_history tool proxies to FleetdClient.history and returns the rows as JSON", async () => {
+    const calls: any[] = [];
+    const row = {
+      id: 7, ts: "t", bot: "bot-01", chatId: "111", messageId: "101", source: "user",
+      userName: "mirza", text: "pesan kedua", replyTo: null, metadata: null,
+    };
+    const client = fakeFleetdClient({
+      history: async (opts: any) => {
+        calls.push(opts);
+        return [row];
+      },
+    });
+    const server = buildServer(client);
+
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+
+    const result: any = await mcpClient.callTool({
+      name: "read_history",
+      arguments: { message_id: "101", after: 3 },
+    });
+
+    // snake_case at the tool boundary (what the AI sees, matching the meta keys
+    // it was given), camelCase on the wire.
+    expect(calls).toEqual([{ messageId: "101", after: 3 }]);
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain("pesan kedua");
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("the search_history tool proxies to FleetdClient.search and passes an explicit bot through", async () => {
+    const calls: any[] = [];
+    const client = fakeFleetdClient({
+      search: async (opts: any) => {
+        calls.push(opts);
+        return [];
+      },
+    });
+    const server = buildServer(client);
+
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+
+    const result: any = await mcpClient.callTool({
+      name: "search_history",
+      arguments: { query: "backup", bot: "bot-02" },
+    });
+
+    // Crossing to another bot happens ONLY because `bot` was named (K-3).
+    expect(calls).toEqual([{ query: "backup", bot: "bot-02" }]);
+    // An empty result reads as words, not as "[]" -- the AI should not have to
+    // parse an empty array to learn nothing matched.
+    expect(result.content[0].text).toContain("No messages");
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("a search that fleetd refuses comes back as a tool error, not as an empty result", async () => {
+    const client = fakeFleetdClient({
+      search: async () => {
+        throw new Error("request rejected: bad_search_query: unterminated string");
+      },
+    });
+    const server = buildServer(client);
+
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+
+    const result: any = await mcpClient.callTool({ name: "search_history", arguments: { query: 'backup"' } });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("bad_search_query");
+
+    await mcpClient.close();
+    await server.close();
+  });
 });

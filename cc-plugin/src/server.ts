@@ -57,6 +57,57 @@ export function buildServer(client: FleetdClient): McpServer {
     }
   );
 
+  // Renders history rows for the AI. JSON rather than prose: this is data the AI
+  // asked for, and it must be visibly data. Note that the rows contain the
+  // sender's own words -- that is fine here and is NOT the SCAR-088 case, which
+  // is about sender text arriving as the incoming message being acted on.
+  const renderMessages = (messages: unknown[]) =>
+    messages.length === 0 ? "No messages found." : JSON.stringify(messages, null, 2);
+
+  server.registerTool(
+    "read_history",
+    {
+      description:
+        "Read stored conversation history around a Telegram message id. Use this when a message quotes or replies to an earlier one and you need what came before or after it -- the quoted message's id arrives as `reply_to_message_id` in a notification's meta. Defaults to this session's own bot; pass `bot` only when deliberately looking at another bot's conversation.",
+      inputSchema: {
+        message_id: z.string().min(1),
+        before: z.number().int().min(0).max(50).optional(),
+        after: z.number().int().min(0).max(50).optional(),
+        bot: z.string().min(1).optional(),
+      },
+    },
+    async ({ message_id, before, after, bot }) => {
+      const messages = await client.history({
+        messageId: message_id,
+        ...(before !== undefined ? { before } : {}),
+        ...(after !== undefined ? { after } : {}),
+        ...(bot !== undefined ? { bot } : {}),
+      });
+      return { content: [{ type: "text", text: renderMessages(messages) }] };
+    }
+  );
+
+  server.registerTool(
+    "search_history",
+    {
+      description:
+        "Search stored conversation history by keyword (SQLite FTS5). Defaults to this session's own bot; pass `bot` only when deliberately searching another bot's conversation. Keep queries to plain words -- quotes and operators like AND/OR are rejected by the search engine.",
+      inputSchema: {
+        query: z.string().min(1),
+        limit: z.number().int().min(1).max(50).optional(),
+        bot: z.string().min(1).optional(),
+      },
+    },
+    async ({ query, limit, bot }) => {
+      const messages = await client.search({
+        query,
+        ...(limit !== undefined ? { limit } : {}),
+        ...(bot !== undefined ? { bot } : {}),
+      });
+      return { content: [{ type: "text", text: renderMessages(messages) }] };
+    }
+  );
+
   client.onPush((msg) => {
     // SCAR-056: Claude Code's notification meta schema is Record<string,string>
     // strictly -- fleetd's PushMessage.meta is already typed that way, but this

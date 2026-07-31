@@ -435,6 +435,23 @@ describe("socket server", () => {
     expect(registry.sessionIdFor("bot-01")).toBe("sess-abc");
   });
 
+  test("a history request with a bad shape is rejected by zod at the boundary", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    server = startSocketServer(sockPath, testConfig, () => ({ ok: true, messages: [] }), new ConnectionRegistry());
+
+    // after as a string, and a search with no query at all: fleetd is the single
+    // point of validation, so neither may reach a handler.
+    const badAfter = await sendRaw(sockPath, encode({ type: "history", messageId: "1", after: "lots" }));
+    expect(JSON.parse(badAfter)).toEqual({ ok: false, error: "bad_request" });
+
+    const noQuery = await sendRaw(sockPath, encode({ type: "search" }));
+    expect(JSON.parse(noQuery)).toEqual({ ok: false, error: "bad_request" });
+
+    const good = await sendRaw(sockPath, encode({ type: "history", messageId: "1", after: 3 }));
+    expect(JSON.parse(good)).toEqual({ ok: true, messages: [] });
+  });
+
   // These two exist because main.ts used to announce "fleetd listening on ..."
   // unconditionally, right after this function returned. listen() is asynchronous,
   // so the announcement was printed even when the bind then failed -- observed in

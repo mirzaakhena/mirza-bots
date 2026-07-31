@@ -9,9 +9,9 @@ import {
 } from "./paths";
 import { loadConfig } from "./config";
 import { openFleetDb } from "./db/fleet-schema";
-import { openConversationsDb } from "./db/conversations-schema";
+import { openConversationsDb, getMessagesAround, searchMessages } from "./db/conversations-schema";
 import { startSocketServer } from "./socket/server";
-import { ConnectionRegistry } from "./socket/registry";
+import { ConnectionRegistry, type BoundConnection } from "./socket/registry";
 import { buildDoctorReport } from "./doctor";
 import {
   handleIncomingMessage,
@@ -23,7 +23,15 @@ import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
 import { safeName, MAX_DOCUMENT_BYTES } from "./telegram/media";
 import { drainQueue } from "./db/bot-inbox";
-import type { Request, Response, ButtonRow } from "./socket/protocol";
+import type {
+  Request,
+  Response,
+  ButtonRow,
+  HistoryRequest,
+  SearchRequest,
+} from "./socket/protocol";
+import type { Database } from "bun:sqlite";
+import type { Config } from "./config";
 import pkg from "../package.json";
 
 const VERSION = pkg.version;
@@ -83,6 +91,67 @@ export function normalizeMessage(
     ts: new Date((ids.dateSeconds ?? Date.now() / 1000) * 1000).toISOString(),
     ...payload,
   };
+}
+
+/**
+ * Resolves which bot's history a request may read.
+ *
+ * K-3: "default read = your own conversation; peeking at another bot goes
+ * through an explicit tool." So an absent `bot` means the caller's own, and
+ * naming another one is the deliberate act. An unconfigured name is an error
+ * rather than an empty result -- the AI must be able to tell "no such bot" apart
+ * from "nothing matched".
+ */
+function resolveRequestedBot(
+  requested: string | undefined,
+  conn: BoundConnection,
+  config: Config
+): { ok: true; bot: string } | { ok: false; error: string } {
+  if (!conn.boundBot) return { ok: false, error: "not_identified" };
+  const bot = requested ?? conn.boundBot;
+  if (!(bot in config.bots)) return { ok: false, error: "unknown_bot" };
+  return { ok: true, bot };
+}
+
+export function handleHistoryRequest(
+  req: HistoryRequest,
+  conn: BoundConnection,
+  config: Config,
+  db: Database
+): Response {
+  const target = resolveRequestedBot(req.bot, conn, config);
+  if (!target.ok) return target;
+
+  return {
+    ok: true,
+    messages: getMessagesAround(db, {
+      bot: target.bot,
+      messageId: req.messageId,
+      before: req.before ?? 0,
+      // Defaults to looking forward: the motivating request is "trace a few
+      // messages AFTER the one I quoted" (spec §9.2).
+      after: req.after ?? 10,
+    }),
+  };
+}
+
+export function handleSearchRequest(
+  req: SearchRequest,
+  conn: BoundConnection,
+  config: Config,
+  db: Database
+): Response {
+  const target = resolveRequestedBot(req.bot, conn, config);
+  if (!target.ok) return target;
+
+  try {
+    return { ok: true, messages: searchMessages(db, req.query, { bot: target.bot, limit: req.limit ?? 20 }) };
+  } catch (err) {
+    // FTS5 rejects plenty of ordinary-looking input (an unbalanced quote, a
+    // trailing AND). The AI writes these queries, so name the problem in a way
+    // that tells it to rephrase rather than leaving it a generic handler crash.
+    return { ok: false, error: `bad_search_query: ${err}` };
+  }
 }
 
 export type AlbumItem = {
@@ -420,6 +489,12 @@ export function main(): void {
           return { ok: false, error: `send_failed: ${err}` };
         }
         return { ok: true };
+      }
+      if (req.type === "history") {
+        return handleHistoryRequest(req, conn, config, conversationsDb);
+      }
+      if (req.type === "search") {
+        return handleSearchRequest(req, conn, config, conversationsDb);
       }
       return { ok: false, error: "unknown_type" };
     },
