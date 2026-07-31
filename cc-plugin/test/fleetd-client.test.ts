@@ -165,7 +165,20 @@ describe("FleetdClient when fleetd goes away", () => {
     await withTimeout(client.connect(sockPath, "/fake/cwd"));
 
     const inFlight = client.reply("balasan yang tidak akan pernah dijawab");
-    await expect(withTimeout(inFlight)).rejects.toThrow(/connection lost/i);
+    // Caught with try/catch rather than `expect(...).rejects`: on Windows that
+    // matcher does not let the event loop deliver the socket "close" this
+    // rejection depends on, so the assertion hangs indefinitely even though the
+    // client behaves correctly. A harness artifact, not a client bug -- awaiting
+    // the promise plainly settles it on both platforms. The other two tests in
+    // this block keep `.rejects` because their rejections do not wait on a socket
+    // event.
+    let failure: unknown;
+    try {
+      await withTimeout(inFlight);
+    } catch (err) {
+      failure = err;
+    }
+    expect(String(failure)).toMatch(/connection lost/i);
 
     expect(capturedConn).toBeDefined();
     client.close();

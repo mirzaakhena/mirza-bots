@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname, basename } from "node:path";
 
 // A minimal fake Telegram Bot API covering exactly the calls grammy's polling
 // loop, sendMessage, and callback_query handling make: deleteWebhook (called
@@ -125,6 +125,49 @@ async function connectToFleetd(sockPath: string): Promise<{
   return { client, lines, pushes };
 }
 
+// Readiness gate for a spawned fleetd.
+//
+// Deliberately NOT fs.existsSync(): on Windows the socket is a real AF_UNIX
+// endpoint whose backing file cannot be stat()ed (EACCES), so existsSync answers
+// false for a perfectly healthy socket and the old gate failed there while the
+// daemon was up and serving. readdir() has no such problem -- it lists the entry
+// on both platforms -- so the directory listing is the portable way to ask.
+//
+// Probing with a connect attempt instead would be the stronger assertion, but a
+// connect to a not-yet-bound socket emits an error that bun's test runner
+// attributes to the running test even when a listener handles it. Waiting for the
+// entry to appear first keeps us from ever connecting into the void; the doctor
+// call that follows is the real functional proof that fleetd is answering.
+async function waitForFleetdSocket(
+  sockPath: string,
+  proc: Bun.Subprocess,
+  budgetMs = 8000
+): Promise<void> {
+  const dir = dirname(sockPath);
+  const name = basename(sockPath);
+  for (let waited = 0; waited < budgetMs; waited += 100) {
+    if (readdirSync(dir).includes(name)) return;
+    await Bun.sleep(100);
+  }
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  throw new Error(
+    `fleetd socket never appeared at ${sockPath} after ${budgetMs}ms.\n` +
+      `--- fleetd stdout ---\n${stdout}\n--- fleetd stderr ---\n${stderr}`
+  );
+}
+
+// Tears down a spawned fleetd and its temp state dir. Awaiting `exited` is load
+// bearing on Windows: kill() only asks, and until the child is really gone it
+// still holds the SQLite and socket handles, which makes rmSync throw EBUSY.
+async function stopFleetdAndCleanup(proc: Bun.Subprocess, home: string): Promise<void> {
+  proc.kill();
+  await proc.exited;
+  rmSync(home, { recursive: true, force: true });
+}
+
 // Polls conversations.db directly (no socket query API yet) until `term` shows up
 // or the budget runs out; returns how many matches were found.
 async function waitForStoredMessage(convDbPath: string, term: string, budgetMs = 8000) {
@@ -181,29 +224,13 @@ describe("fleetd end-to-end", () => {
     });
   });
 
-  afterAll(() => {
-    fleetdProc.kill();
-    rmSync(home, { recursive: true, force: true });
+  afterAll(async () => {
+    await stopFleetdAndCleanup(fleetdProc, home);
   });
 
   test("doctor reports 1 registered bot and all fleet tables", async () => {
     const sockPath = join(home, "fleetd.sock");
-    let waited = 0;
-    while (!existsSync(sockPath) && waited < 3000) {
-      await Bun.sleep(100);
-      waited += 100;
-    }
-    if (!existsSync(sockPath)) {
-      const [stdout, stderr] = await Promise.all([
-        new Response(fleetdProc.stdout).text(),
-        new Response(fleetdProc.stderr).text(),
-      ]);
-      throw new Error(
-        `fleetd socket never appeared at ${sockPath} after ${waited}ms.\n` +
-          `--- fleetd stdout ---\n${stdout}\n--- fleetd stderr ---\n${stderr}`
-      );
-    }
-    expect(existsSync(sockPath)).toBe(true);
+    await waitForFleetdSocket(sockPath, fleetdProc);
 
     const doctorProc = Bun.spawn(["bun", "run", "bin/fleetd-doctor.ts"], {
       cwd: root,
@@ -218,7 +245,9 @@ describe("fleetd end-to-end", () => {
     expect(parsed.report.botCount).toBe(1);
     expect(parsed.report.fleetTables.length).toBe(5);
     expect(parsed.report.conversationsReady).toBe(true);
-  });
+    // Above bun's 5s default: spawning the daemon plus the readiness budget can
+    // legitimately exceed it on a cold or slow machine.
+  }, 20000);
 });
 
 // New describe block -- separate from Tahap 1's, so it gets its own beforeAll/afterAll
@@ -269,10 +298,9 @@ describe("fleetd Tahap 2 end-to-end: poll, store, push, reply", () => {
     });
   });
 
-  afterAll(() => {
-    fleetdProc.kill();
+  afterAll(async () => {
     fake.server.stop(true);
-    rmSync(home, { recursive: true, force: true });
+    await stopFleetdAndCleanup(fleetdProc, home);
   });
 
   test("an update from the fake Telegram API is stored, then reply sends via the fake API", async () => {
@@ -393,10 +421,9 @@ describe("fleetd Tahap 2 end-to-end: buttons", () => {
     });
   });
 
-  afterAll(() => {
-    fleetdProc.kill();
+  afterAll(async () => {
     fake.server.stop(true);
-    rmSync(home, { recursive: true, force: true });
+    await stopFleetdAndCleanup(fleetdProc, home);
   });
 
   test("a button press is acknowledged via answerCallbackQuery and stored/pushed, then reply-with-buttons sends the right reply_markup", async () => {
