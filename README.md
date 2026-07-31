@@ -45,7 +45,7 @@ sesi).
 - **`doctor`** — status check yang melaporkan jumlah bot terdaftar, tabel
   yang ada, dan kesiapan kedua database.
 
-### Jalur pesan (Tahap 2)
+### Jalur pesan masuk (Tahap 2 + 2.5-MASUK)
 
 - **Poller Telegram** (satu per bot, lewat grammy) menerima:
   - **teks**,
@@ -67,6 +67,26 @@ sesi).
   `fleetd.sock`, mengenalkan diri lewat `hello` (identitasnya = folder kerja
   sesi), menyediakan tool **`reply`** (teks + tombol opsional) untuk membalas
   ke Telegram, dan meneruskan pesan masuk ke sesi sebagai notifikasi.
+
+- **Dokumen** (PDF, zip, `.md`, `.log`, `.txt`) diunduh otomatis sampai **20 MB**
+  — batas Telegram sendiri untuk bot, jadi tidak ada aturan tambahan yang perlu
+  diingat. Di atas itu berkasnya tidak diambil dan AI diberi tahu (nama +
+  ukuran lewat `meta`, plus satu kalimat pemberitahuan di isi pesan) — ditolak,
+  bukan didiamkan. Nama berkas kiriman pengirim selalu lewat `safeName()`.
+- **Kutipan (quote-reply) arah masuk.** Baik kutip seluruh pesan maupun seleksi
+  sebagian: teks kutipannya ikut ke AI lewat `meta` (`quote_text`,
+  `quote_is_manual`) dan id pesan yang dikutip lewat `reply_to_message_id`.
+- **Album yang dikeraskan:** maksimum 10 item, diurutkan `message_id` menaik
+  (bukan urutan tiba), satu foto gagal unduh tidak lagi menjatuhkan seluruh
+  pesan, dan caption dari beberapa foto sekaligus diberi label `Photo <n>:`.
+- **Dua tool riwayat untuk AI:** `read_history` (ambil pesan di sekitar sebuah
+  `message_id` — inilah yang membuat "telusuri beberapa pesan setelah yang saya
+  kutip" bisa dijawab) dan `search_history` (cari kata kunci, lewat FTS5).
+  Keduanya **default ke bot pemanggil**; melihat percakapan bot lain hanya
+  terjadi kalau parameter `bot` disebut sengaja.
+- **Belum ditangani, disengaja:** voice note, video, video_note, dan sticker.
+  Pesan jenis itu diabaikan diam-diam — kalau suatu hari muncul keluhan "kok
+  bot-nya diam?", ini kandidat pertama yang diperiksa, bukan misteri baru.
 
 Yang **belum** ada (menyusul di tahap berikutnya): PTY `bot-cc`,
 handoff/delegasi antar-bot, routing sesi yang sebenarnya (untuk sekarang
