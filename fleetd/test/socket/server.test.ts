@@ -434,4 +434,104 @@ describe("socket server", () => {
     expect(JSON.parse(line)).toEqual({ ok: true, bot: "bot-01" });
     expect(registry.sessionIdFor("bot-01")).toBe("sess-abc");
   });
+
+  // These two exist because main.ts used to announce "fleetd listening on ..."
+  // unconditionally, right after this function returned. listen() is asynchronous,
+  // so the announcement was printed even when the bind then failed -- observed in
+  // the wild as "listening on X" immediately followed by "Failed to listen at X",
+  // leaving a daemon that was alive, deaf, and claiming to be healthy. Reporting
+  // has to be driven by the socket's own events, and they have to be subscribed
+  // before listen() is called, not by the caller afterwards.
+  test("onListening fires only once the server is really accepting connections", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+
+    let listeningCalls = 0;
+    let listenError: Error | undefined;
+    // Awaited rather than asserted straight after a round-trip: bun can emit
+    // "listening" a tick or two after the socket is already accepting, so ordering
+    // the two against each other would make this test flaky for no good reason.
+    // What matters is that the callback fires at all, exactly once.
+    const listening = new Promise<void>((resolve) => {
+      server = startSocketServer(
+        sockPath,
+        testConfig,
+        () => ({ ok: true }),
+        new ConnectionRegistry(),
+        undefined,
+        () => {
+          listeningCalls++;
+          resolve();
+        },
+        (err) => (listenError = err)
+      );
+    });
+    await listening;
+
+    // And a request actually being answered is the proof the announcement was honest.
+    const line = await sendRaw(sockPath, encode({ type: "doctor" }));
+    expect(JSON.parse(line)).toEqual({ ok: true });
+    expect(listeningCalls).toBe(1);
+    expect(listenError).toBeUndefined();
+  });
+
+  // Attaching an "error" listener at all stops node from raising it as an unhandled
+  // error event, so the listener now owns every socket error -- including the ones
+  // that arrive long after a successful bind. Those are a different class (accept
+  // failures, not a failed startup) and must neither be mistaken for a bind failure
+  // nor quietly dropped on the floor.
+  test("an error after the bind succeeded is still reported, but not as a listen failure", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+
+    const listenErrors: Error[] = [];
+    const listening = new Promise<void>((resolve) => {
+      server = startSocketServer(
+        sockPath,
+        testConfig,
+        () => ({ ok: true }),
+        new ConnectionRegistry(),
+        undefined,
+        resolve,
+        (err) => listenErrors.push(err)
+      );
+    });
+    await listening;
+
+    const reported: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => reported.push(args.map(String).join(" "));
+    try {
+      server!.emit("error", new Error("boom after bind"));
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(listenErrors).toEqual([]);
+    expect(reported.join("\n")).toContain("boom after bind");
+  });
+
+  test("onListenError fires when the socket cannot be bound, and onListening never does", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    // Parent directory deliberately absent: bind fails with ENOENT on both
+    // platforms, and the path never existing means the stale-socket unlink above
+    // is not involved in the failure.
+    const sockPath = join(tmp, "no-such-dir", "fleetd.sock");
+
+    let listeningCalls = 0;
+    const failed = await new Promise<Error>((resolve) => {
+      server = startSocketServer(
+        sockPath,
+        testConfig,
+        () => ({ ok: true }),
+        new ConnectionRegistry(),
+        undefined,
+        () => listeningCalls++,
+        resolve
+      );
+    });
+
+    expect(failed).toBeInstanceOf(Error);
+    expect(listeningCalls).toBe(0);
+  });
 });

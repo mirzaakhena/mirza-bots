@@ -302,10 +302,25 @@ export function main(): void {
       if (queued.length === 0) return;
       console.log(`fleetd: delivering ${queued.length} queued message(s) to ${bot}`);
       for (const msg of queued) conn.send(msg);
+    },
+    // Announced from the socket's own "listening" event rather than on the line
+    // after this call: listen() is asynchronous, so anything printed here would be
+    // a guess. It used to guess wrong -- claiming to listen and then failing to
+    // bind, in that order, in the same process.
+    () => {
+      console.log(
+        `fleetd listening on ${sockPath}, ${Object.keys(config.bots).length} bot(s) polling`
+      );
+    },
+    // A daemon that cannot accept connections is deaf: every bot it serves goes
+    // quiet with no way to tell a broken fleetd from a quiet user. Staying alive
+    // would hide exactly that, so this is fatal on purpose.
+    (err) => {
+      console.error(`fleetd: cannot listen on ${sockPath}: ${err}`);
+      console.error("fleetd: exiting -- a daemon that cannot accept connections serves no one.");
+      process.exit(1);
     }
   );
-
-  console.log(`fleetd listening on ${sockPath}, ${Object.keys(config.bots).length} bot(s) polling`);
 }
 
 if (import.meta.main) {

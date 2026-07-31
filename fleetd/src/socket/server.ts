@@ -18,12 +18,22 @@ function resolveBotByCwd(config: Config, cwd: string): string | null {
   return null;
 }
 
+// Called once the socket is genuinely accepting connections, and once if the bind
+// fails instead. They exist because listen() is asynchronous: a caller that
+// announces success on the line after startSocketServer() returns is guessing, and
+// main.ts used to guess wrong -- printing "fleetd listening on X" and then failing
+// to bind, leaving a daemon alive, deaf, and claiming to be healthy.
+export type OnListening = () => void;
+export type OnListenError = (err: Error) => void;
+
 export function startSocketServer(
   sockPath: string,
   config: Config,
   handle: Handler,
   registry: ConnectionRegistry,
-  onBind?: OnBind
+  onBind?: OnBind,
+  onListening?: OnListening,
+  onListenError?: OnListenError
 ): net.Server {
   if (existsSync(sockPath)) unlinkSync(sockPath);
 
@@ -94,6 +104,29 @@ export function startSocketServer(
       // Client disconnected mid-write; close handler above still fires and unregisters.
     });
   });
+
+  // Both subscribed BEFORE listen(), so neither event can be missed in the gap
+  // between listen() and the caller getting the server back.
+  let isListening = false;
+  server.once("listening", () => {
+    isListening = true;
+    onListening?.();
+  });
+  // Only attached when the caller supplied a handler: without one, a bind failure
+  // must keep escaping as it does today rather than being silently swallowed here.
+  if (onListenError) {
+    server.on("error", (err) => {
+      if (!isListening) {
+        onListenError(err);
+        return;
+      }
+      // Past the bind, this is no longer a startup failure and must not be reported
+      // as one. It still has to be surfaced though: subscribing to "error" at all
+      // stops node from raising it as an unhandled error event, so staying quiet
+      // here would trade one silent failure for another.
+      console.error(`fleetd: socket server error after listening: ${err}`);
+    });
+  }
 
   server.listen(sockPath);
   return server;

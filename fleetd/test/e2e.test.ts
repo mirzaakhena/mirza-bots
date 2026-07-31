@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, writeFileSync, existsSync, rmSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, basename } from "node:path";
 
@@ -247,6 +247,61 @@ describe("fleetd end-to-end", () => {
     expect(parsed.report.conversationsReady).toBe(true);
     // Above bun's 5s default: spawning the daemon plus the readiness budget can
     // legitimately exceed it on a cold or slow machine.
+  }, 20000);
+});
+
+// The regression test for the bug as it was actually met: fleetd printed
+// "fleetd listening on <path>" and then, in the same process, "Failed to listen at
+// <path>" -- and stayed alive, deaf, with its only status message claiming health.
+// A daemon nobody can connect to must fail loudly, not quietly.
+describe("fleetd when it cannot bind its socket", () => {
+  const root = join(import.meta.dir, "..");
+  let outer: string;
+
+  afterAll(() => {
+    if (outer) rmSync(outer, { recursive: true, force: true });
+  });
+
+  test("it reports the failure and exits instead of announcing that it is listening", async () => {
+    outer = mkdtempSync(join(tmpdir(), "mirza-bots-e2e-nobind-"));
+    // A socket path longer than sockaddr_un's sun_path (108 bytes on Linux and
+    // Windows, 104 on macOS) cannot be bound anywhere, which makes this a portable
+    // way to force the exact failure -- and it is how the bug surfaced in the first
+    // place, from a state dir that simply sat too deep.
+    const home = join(outer, "d".repeat(100));
+    mkdirSync(home, { recursive: true });
+    writeFileSync(
+      join(home, "config.json"),
+      JSON.stringify({
+        allowFrom: ["111"],
+        bots: { "bot-01": { home: "/tmp/bot-01", token: "fake:token" } },
+      })
+    );
+
+    const proc = Bun.spawn(["bun", "run", "src/main.ts"], {
+      cwd: root,
+      env: { ...process.env, MIRZA_BOTS_HOME: home, TELEGRAM_API_ROOT: "http://127.0.0.1:1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const outcome = await Promise.race([proc.exited, Bun.sleep(10000).then(() => "hung" as const)]);
+    // Killing first so the piped streams close and the reads below can settle.
+    if (outcome === "hung") proc.kill();
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    // Same reason as stopFleetdAndCleanup: afterAll cannot remove the temp dir on
+    // Windows until the child has really let go of it.
+    await proc.exited;
+
+    // The heart of it: never claim to be listening when the bind did not happen.
+    expect(stdout).not.toContain("listening");
+    expect(stderr).toContain("cannot listen");
+    // Staying alive is the failure mode that hid this for so long.
+    expect(outcome).not.toBe("hung");
+    expect(outcome).not.toBe(0);
   }, 20000);
 });
 
