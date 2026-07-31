@@ -20,6 +20,7 @@ import {
   type PollerDeps,
 } from "./telegram/poller";
 import { AlbumBuffer } from "./telegram/album-buffer";
+import { extractQuote } from "./telegram/quote";
 import { drainQueue } from "./db/bot-inbox";
 import type { Request, Response, ButtonRow } from "./socket/protocol";
 import pkg from "../package.json";
@@ -60,7 +61,10 @@ export function normalizeMessage(
     dateSeconds?: number;
     messageId?: string | number;
   },
-  payload: Pick<NormalizedMessage, "text" | "photoUrls" | "callbackData">
+  payload: Pick<
+    NormalizedMessage,
+    "text" | "photoUrls" | "callbackData" | "replyTo" | "quoteText" | "quoteIsManual"
+  >
 ): NormalizedMessage {
   return {
     bot: botName,
@@ -170,6 +174,7 @@ export function main(): void {
     );
 
     bot.on("message:text", async (ctx) => {
+      const quote = extractQuote(ctx.message);
       await deliver(
         normalizeMessage(
           botName,
@@ -180,7 +185,12 @@ export function main(): void {
             dateSeconds: ctx.message.date,
             messageId: ctx.message.message_id,
           },
-          { text: ctx.message.text }
+          {
+            text: ctx.message.text,
+            replyTo: quote.replyToMessageId,
+            quoteText: quote.text,
+            quoteIsManual: quote.isManual,
+          }
         )
       );
     });
@@ -198,6 +208,7 @@ export function main(): void {
         return;
       }
 
+      const quote = extractQuote(ctx.message);
       await deliver(
         normalizeMessage(
           botName,
@@ -208,7 +219,13 @@ export function main(): void {
             dateSeconds: ctx.message.date,
             messageId: ctx.message.message_id,
           },
-          { text: ctx.message.caption, photoUrls: [url] }
+          {
+            text: ctx.message.caption,
+            photoUrls: [url],
+            replyTo: quote.replyToMessageId,
+            quoteText: quote.text,
+            quoteIsManual: quote.isManual,
+          }
         )
       );
     });

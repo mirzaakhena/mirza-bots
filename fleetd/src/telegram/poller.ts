@@ -5,7 +5,7 @@ import type { ConnectionRegistry } from "../socket/registry";
 import type { PushMessage } from "../socket/protocol";
 import { isAllowed } from "./allowlist";
 import { downloadToFile } from "./media";
-import { insertMessage } from "../db/conversations-schema";
+import { insertMessage, encodeMetadata, type MessageMetadata } from "../db/conversations-schema";
 import { queueMessage } from "../db/bot-inbox";
 import { join } from "node:path";
 
@@ -23,6 +23,10 @@ export type NormalizedMessage = {
   callbackData?: string;
   // Telegram message id this one replies to (Task 3 fills it).
   replyTo?: string;
+  // The quoted text, and whether the human hand-selected it. Both reach the AI
+  // through meta only (SCAR-088) -- they are the sender's words, not ours.
+  quoteText?: string;
+  quoteIsManual?: boolean;
   ts: string;
 };
 
@@ -66,6 +70,13 @@ export async function handleIncomingMessage(
   // between the two would let them disagree if a connection dropped in between.
   const sessionId = deps.registry.sessionIdFor(msg.bot);
 
+  // quote_is_manual is recorded only alongside a quote: on its own it would be a
+  // fact about a quote that does not exist.
+  const metadata: MessageMetadata = {
+    ...(msg.quoteText !== undefined ? { quote_text: msg.quoteText } : {}),
+    ...(msg.quoteText !== undefined ? { quote_is_manual: msg.quoteIsManual === true } : {}),
+  };
+
   insertMessage(deps.conversationsDb, {
     ts: msg.ts,
     bot: msg.bot,
@@ -77,6 +88,7 @@ export async function handleIncomingMessage(
     text: displayText,
     attachments: attachments.length > 0 ? JSON.stringify(attachments) : undefined,
     replyTo: msg.replyTo,
+    metadata: encodeMetadata(metadata),
     sessionId,
   });
 
@@ -93,6 +105,10 @@ export async function handleIncomingMessage(
       // literal string "undefined" in front of the AI.
       ...(msg.messageId !== undefined ? { message_id: msg.messageId } : {}),
       ...(sessionId !== undefined ? { session_id: sessionId } : {}),
+      ...(msg.replyTo !== undefined ? { reply_to_message_id: msg.replyTo } : {}),
+      ...(msg.quoteText !== undefined
+        ? { quote_text: msg.quoteText, quote_is_manual: String(msg.quoteIsManual === true) }
+        : {}),
       ...(attachments.length > 0 ? { attachments: attachments.join(",") } : {}),
     },
   };

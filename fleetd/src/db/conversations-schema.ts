@@ -109,6 +109,32 @@ export function insertMessage(db: Database, msg: NewMessage): number {
   return Number(result.lastInsertRowid);
 }
 
+/**
+ * What goes in the `metadata` JSON column. One declared shape rather than
+ * ad-hoc object literals at each call site, because three different features
+ * (quotes, albums, documents) write into the same column and every reader --
+ * including the history tool -- has to parse whatever they agreed on.
+ *
+ * NOTE: `kind` here is the ATTACHMENT kind (photo/album/document). It is not the
+ * same field as `meta.kind` on a PushMessage, which is message-vs-callback.
+ */
+export type MessageMetadata = {
+  quote_text?: string;
+  quote_is_manual?: boolean;
+  message_ids?: string[];
+  kind?: "photo" | "album" | "document";
+};
+
+/**
+ * Serializes metadata, or returns undefined when there is genuinely nothing to
+ * record -- so the column holds NULL rather than the string "{}", which every
+ * later reader would have to special-case as "present but empty".
+ */
+export function encodeMetadata(meta: MessageMetadata): string | undefined {
+  const entries = Object.entries(meta).filter(([, v]) => v !== undefined);
+  return entries.length > 0 ? JSON.stringify(Object.fromEntries(entries)) : undefined;
+}
+
 export function searchMessages(db: Database, query: string): Array<{ id: number; text: string }> {
   return db
     .query(
