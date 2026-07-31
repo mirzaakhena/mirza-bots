@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { deliverIncoming, normalizeMessage } from "../src/main";
+import { deliverIncoming, normalizeMessage, buildAlbumMessage } from "../src/main";
 import { openConversationsDb, searchMessages } from "../src/db/conversations-schema";
 import { openFleetDb } from "../src/db/fleet-schema";
 import { ConnectionRegistry } from "../src/socket/registry";
@@ -139,5 +139,74 @@ describe("normalizeMessage", () => {
     // A button press has no message of its own. Storing the bot's message id
     // here would make history navigation point at the wrong row.
     expect(msg.messageId).toBeUndefined();
+  });
+});
+
+describe("buildAlbumMessage", () => {
+  const item = (messageId: number, url: string, caption?: string) => ({
+    messageId,
+    chatId: 111,
+    userId: 111,
+    userName: "mirza",
+    dateSeconds: 1_800_000_000,
+    url,
+    caption,
+  });
+
+  test("orders album members by message_id ASC regardless of the order they arrived in", () => {
+    const msg = buildAlbumMessage("bot-01", [
+      item(103, "http://x/c.jpg"),
+      item(101, "http://x/a.jpg"),
+      item(102, "http://x/b.jpg"),
+    ]);
+
+    // SCAR-055a: photos arrive out of order under load, and the buffer keeps
+    // arrival order. Labelling "Photo 1" against the wrong file is worse than
+    // no labels at all.
+    expect(msg.photoUrls).toEqual(["http://x/a.jpg", "http://x/b.jpg", "http://x/c.jpg"]);
+    expect(msg.messageIds).toEqual(["101", "102", "103"]);
+    // The album's own id is the first member's -- that is the id Telegram shows
+    // the user when they quote the album.
+    expect(msg.messageId).toBe("101");
+    expect(msg.isAlbum).toBe(true);
+  });
+
+  test("no caption anywhere leaves the text empty rather than inventing one", () => {
+    const msg = buildAlbumMessage("bot-01", [item(101, "http://x/a.jpg"), item(102, "http://x/b.jpg")]);
+
+    expect(msg.text).toBeUndefined();
+  });
+
+  test("exactly one caption becomes the message text, verbatim and unlabelled", () => {
+    const msg = buildAlbumMessage("bot-01", [
+      item(101, "http://x/a.jpg"),
+      item(102, "http://x/b.jpg", "ini foto kedua yang penting"),
+    ]);
+
+    // One caption is just the user talking about the album. Labelling it
+    // "Photo 2:" would add noise to the overwhelmingly common case.
+    expect(msg.text).toBe("ini foto kedua yang penting");
+  });
+
+  test("two or more captions are labelled Photo <n> in album order", () => {
+    const msg = buildAlbumMessage("bot-01", [
+      item(103, "http://x/c.jpg", "yang ketiga"),
+      item(101, "http://x/a.jpg", "yang pertama"),
+      item(102, "http://x/b.jpg"),
+    ]);
+
+    // Numbering follows the SORTED position, not the arrival position -- the
+    // whole reason ordering had to be fixed first.
+    expect(msg.text).toBe("Photo 1: yang pertama\nPhoto 3: yang ketiga");
+  });
+
+  test("the identity fields come from the first member, not from whichever arrived first", () => {
+    const msg = buildAlbumMessage("bot-01", [item(103, "http://x/c.jpg"), item(101, "http://x/a.jpg")]);
+
+    expect(msg.bot).toBe("bot-01");
+    expect(msg.chatId).toBe("111");
+    expect(msg.userId).toBe("111");
+    expect(msg.userName).toBe("mirza");
+    expect(msg.ts).toBe(new Date(1_800_000_000 * 1000).toISOString());
   });
 });

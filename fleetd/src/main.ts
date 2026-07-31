@@ -77,6 +77,63 @@ export function normalizeMessage(
   };
 }
 
+export type AlbumItem = {
+  messageId: number;
+  chatId: string | number;
+  userId: string | number;
+  userName?: string;
+  dateSeconds?: number;
+  url: string;
+  caption?: string;
+};
+
+/**
+ * Turns however many photos the buffer collected into ONE NormalizedMessage.
+ *
+ * Pure and exported so the ordering and caption rules are testable without
+ * standing up grammy, a bot, or main() -- the flush callback itself only adapts
+ * grammy contexts into AlbumItems and calls this.
+ *
+ * Caption rules (spec §5.4 item 4), driven by how many members carry a caption:
+ *   0  -> no text at all
+ *   1  -> that caption verbatim, unlabelled (the ordinary case: the user is just
+ *         talking about the album)
+ *   2+ -> each labelled `Photo <n>:` by its position in the SORTED album, so the
+ *         AI can tell which caption belongs to which file
+ * Before this, only the first member's caption survived and the rest were lost.
+ */
+export function buildAlbumMessage(botName: string, items: AlbumItem[]): NormalizedMessage {
+  // SCAR-055a: the buffer preserves arrival order, and photos arrive out of order
+  // under load. Every downstream label is only correct once this sort has run.
+  const ordered = [...items].sort((a, b) => a.messageId - b.messageId);
+  const first = ordered[0]!;
+
+  const captioned = ordered
+    .map((item, i) => ({ position: i + 1, caption: item.caption }))
+    .filter((c): c is { position: number; caption: string } => c.caption !== undefined);
+
+  let text: string | undefined;
+  if (captioned.length === 1) text = captioned[0]!.caption;
+  else if (captioned.length > 1)
+    text = captioned.map((c) => `Photo ${c.position}: ${c.caption}`).join("\n");
+
+  return {
+    ...normalizeMessage(
+      botName,
+      {
+        chatId: first.chatId,
+        userId: first.userId,
+        userName: first.userName,
+        dateSeconds: first.dateSeconds,
+        messageId: first.messageId,
+      },
+      { text, photoUrls: ordered.map((i) => i.url) }
+    ),
+    isAlbum: true,
+    messageIds: ordered.map((i) => String(i.messageId)),
+  };
+}
+
 /**
  * The ONLY place `lastChatByBot` is ever written, and it happens strictly after
  * handleIncomingMessage's allowlist gate has accepted the message.
@@ -153,24 +210,25 @@ export function main(): void {
         // rejection here would surface as a bare unhandled-rejection log with no
         // clue which bot or album it came from.
         try {
-          const first = items[0]!.ctx;
           await deliver(
-            normalizeMessage(
+            buildAlbumMessage(
               botName,
-              {
-                chatId: first.chat.id,
-                userId: first.from?.id ?? first.chat.id,
-                userName: first.from?.username,
-                dateSeconds: first.message.date,
-                messageId: first.message.message_id,
-              },
-              { text: first.message.caption, photoUrls: items.map((i) => i.url) }
+              items.map(({ ctx, url }) => ({
+                messageId: ctx.message.message_id,
+                chatId: ctx.chat.id,
+                userId: ctx.from?.id ?? ctx.chat.id,
+                userName: ctx.from?.username,
+                dateSeconds: ctx.message.date,
+                url,
+                caption: ctx.message.caption,
+              }))
             )
           );
         } catch (err) {
           console.error(`fleetd: album flush failed for ${botName}/${mediaGroupId}: ${err}`);
         }
-      }
+      },
+      10
     );
 
     bot.on("message:text", async (ctx) => {

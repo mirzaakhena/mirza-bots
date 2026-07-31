@@ -12,7 +12,10 @@ export class AlbumBuffer<T> {
   constructor(
     private debounceMs: number,
     private hardCapMs: number,
-    private onFlush: FlushHandler<T>
+    private onFlush: FlushHandler<T>,
+    // Telegram's own limit for a media group. Appended as the last parameter so
+    // the three existing call sites and tests keep working unchanged.
+    private maxItems: number = 10
   ) {}
 
   add(key: string, item: T): void {
@@ -29,6 +32,12 @@ export class AlbumBuffer<T> {
       bucket.debounceTimer = setTimeout(() => this.flush(key), this.debounceMs);
     }
     bucket.items.push(item);
+
+    // Size cap on top of the two time caps. Without it an album was bounded only
+    // by time, so a malformed or duplicated media group could grow without limit
+    // and turn into one enormous message. Overflow starts a fresh bucket under
+    // the same key -- a second message, never a dropped photo.
+    if (bucket.items.length >= this.maxItems) this.flush(key);
   }
 
   flush(key: string): void {

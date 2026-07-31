@@ -27,6 +27,11 @@ export type NormalizedMessage = {
   // through meta only (SCAR-088) -- they are the sender's words, not ours.
   quoteText?: string;
   quoteIsManual?: boolean;
+  // Set only by buildAlbumMessage: the album-specific text rules below must not
+  // fire for an ordinary single photo, whose failure is simply a missing
+  // attachment (spec §5.5).
+  isAlbum?: boolean;
+  messageIds?: string[];
   ts: string;
 };
 
@@ -87,6 +92,30 @@ export async function downloadAll(items: Downloadable[], destDir: string): Promi
   return { attachments, failedCount };
 }
 
+/**
+ * Tells the AI when album photos went missing, instead of handing it a caption
+ * with silently fewer files than the user sent.
+ *
+ * These strings are composed by us, not by the sender, so they are allowed in
+ * the message content the AI reads -- SCAR-088 governs sender-controlled text.
+ * Album-only by design: a lone photo that fails just loses its attachment.
+ */
+export function applyAlbumFailureNotice(
+  text: string | undefined,
+  result: DownloadResult,
+  isAlbum: boolean
+): string | undefined {
+  const total = result.attachments.length + result.failedCount;
+  if (!isAlbum || result.failedCount === 0 || total === 0) return text;
+
+  const notice =
+    result.attachments.length === 0
+      ? "⚠️ Failed to load the album photos."
+      : `[⚠️ ${result.failedCount} of ${total} items failed to load]`;
+
+  return text !== undefined && text.length > 0 ? `${text}\n${notice}` : notice;
+}
+
 export async function handleIncomingMessage(
   msg: NormalizedMessage,
   deps: PollerDeps
@@ -102,13 +131,16 @@ export async function handleIncomingMessage(
     fileName: `${stamp}-${i}.jpg`,
   }));
   const { attachments, failedCount } = await downloadAll(downloads, inboxDir);
-  void failedCount; // Task 5 turns this into a user-visible notice for albums.
 
   // A button press has no `text` of its own -- its meaning IS the callback data
   // (e.g. "confirm_yes"). Store and push that as the message content so the AI
   // sees what was pressed; `kind: "callback"` in meta distinguishes it from a
   // message the human actually typed.
-  const displayText = msg.callbackData ?? msg.text;
+  const displayText = applyAlbumFailureNotice(
+    msg.callbackData ?? msg.text,
+    { attachments, failedCount },
+    msg.isAlbum === true
+  );
 
   // Read once: the same value goes into the row and into meta, and re-reading it
   // between the two would let them disagree if a connection dropped in between.
@@ -119,6 +151,8 @@ export async function handleIncomingMessage(
   const metadata: MessageMetadata = {
     ...(msg.quoteText !== undefined ? { quote_text: msg.quoteText } : {}),
     ...(msg.quoteText !== undefined ? { quote_is_manual: msg.quoteIsManual === true } : {}),
+    ...(msg.messageIds !== undefined ? { message_ids: msg.messageIds } : {}),
+    ...(msg.isAlbum === true ? { kind: "album" as const } : {}),
   };
 
   insertMessage(deps.conversationsDb, {
@@ -152,6 +186,12 @@ export async function handleIncomingMessage(
       ...(msg.replyTo !== undefined ? { reply_to_message_id: msg.replyTo } : {}),
       ...(msg.quoteText !== undefined
         ? { quote_text: msg.quoteText, quote_is_manual: String(msg.quoteIsManual === true) }
+        : {}),
+      ...(failedCount > 0
+        ? {
+            album_failed_count: String(failedCount),
+            album_total_count: String(attachments.length + failedCount),
+          }
         : {}),
       ...(attachments.length > 0 ? { attachments: attachments.join(",") } : {}),
     },

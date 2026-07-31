@@ -437,6 +437,102 @@ describe("handleIncomingMessage", () => {
     server.stop(true);
     rmSync(inboxRoot, { recursive: true, force: true });
   });
+
+  test("a partially failed album appends the failure suffix instead of silently losing photos", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) =>
+        new URL(req.url).pathname === "/gone.jpg"
+          ? new Response("not found", { status: 404 })
+          : new Response(new Uint8Array([9]), { headers: { "content-type": "image/jpeg" } }),
+    });
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+
+    await handleIncomingMessage(
+      baseMsg({
+        text: "tiga foto",
+        isAlbum: true,
+        messageIds: ["101", "102", "103"],
+        photoUrls: [
+          `http://localhost:${server.port}/a.jpg`,
+          `http://localhost:${server.port}/gone.jpg`,
+          `http://localhost:${server.port}/c.jpg`,
+        ],
+      }),
+      { config, conversationsDb: openConversationsDb(":memory:"), fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+    );
+
+    // Our own text, not the sender's -- so it may live in the content the AI
+    // reads (SCAR-088 is about sender-controlled strings).
+    expect(sent[0]?.text).toBe("tiga foto\n[⚠️ 1 of 3 items failed to load]");
+    expect(sent[0]?.meta.album_failed_count).toBe("1");
+    expect(sent[0]?.meta.album_total_count).toBe("3");
+
+    server.stop(true);
+    rmSync(inboxRoot, { recursive: true, force: true });
+  });
+
+  test("an album whose photos ALL fail says so, instead of arriving as a bare caption", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response("gone", { status: 404 }) });
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+
+    await handleIncomingMessage(
+      baseMsg({
+        text: "lihat ini",
+        isAlbum: true,
+        photoUrls: [`http://localhost:${server.port}/a.jpg`, `http://localhost:${server.port}/b.jpg`],
+      }),
+      { config, conversationsDb: openConversationsDb(":memory:"), fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+    );
+
+    expect(sent[0]?.text).toBe("lihat ini\n⚠️ Failed to load the album photos.");
+
+    server.stop(true);
+    rmSync(inboxRoot, { recursive: true, force: true });
+  });
+
+  test("an album whose photos all load carries no failure notice and records its member ids", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new Uint8Array([9]), { headers: { "content-type": "image/jpeg" } }),
+    });
+    const conversationsDb = openConversationsDb(":memory:");
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+
+    await handleIncomingMessage(
+      baseMsg({
+        text: "tiga foto",
+        isAlbum: true,
+        messageId: "101",
+        messageIds: ["101", "102", "103"],
+        photoUrls: [
+          `http://localhost:${server.port}/a.jpg`,
+          `http://localhost:${server.port}/b.jpg`,
+          `http://localhost:${server.port}/c.jpg`,
+        ],
+      }),
+      { config, conversationsDb, fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+    );
+
+    expect(sent[0]?.text).toBe("tiga foto");
+    expect("album_failed_count" in sent[0]!.meta).toBe(false);
+    const row = conversationsDb.query("SELECT metadata FROM messages").get() as { metadata: string };
+    // Every member id is recorded, so a quote of any photo in the album can be
+    // resolved back to this single row.
+    expect(JSON.parse(row.metadata)).toEqual({ message_ids: ["101", "102", "103"], kind: "album" });
+
+    server.stop(true);
+    rmSync(inboxRoot, { recursive: true, force: true });
+  });
 });
 
 describe("startPolling retry loop", () => {
