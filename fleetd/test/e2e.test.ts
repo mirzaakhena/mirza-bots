@@ -100,6 +100,11 @@ async function connectToFleetd(sockPath: string): Promise<{
   pushes: string[];
 }> {
   const net = await import("node:net");
+  // Wait for the socket before dialling it. main() starts the pollers BEFORE
+  // startSocketServer, so "the message is in conversations.db" -- which is what
+  // the callers wait on -- does not imply the socket is accepting yet. Connecting
+  // into that gap raised ENOENT and failed the test roughly one run in twelve.
+  await waitForSocketEntry(sockPath);
   const client = net.createConnection(sockPath);
   const lines: string[] = [];
   const pushes: string[] = [];
@@ -138,17 +143,22 @@ async function connectToFleetd(sockPath: string): Promise<{
 // attributes to the running test even when a listener handles it. Waiting for the
 // entry to appear first keeps us from ever connecting into the void; the doctor
 // call that follows is the real functional proof that fleetd is answering.
+async function waitForSocketEntry(sockPath: string, budgetMs = 8000): Promise<boolean> {
+  const dir = dirname(sockPath);
+  const name = basename(sockPath);
+  for (let waited = 0; waited < budgetMs; waited += 100) {
+    if (readdirSync(dir).includes(name)) return true;
+    await Bun.sleep(100);
+  }
+  return false;
+}
+
 async function waitForFleetdSocket(
   sockPath: string,
   proc: Bun.Subprocess,
   budgetMs = 8000
 ): Promise<void> {
-  const dir = dirname(sockPath);
-  const name = basename(sockPath);
-  for (let waited = 0; waited < budgetMs; waited += 100) {
-    if (readdirSync(dir).includes(name)) return;
-    await Bun.sleep(100);
-  }
+  if (await waitForSocketEntry(sockPath, budgetMs)) return;
   const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

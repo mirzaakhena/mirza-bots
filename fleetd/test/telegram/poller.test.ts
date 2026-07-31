@@ -533,6 +533,102 @@ describe("handleIncomingMessage", () => {
     server.stop(true);
     rmSync(inboxRoot, { recursive: true, force: true });
   });
+
+  test("a document is downloaded under a sanitized name and reported in meta", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "application/pdf" } }),
+    });
+    const conversationsDb = openConversationsDb(":memory:");
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+
+    await handleIncomingMessage(
+      baseMsg({
+        text: "tolong baca ini",
+        documents: [
+          {
+            url: `http://localhost:${server.port}/doc.pdf`,
+            fileName: "laporan.pdf",
+            sizeBytes: 3,
+          },
+        ],
+      }),
+      { config, conversationsDb, fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+    );
+
+    const rows = conversationsDb.query("SELECT attachments, metadata FROM messages").all() as Array<{
+      attachments: string;
+      metadata: string;
+    }>;
+    const attachments = JSON.parse(rows[0]!.attachments) as string[];
+    expect(attachments.length).toBe(1);
+    expect(existsSync(attachments[0]!)).toBe(true);
+    expect(attachments[0]).toContain("laporan.pdf");
+    expect(JSON.parse(rows[0]!.metadata)).toEqual({ kind: "document" });
+
+    // SCAR-088: the sender-chosen name reaches the AI through meta, never as
+    // part of the message content.
+    expect(sent[0]?.text).toBe("tolong baca ini");
+    expect(sent[0]?.meta.document_names).toBe("laporan.pdf");
+
+    server.stop(true);
+    rmSync(inboxRoot, { recursive: true, force: true });
+  });
+
+  test("a document over the 20 MB limit is not downloaded, and the AI is told rather than left in silence", async () => {
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+
+    await handleIncomingMessage(
+      baseMsg({
+        text: undefined,
+        oversizedDocument: { fileName: "dump.zip", sizeBytes: 31_457_280 },
+      }),
+      {
+        config,
+        conversationsDb: openConversationsDb(":memory:"),
+        fleetDb: openFleetDb(":memory:"),
+        registry,
+        inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      }
+    );
+
+    // Spec §9.4: rejected WITH a notification, not silently. The notice is our
+    // own sentence; the sender's filename and the size stay in meta.
+    expect(sent[0]?.text).toBe("⚠️ A document was not downloaded: it is over the 20 MB limit.");
+    expect(sent[0]?.meta.document_names).toBe("dump.zip");
+    expect(sent[0]?.meta.document_size_bytes).toBe("31457280");
+    expect(sent[0]?.meta.document_status).toBe("too_large");
+    expect("attachments" in sent[0]!.meta).toBe(false);
+  });
+
+  test("an oversized document sent WITH a caption keeps the caption and appends the notice", async () => {
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+
+    await handleIncomingMessage(
+      baseMsg({
+        text: "ini arsipnya",
+        oversizedDocument: { fileName: "dump.zip", sizeBytes: 31_457_280 },
+      }),
+      {
+        config,
+        conversationsDb: openConversationsDb(":memory:"),
+        fleetDb: openFleetDb(":memory:"),
+        registry,
+        inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      }
+    );
+
+    expect(sent[0]?.text).toBe(
+      "ini arsipnya\n⚠️ A document was not downloaded: it is over the 20 MB limit."
+    );
+  });
 });
 
 describe("startPolling retry loop", () => {

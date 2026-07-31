@@ -21,6 +21,7 @@ import {
 } from "./telegram/poller";
 import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
+import { safeName, MAX_DOCUMENT_BYTES } from "./telegram/media";
 import { drainQueue } from "./db/bot-inbox";
 import type { Request, Response, ButtonRow } from "./socket/protocol";
 import pkg from "../package.json";
@@ -63,7 +64,14 @@ export function normalizeMessage(
   },
   payload: Pick<
     NormalizedMessage,
-    "text" | "photoUrls" | "callbackData" | "replyTo" | "quoteText" | "quoteIsManual"
+    | "text"
+    | "photoUrls"
+    | "callbackData"
+    | "replyTo"
+    | "quoteText"
+    | "quoteIsManual"
+    | "documents"
+    | "oversizedDocument"
   >
 ): NormalizedMessage {
   return {
@@ -285,6 +293,53 @@ export function main(): void {
             quoteIsManual: quote.isManual,
           }
         )
+      );
+    });
+
+    bot.on("message:document", async (ctx) => {
+      const doc = ctx.message.document;
+      // safeName here, at the very first point a sender-chosen name enters the
+      // system. Everything downstream (the inbox path, meta, the AI) sees only
+      // the sanitized form.
+      const fileName = safeName(doc.file_name ?? "document");
+      const quote = extractQuote(ctx.message);
+      const ids = {
+        chatId: ctx.chat.id,
+        userId: ctx.from?.id ?? ctx.chat.id,
+        userName: ctx.from?.username,
+        dateSeconds: ctx.message.date,
+        messageId: ctx.message.message_id,
+      };
+      const common = {
+        text: ctx.message.caption,
+        replyTo: quote.replyToMessageId,
+        quoteText: quote.text,
+        quoteIsManual: quote.isManual,
+      };
+
+      // file_size is optional in the Telegram API. When it is absent we attempt
+      // the download anyway: Telegram itself refuses anything over the limit, so
+      // the worst case is a failed fetch that Task 4's tolerance already absorbs.
+      if (doc.file_size !== undefined && doc.file_size > MAX_DOCUMENT_BYTES) {
+        await deliver(
+          normalizeMessage(botName, ids, {
+            ...common,
+            oversizedDocument: { fileName, sizeBytes: doc.file_size },
+          })
+        );
+        return;
+      }
+
+      const file = await ctx.getFile();
+      if (!file.file_path) return;
+
+      await deliver(
+        normalizeMessage(botName, ids, {
+          ...common,
+          documents: [
+            { url: fileUrl(botConfig.token, file.file_path), fileName, sizeBytes: doc.file_size },
+          ],
+        })
       );
     });
 

@@ -32,8 +32,17 @@ export type NormalizedMessage = {
   // attachment (spec §5.5).
   isAlbum?: boolean;
   messageIds?: string[];
+  // Documents small enough to fetch. The fileName is ALREADY safeName()-d by the
+  // handler that built this -- the poller never re-sanitizes, and never trusts a
+  // raw name either.
+  documents?: DocumentAttachment[];
+  // A document deliberately not fetched because of MAX_DOCUMENT_BYTES. Present
+  // so the AI is told rather than left with silence (spec §9.4).
+  oversizedDocument?: { fileName: string; sizeBytes: number };
   ts: string;
 };
+
+export type DocumentAttachment = { url: string; fileName: string; sizeBytes?: number };
 
 export type PollerDeps = {
   config: Config;
@@ -126,10 +135,13 @@ export async function handleIncomingMessage(
   // Stamped once, outside the map: Date.now() per item could collide when two
   // downloads land in the same millisecond, and would make the names non-monotonic.
   const stamp = Date.now();
-  const downloads: Downloadable[] = (msg.photoUrls ?? []).map((url, i) => ({
-    url,
-    fileName: `${stamp}-${i}.jpg`,
-  }));
+  const downloads: Downloadable[] = [
+    ...(msg.photoUrls ?? []).map((url, i) => ({ url, fileName: `${stamp}-${i}.jpg` })),
+    ...(msg.documents ?? []).map((doc) => ({
+      url: doc.url,
+      fileName: `${stamp}-${doc.fileName}`,
+    })),
+  ];
   const { attachments, failedCount } = await downloadAll(downloads, inboxDir);
 
   // A button press has no `text` of its own -- its meaning IS the callback data
@@ -142,6 +154,18 @@ export async function handleIncomingMessage(
     msg.isAlbum === true
   );
 
+  // Our own sentence, so it may live in the content (SCAR-088 governs
+  // sender-controlled strings). Without it, an oversized document produces a
+  // notification the AI has no reason to look twice at -- exactly the "silence
+  // indistinguishable from a broken bot" failure the spec calls out.
+  const OVERSIZED_NOTICE = "⚠️ A document was not downloaded: it is over the 20 MB limit.";
+  const finalText =
+    msg.oversizedDocument !== undefined
+      ? displayText !== undefined && displayText.length > 0
+        ? `${displayText}\n${OVERSIZED_NOTICE}`
+        : OVERSIZED_NOTICE
+      : displayText;
+
   // Read once: the same value goes into the row and into meta, and re-reading it
   // between the two would let them disagree if a connection dropped in between.
   const sessionId = deps.registry.sessionIdFor(msg.bot);
@@ -152,7 +176,13 @@ export async function handleIncomingMessage(
     ...(msg.quoteText !== undefined ? { quote_text: msg.quoteText } : {}),
     ...(msg.quoteText !== undefined ? { quote_is_manual: msg.quoteIsManual === true } : {}),
     ...(msg.messageIds !== undefined ? { message_ids: msg.messageIds } : {}),
-    ...(msg.isAlbum === true ? { kind: "album" as const } : {}),
+    ...(msg.isAlbum === true
+      ? { kind: "album" as const }
+      : msg.documents !== undefined || msg.oversizedDocument !== undefined
+        ? { kind: "document" as const }
+        : msg.photoUrls !== undefined && msg.photoUrls.length > 0
+          ? { kind: "photo" as const }
+          : {}),
   };
 
   insertMessage(deps.conversationsDb, {
@@ -163,7 +193,7 @@ export async function handleIncomingMessage(
     source: "user",
     userId: msg.userId,
     userName: msg.userName,
-    text: displayText,
+    text: finalText,
     attachments: attachments.length > 0 ? JSON.stringify(attachments) : undefined,
     replyTo: msg.replyTo,
     metadata: encodeMetadata(metadata),
@@ -172,7 +202,7 @@ export async function handleIncomingMessage(
 
   const pushMsg: PushMessage = {
     type: "push_message",
-    text: displayText ?? "(media)",
+    text: finalText ?? "(media)",
     meta: {
       chat_id: msg.chatId,
       user_id: msg.userId,
@@ -191,6 +221,16 @@ export async function handleIncomingMessage(
         ? {
             album_failed_count: String(failedCount),
             album_total_count: String(attachments.length + failedCount),
+          }
+        : {}),
+      ...(msg.documents !== undefined && msg.documents.length > 0
+        ? { document_names: msg.documents.map((d) => d.fileName).join(",") }
+        : {}),
+      ...(msg.oversizedDocument !== undefined
+        ? {
+            document_names: msg.oversizedDocument.fileName,
+            document_size_bytes: String(msg.oversizedDocument.sizeBytes),
+            document_status: "too_large",
           }
         : {}),
       ...(attachments.length > 0 ? { attachments: attachments.join(",") } : {}),
