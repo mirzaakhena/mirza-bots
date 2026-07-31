@@ -1,5 +1,9 @@
 import { describe, test, expect } from "bun:test";
 import { openConversationsDb, insertMessage, searchMessages } from "../src/db/conversations-schema";
+import { Database } from "bun:sqlite";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("conversations.db schema", () => {
   test("inserted message is searchable via FTS5", () => {
@@ -52,5 +56,104 @@ describe("conversations.db schema", () => {
     db.query("DELETE FROM messages WHERE id = ?").run(id);
 
     expect(searchMessages(db, "restore").length).toBe(0);
+  });
+});
+
+describe("session_id column", () => {
+  test("session_id is stored and read back", () => {
+    const db = openConversationsDb(":memory:");
+    insertMessage(db, {
+      ts: "2026-07-31T00:00:00Z",
+      bot: "bot-01",
+      chatId: "111",
+      source: "user",
+      text: "halo",
+      sessionId: "a3760589-1111-2222-3333-444444444444",
+    });
+
+    const row = db.query("SELECT session_id FROM messages").get() as { session_id: string };
+    expect(row.session_id).toBe("a3760589-1111-2222-3333-444444444444");
+  });
+
+  test("an existing conversations.db created before session_id gets the column without losing rows", () => {
+    // The real database on disk was created by Tahap 1's CREATE TABLE, which has
+    // no session_id. `CREATE TABLE IF NOT EXISTS` is a no-op against it, so
+    // without an explicit ALTER the very first insert after this change would
+    // fail with "table messages has no column named session_id" -- on the user's
+    // live history, not in a test.
+    // The FTS table and its triggers are part of the legacy shape on purpose:
+    // the ALTER runs against a table that already has a POPULATED fts5
+    // external-content index attached. Every other test in this file uses a
+    // fresh in-memory database where session_id comes from CREATE TABLE, so
+    // this is the only place the real migration path is exercised at all --
+    // and Task 7's whole search tool rides on that index surviving.
+    const dir = mkdtempSync(join(tmpdir(), "conv-migrate-"));
+    const path = join(dir, "conversations.db");
+    const legacy = new Database(path);
+    legacy.exec(`CREATE TABLE messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, bot TEXT NOT NULL,
+      chat_id TEXT NOT NULL, message_id TEXT, source TEXT NOT NULL, user_id TEXT,
+      user_name TEXT, text TEXT, attachments TEXT, reply_to TEXT, metadata TEXT
+    );
+    CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='id');
+    CREATE TRIGGER messages_ai AFTER INSERT ON messages BEGIN
+      INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+    END;
+    CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+    END;
+    CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.id, old.text);
+      INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+    END;`);
+    legacy.query("INSERT INTO messages (ts, bot, chat_id, source, text) VALUES (?,?,?,?,?)")
+      .run("2026-07-01T00:00:00Z", "bot-01", "111", "user", "pesan lama");
+    legacy.close();
+
+    const db = openConversationsDb(path);
+
+    const cols = (db.query("PRAGMA table_info(messages)").all() as Array<{ name: string }>)
+      .map((c) => c.name);
+    expect(cols).toContain("session_id");
+    // The old row is still there, with a NULL session_id -- migration, not reset.
+    const old = db.query("SELECT text, session_id FROM messages").get() as {
+      text: string;
+      session_id: string | null;
+    };
+    expect(old.text).toBe("pesan lama");
+    expect(old.session_id).toBeNull();
+    // And the migrated database accepts new inserts.
+    insertMessage(db, { ts: "t", bot: "bot-01", chatId: "111", source: "user", text: "baru", sessionId: "s1" });
+    expect(db.query("SELECT COUNT(*) AS c FROM messages").get()).toEqual({ c: 2 });
+    // The pre-existing FTS index still resolves the row it indexed BEFORE the
+    // ALTER, and indexes rows written after it. Without this, a migration that
+    // quietly detached the index would take Task 7's search tool with it and
+    // nothing would report an error.
+    expect(searchMessages(db, "lama").length).toBe(1);
+    expect(searchMessages(db, "baru").length).toBe(1);
+    db.close();
+  });
+
+  test("message_id, reply_to and metadata round-trip through insertMessage", () => {
+    const db = openConversationsDb(":memory:");
+    insertMessage(db, {
+      ts: "2026-07-31T00:00:00Z",
+      bot: "bot-01",
+      chatId: "111",
+      source: "user",
+      text: "halo",
+      messageId: "4321",
+      replyTo: "4300",
+      metadata: JSON.stringify({ quote_text: "yang ini" }),
+    });
+
+    const row = db.query("SELECT message_id, reply_to, metadata FROM messages").get() as {
+      message_id: string;
+      reply_to: string;
+      metadata: string;
+    };
+    expect(row.message_id).toBe("4321");
+    expect(row.reply_to).toBe("4300");
+    expect(JSON.parse(row.metadata)).toEqual({ quote_text: "yang ini" });
   });
 });

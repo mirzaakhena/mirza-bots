@@ -14,9 +14,15 @@ export type NormalizedMessage = {
   chatId: string;
   userId: string;
   userName?: string;
+  // Telegram's message id, as a string. The single field four separate features
+  // were blocked on: history navigation, album ordering, album fallback, and
+  // outgoing quotes (2.5-KELUAR).
+  messageId?: string;
   text?: string;
   photoUrls?: string[];
   callbackData?: string;
+  // Telegram message id this one replies to (Task 3 fills it).
+  replyTo?: string;
   ts: string;
 };
 
@@ -56,15 +62,22 @@ export async function handleIncomingMessage(
   // message the human actually typed.
   const displayText = msg.callbackData ?? msg.text;
 
+  // Read once: the same value goes into the row and into meta, and re-reading it
+  // between the two would let them disagree if a connection dropped in between.
+  const sessionId = deps.registry.sessionIdFor(msg.bot);
+
   insertMessage(deps.conversationsDb, {
     ts: msg.ts,
     bot: msg.bot,
     chatId: msg.chatId,
+    messageId: msg.messageId,
     source: "user",
     userId: msg.userId,
     userName: msg.userName,
     text: displayText,
     attachments: attachments.length > 0 ? JSON.stringify(attachments) : undefined,
+    replyTo: msg.replyTo,
+    sessionId,
   });
 
   const pushMsg: PushMessage = {
@@ -75,6 +88,11 @@ export async function handleIncomingMessage(
       user_id: msg.userId,
       ts: msg.ts,
       kind: msg.callbackData !== undefined ? "callback" : "message",
+      // Spread-if-defined, never `key: value ?? undefined`: cc-plugin's SCAR-056
+      // guard coerces with String(), which would turn a missing value into the
+      // literal string "undefined" in front of the AI.
+      ...(msg.messageId !== undefined ? { message_id: msg.messageId } : {}),
+      ...(sessionId !== undefined ? { session_id: sessionId } : {}),
       ...(attachments.length > 0 ? { attachments: attachments.join(",") } : {}),
     },
   };

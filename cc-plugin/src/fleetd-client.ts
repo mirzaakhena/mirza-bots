@@ -49,7 +49,7 @@ export class FleetdClient {
     for (const req of queued) req.onFail(new Error(reason));
   }
 
-  connect(sockPath: string, cwd: string): Promise<{ bot: string }> {
+  connect(sockPath: string, cwd: string, sessionId?: string): Promise<{ bot: string }> {
     return new Promise((resolve, reject) => {
       // Settles the connect() promise for failures that happen before the hello
       // handshake has a pending entry to fail through (e.g. the socket file does
@@ -70,7 +70,11 @@ export class FleetdClient {
             reject(err);
           },
         });
-        socket.write(this.encode({ type: "hello", cwd }));
+        // Spread-if-defined so the key is absent rather than present-and-undefined:
+        // fleetd parses hello with a zod strictObject.
+        socket.write(
+          this.encode({ type: "hello", cwd, ...(sessionId !== undefined ? { sessionId } : {}) })
+        );
       });
 
       socket.on("data", (chunk) => {

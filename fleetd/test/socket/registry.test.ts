@@ -1,10 +1,13 @@
 import { describe, test, expect } from "bun:test";
-import { ConnectionRegistry } from "../../src/socket/registry";
+import { ConnectionRegistry, type BoundConnection } from "../../src/socket/registry";
 import type { PushMessage } from "../../src/socket/protocol";
 
 function fakeConn() {
   const sent: PushMessage[] = [];
-  return { conn: { send: (msg: PushMessage) => sent.push(msg), boundBot: null as string | null }, sent };
+  return {
+    conn: { send: (msg: PushMessage) => sent.push(msg), boundBot: null as string | null } as BoundConnection,
+    sent,
+  };
 }
 
 describe("ConnectionRegistry", () => {
@@ -48,5 +51,18 @@ describe("ConnectionRegistry", () => {
 
     expect(a.sent.length).toBe(1);
     expect(b.sent.length).toBe(1);
+  });
+
+  test("sessionIdFor returns the session id of the connection bound to that bot", () => {
+    const registry = new ConnectionRegistry();
+    const { conn } = fakeConn();
+    conn.sessionId = "a3760589-1111-2222-3333-444444444444";
+    registry.register("bot-01", conn);
+
+    expect(registry.sessionIdFor("bot-01")).toBe("a3760589-1111-2222-3333-444444444444");
+    // No connection at all, and a connection that never declared one, both read
+    // as "unknown" rather than throwing -- the poller calls this on every
+    // incoming message, including when nothing is connected.
+    expect(registry.sessionIdFor("bot-02")).toBeUndefined();
   });
 });

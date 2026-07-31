@@ -109,6 +109,30 @@ describe("FleetdClient", () => {
     expect(pushes).toEqual([{ type: "push_message", text: "pesan baru", meta: { chat_id: "1" } }]);
     client.close();
   });
+
+  test("connect includes sessionId in the hello when one is given, and omits the key when not", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "fleetd-client-test-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    const received: any[] = [];
+    server = startFakeFleetd(sockPath, (line, conn) => {
+      received.push(JSON.parse(line));
+      conn.write(JSON.stringify({ ok: true, bot: "bot-01" }) + "\n");
+    });
+
+    const withSession = new FleetdClient();
+    await withSession.connect(sockPath, "/fake/cwd", "sess-abc");
+    withSession.close();
+
+    const withoutSession = new FleetdClient();
+    await withoutSession.connect(sockPath, "/fake/cwd");
+    withoutSession.close();
+
+    expect(received[0]).toEqual({ type: "hello", cwd: "/fake/cwd", sessionId: "sess-abc" });
+    // The key must be absent, not present-and-undefined: fleetd validates hello
+    // with a zod strictObject, and JSON.stringify drops undefined values anyway --
+    // relying on that silently would break the moment the field became non-optional.
+    expect(received[1]).toEqual({ type: "hello", cwd: "/fake/cwd" });
+  });
 });
 
 // Every await below is bounded by withTimeout: the bug these tests cover is a

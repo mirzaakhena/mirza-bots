@@ -191,6 +191,69 @@ describe("handleIncomingMessage", () => {
     expect(sent[0]?.text).toBe("confirm_yes");
     expect(sent[0]?.meta.kind).toBe("callback");
   });
+
+  test("stores the Telegram message id and pushes it in meta", async () => {
+    const conversationsDb = openConversationsDb(":memory:");
+    const fleetDb = openFleetDb(":memory:");
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+
+    await handleIncomingMessage(baseMsg({ messageId: "4321" }), {
+      config,
+      conversationsDb,
+      fleetDb,
+      registry,
+      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+    });
+
+    // The whole root cause of this sub-project: the column and the parameter
+    // both existed, the caller just never filled them.
+    const row = conversationsDb.query("SELECT message_id FROM messages").get() as { message_id: string };
+    expect(row.message_id).toBe("4321");
+    expect(sent[0]?.meta.message_id).toBe("4321");
+  });
+
+  test("omits message_id from meta entirely when there is none, rather than sending 'undefined'", async () => {
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+
+    await handleIncomingMessage(baseMsg(), {
+      config,
+      conversationsDb: openConversationsDb(":memory:"),
+      fleetDb: openFleetDb(":memory:"),
+      registry,
+      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+    });
+
+    // cc-plugin's SCAR-056 guard coerces with String(value), so a present-but-
+    // undefined key would reach the AI as the literal word "undefined".
+    expect("message_id" in sent[0]!.meta).toBe(false);
+  });
+
+  test("stamps the message with the session id of the connection bound to that bot", async () => {
+    const conversationsDb = openConversationsDb(":memory:");
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", {
+      send: (m) => sent.push(m),
+      boundBot: "bot-01",
+      sessionId: "sess-abc",
+    });
+
+    await handleIncomingMessage(baseMsg(), {
+      config,
+      conversationsDb,
+      fleetDb: openFleetDb(":memory:"),
+      registry,
+      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+    });
+
+    const row = conversationsDb.query("SELECT session_id FROM messages").get() as { session_id: string };
+    expect(row.session_id).toBe("sess-abc");
+    expect(sent[0]?.meta.session_id).toBe("sess-abc");
+  });
 });
 
 describe("startPolling retry loop", () => {

@@ -59,6 +59,7 @@ export function startSocketServer(
             continue;
           }
           conn.boundBot = bot;
+          conn.sessionId = req.sessionId;
           registry.register(bot, conn);
           rawConn.write(encode({ ok: true, bot }));
           // After the hello response, so the client reads its handshake answer

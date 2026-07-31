@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { resolveSocketPath, resolveIdentityCwd } from "../src/main";
+import { resolveSocketPath, resolveIdentityCwd, resolveSessionId } from "../src/main";
 
 describe("resolveSocketPath", () => {
   test("honors MIRZA_BOTS_HOME override, same convention as fleetd", () => {
@@ -44,6 +44,34 @@ describe("resolveIdentityCwd", () => {
       expect(resolveIdentityCwd()).toBe(process.cwd());
     } finally {
       if (prev !== undefined) process.env.CLAUDE_PROJECT_DIR = prev;
+    }
+  });
+});
+
+describe("resolveSessionId", () => {
+  test("returns CLAUDE_CODE_SESSION_ID when Claude Code sets it", () => {
+    const prev = process.env.CLAUDE_CODE_SESSION_ID;
+    process.env.CLAUDE_CODE_SESSION_ID = "a3760589-1111-2222-3333-444444444444";
+    try {
+      expect(resolveSessionId()).toBe("a3760589-1111-2222-3333-444444444444");
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+      else process.env.CLAUDE_CODE_SESSION_ID = prev;
+    }
+  });
+
+  test("returns undefined when it is unset or empty, so hello omits the field", () => {
+    const prev = process.env.CLAUDE_CODE_SESSION_ID;
+    delete process.env.CLAUDE_CODE_SESSION_ID;
+    try {
+      expect(resolveSessionId()).toBeUndefined();
+      process.env.CLAUDE_CODE_SESSION_ID = "";
+      // An empty env var is "not set" in every way that matters -- storing "" in
+      // session_id would look like a real session id to every later query.
+      expect(resolveSessionId()).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+      else process.env.CLAUDE_CODE_SESSION_ID = prev;
     }
   });
 });

@@ -1,6 +1,9 @@
 import { Database } from "bun:sqlite";
 
-const SCHEMA = `
+// Table only. Indexes, FTS and triggers come after addMissingColumns() below,
+// because idx_messages_session cannot be created until session_id exists on a
+// database that predates it.
+const TABLE = `
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts TEXT NOT NULL,
@@ -13,11 +16,16 @@ CREATE TABLE IF NOT EXISTS messages (
   text TEXT,
   attachments TEXT,
   reply_to TEXT,
-  metadata TEXT
+  metadata TEXT,
+  session_id TEXT
 );
+`;
 
+const INDEXES_AND_FTS = `
 CREATE INDEX IF NOT EXISTS idx_messages_bot ON messages(bot);
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(bot, chat_id);
+CREATE INDEX IF NOT EXISTS idx_messages_message_id ON messages(bot, message_id);
+CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   text, content='messages', content_rowid='id'
@@ -37,10 +45,29 @@ CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
 END;
 `;
 
+// Columns added after Tahap 1 shipped. `CREATE TABLE IF NOT EXISTS` does nothing
+// to a table that already exists, so a database carrying real history would keep
+// the old shape forever and every insert would fail. Guarded by table_info so it
+// is idempotent -- SQLite has no `ADD COLUMN IF NOT EXISTS`.
+const ADDED_COLUMNS: Array<{ name: string; ddl: string }> = [
+  { name: "session_id", ddl: "ALTER TABLE messages ADD COLUMN session_id TEXT" },
+];
+
+function addMissingColumns(db: Database): void {
+  const existing = new Set(
+    (db.query("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map((c) => c.name)
+  );
+  for (const col of ADDED_COLUMNS) {
+    if (!existing.has(col.name)) db.exec(col.ddl);
+  }
+}
+
 export function openConversationsDb(path: string): Database {
   const db = new Database(path);
   db.exec("PRAGMA journal_mode = WAL;");
-  db.exec(SCHEMA);
+  db.exec(TABLE);
+  addMissingColumns(db);
+  db.exec(INDEXES_AND_FTS);
   return db;
 }
 
@@ -56,13 +83,14 @@ export type NewMessage = {
   attachments?: string;
   replyTo?: string;
   metadata?: string;
+  sessionId?: string;
 };
 
 export function insertMessage(db: Database, msg: NewMessage): number {
   const result = db
     .query(
-      `INSERT INTO messages (ts, bot, chat_id, message_id, source, user_id, user_name, text, attachments, reply_to, metadata)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO messages (ts, bot, chat_id, message_id, source, user_id, user_name, text, attachments, reply_to, metadata, session_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       msg.ts,
@@ -75,7 +103,8 @@ export function insertMessage(db: Database, msg: NewMessage): number {
       msg.text ?? null,
       msg.attachments ?? null,
       msg.replyTo ?? null,
-      msg.metadata ?? null
+      msg.metadata ?? null,
+      msg.sessionId ?? null
     );
   return Number(result.lastInsertRowid);
 }

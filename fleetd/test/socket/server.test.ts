@@ -417,4 +417,21 @@ describe("socket server", () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.error).toContain("async boom");
   });
+
+  test("hello carrying a sessionId records it on the connection so pushes can be attributed to a session", async () => {
+    tmp = mkdtempSync(join(tmpdir(), "mirza-bots-socket-"));
+    const sockPath = join(tmp, "fleetd.sock");
+    const registry = new ConnectionRegistry();
+    server = startSocketServer(sockPath, testConfig, () => ({ ok: true }), registry);
+
+    const line = await sendRaw(
+      sockPath,
+      encode({ type: "hello", cwd: "/fake/bot-01/home", sessionId: "sess-abc" })
+    );
+
+    // The response shape is unchanged -- sessionId is extra information the
+    // client volunteers, not a new part of the handshake contract.
+    expect(JSON.parse(line)).toEqual({ ok: true, bot: "bot-01" });
+    expect(registry.sessionIdFor("bot-01")).toBe("sess-abc");
+  });
 });

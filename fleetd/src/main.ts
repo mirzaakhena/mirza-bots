@@ -58,6 +58,7 @@ export function normalizeMessage(
     userId: string | number;
     userName?: string;
     dateSeconds?: number;
+    messageId?: string | number;
   },
   payload: Pick<NormalizedMessage, "text" | "photoUrls" | "callbackData">
 ): NormalizedMessage {
@@ -66,6 +67,7 @@ export function normalizeMessage(
     chatId: String(ids.chatId),
     userId: String(ids.userId),
     userName: ids.userName,
+    messageId: ids.messageId !== undefined ? String(ids.messageId) : undefined,
     ts: new Date((ids.dateSeconds ?? Date.now() / 1000) * 1000).toISOString(),
     ...payload,
   };
@@ -156,6 +158,7 @@ export function main(): void {
                 userId: first.from?.id ?? first.chat.id,
                 userName: first.from?.username,
                 dateSeconds: first.message.date,
+                messageId: first.message.message_id,
               },
               { text: first.message.caption, photoUrls: items.map((i) => i.url) }
             )
@@ -175,6 +178,7 @@ export function main(): void {
             userId: ctx.from?.id ?? ctx.chat.id,
             userName: ctx.from?.username,
             dateSeconds: ctx.message.date,
+            messageId: ctx.message.message_id,
           },
           { text: ctx.message.text }
         )
@@ -202,6 +206,7 @@ export function main(): void {
             userId: ctx.from?.id ?? ctx.chat.id,
             userName: ctx.from?.username,
             dateSeconds: ctx.message.date,
+            messageId: ctx.message.message_id,
           },
           { text: ctx.message.caption, photoUrls: [url] }
         )

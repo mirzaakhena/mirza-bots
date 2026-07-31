@@ -8,7 +8,14 @@ export const ButtonSchema = z.strictObject({ text: z.string(), data: z.string() 
 export const ButtonRowSchema = z.array(ButtonSchema);
 
 export const DoctorRequestSchema = z.strictObject({ type: z.literal("doctor") });
-export const HelloRequestSchema = z.strictObject({ type: z.literal("hello"), cwd: z.string() });
+export const HelloRequestSchema = z.strictObject({
+  type: z.literal("hello"),
+  cwd: z.string(),
+  // Optional on purpose: a plugin that cannot determine its session id must
+  // still be able to connect. The column then stays NULL rather than the
+  // handshake failing.
+  sessionId: z.string().optional(),
+});
 export const ReplyRequestSchema = z.strictObject({
   type: z.literal("reply"),
   text: z.string(),

@@ -120,4 +120,24 @@ describe("normalizeMessage", () => {
     expect(new Date(msg.ts).getTime()).toBeGreaterThanOrEqual(before - 1000);
     expect(new Date(msg.ts).getTime()).toBeLessThanOrEqual(Date.now() + 1000);
   });
+
+  test("carries the Telegram message id through as a string", () => {
+    const msg = normalizeMessage(
+      "bot-01",
+      { chatId: 111, userId: 111, messageId: 4321 },
+      { text: "halo" }
+    );
+
+    // Telegram sends it as a number; the column and every consumer downstream
+    // (meta values, history lookups) are strings.
+    expect(msg.messageId).toBe("4321");
+  });
+
+  test("leaves the message id undefined when the handler has none, without inventing one", () => {
+    const msg = normalizeMessage("bot-01", { chatId: 111, userId: 111 }, { callbackData: "confirm_yes" });
+
+    // A button press has no message of its own. Storing the bot's message id
+    // here would make history navigation point at the wrong row.
+    expect(msg.messageId).toBeUndefined();
+  });
 });
