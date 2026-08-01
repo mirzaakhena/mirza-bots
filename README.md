@@ -91,6 +91,19 @@ sesi).
   kutip" bisa dijawab) dan `search_history` (cari kata kunci, lewat FTS5).
   Keduanya **default ke bot pemanggil**; melihat percakapan bot lain hanya
   terjadi kalau parameter `bot` disebut sengaja.
+- **Keyboard dicopot setelah tombol ditap.** Pesannya diedit tanpa `reply_markup`
+  (itulah yang mencopot keyboard-nya) dan ditambahi `→ <pilihan>`, jadi prompt yang
+  sama tidak bisa dijawab dua kali. Entities aslinya dikirim ulang supaya format
+  tidak terhapus, dan penandanya ditempel di akhir supaya offset lama tetap sah.
+- **Tombol bernomor wajib punya keterangannya.** `fleetd` **menolak** `reply` yang
+  labelnya angka telanjang bila badan pesannya tidak memuat daftar bernomor yang
+  cocok — ditolak sebelum apa pun terkirim, dan pesan errornya menyebutkan cara
+  memperbaikinya. Aturan ini dulu hanya hidup sebagai teks yang meminta AI
+  mengingatnya, dan bocor tiga kali dalam dua hari.
+- **Orientasi waktu lokal.** `config.json` menerima `timezone` opsional (nama
+  IANA); saat diisi, push `meta` mendapat `ts_local` di samping `ts` yang **tetap
+  UTC**. Penyimpanan sengaja tidak diubah — UTC tidak ambigu, bisa diurutkan, dan
+  kebal DST; yang ditambahkan hanya cara menampilkannya.
 - **Belum ditangani, disengaja:** voice note, video, video_note, dan sticker.
   Pesan jenis itu diabaikan diam-diam — kalau suatu hari muncul keluhan "kok
   bot-nya diam?", ini kandidat pertama yang diperiksa, bukan misteri baru.
