@@ -580,4 +580,68 @@ describe("fleetd Tahap 2 end-to-end: buttons", () => {
     client.end();
     // See the timeout note in the sibling suite above.
   }, 20000);
+
+  // U-5 at the layer that can actually prove the claim. test/socket/server.test.ts
+  // builds servers around a STUB handler, so it can only show what a stub returned
+  // -- it never reaches main.ts's reply branch and has no Telegram to not-send to.
+  // Here the real daemon is wired to a fake Telegram API that records every
+  // sendMessage, so "nothing was sent" is an assertion about the API that would
+  // have received it, not about our own code path.
+  test("a reply whose numeric buttons are unexplained is rejected and never reaches Telegram", async () => {
+    const convDbPath = join(home, "conversations.db");
+    expect(await waitForStoredMessage(convDbPath, "confirm_yes", 8000)).toBeGreaterThan(0);
+
+    const sockPath = join(home, "fleetd.sock");
+    const { encode } = await import("../src/socket/protocol");
+    const { client, lines } = await connectToFleetd(sockPath);
+
+    client.write(encode({ type: "hello", cwd: "/tmp/bot-01" }));
+    expect(await waitForLines(lines, 1)).toBeGreaterThanOrEqual(1);
+
+    const UNNARRATED = "Mau lanjut? (tanpa daftar bernomor)";
+    client.write(
+      encode({
+        type: "reply",
+        text: UNNARRATED,
+        buttons: [
+          [
+            { text: "1", data: "opt_1" },
+            { text: "2", data: "opt_2" },
+            { text: "✏️ Explain manually", data: "opt_manual" },
+          ],
+        ],
+      })
+    );
+    expect(await waitForLines(lines, 2)).toBe(2);
+
+    const res = JSON.parse(lines[1]!);
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("numbered_buttons_without_list");
+
+    // The whole point: the human's phone must never light up with an unreadable
+    // keyboard. Checked after the response line, by which time a send would
+    // already have been recorded.
+    expect(fake.sentMessages.some((m) => m.text === UNNARRATED)).toBe(false);
+
+    // And the same content, once narrated, goes through on the retry -- the error
+    // has to be a correctable one, not a dead end.
+    const NARRATED = "Mau lanjut?\n1. Lanjut backup\n2. Batalkan";
+    client.write(
+      encode({
+        type: "reply",
+        text: NARRATED,
+        buttons: [
+          [
+            { text: "1", data: "opt_1" },
+            { text: "2", data: "opt_2" },
+          ],
+        ],
+      })
+    );
+    expect(await waitForLines(lines, 3)).toBe(3);
+    expect(JSON.parse(lines[2]!)).toEqual({ ok: true });
+    expect(fake.sentMessages.some((m) => m.text === NARRATED)).toBe(true);
+
+    client.end();
+  }, 20000);
 });

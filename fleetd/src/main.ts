@@ -264,6 +264,55 @@ export async function deliverIncoming(
   if (accepted) lastChatByBot.set(msg.bot, msg.chatId);
 }
 
+/**
+ * U-5: guards the one button convention a phone screen cannot forgive.
+ *
+ * Button labels have to stay short, so the convention is bare numbers on the
+ * buttons and a numbered list in the body saying what each number means. The AI
+ * kept shipping the buttons and forgetting the list, leaving the human holding a
+ * keyboard of `1` / `2` with nothing to read them against -- three times, and
+ * once with an in-band apology for having done it twice. The rule lived only as
+ * text asking the AI to remember, and text that asks nicely leaks; anything a
+ * machine can guarantee, a machine guarantees.
+ *
+ * Pure and exported for the same reason buildAlbumMessage and
+ * buildTappedMessageEdit are: the rule is worth testing without standing up
+ * grammy. `null` means "send it".
+ *
+ * Deliberately fires only where the intent is unambiguous:
+ *   - non-numeric labels are ignored entirely, so the convention's own required
+ *     escape hatch (`✏️ Explain manually`) can never trip it, and a descriptive
+ *     keyboard (`✅ Ya` / `❌ Tidak`) is none of this rule's business;
+ *   - 2+ numeric labels are required, because a lone `1` is as likely to be a
+ *     quantity as an option, and blocking a send on that guess costs more than
+ *     it saves.
+ */
+export function findMissingButtonNarration(text: string, buttons?: ButtonRow[]): string | null {
+  // Rows are cosmetic -- the human sees one keyboard however it is wrapped.
+  const numeric = (buttons ?? []).flat().map((b) => b.text.trim()).filter((t) => /^\d+$/.test(t));
+  if (numeric.length < 2) return null;
+
+  const missing = [...new Set(numeric)].filter(
+    // Anchored to the start of a line because that is what a legend looks like;
+    // the same digit inside a sentence ("option 2 is safer") leaves the button
+    // just as unreadable. [^\S\r\n] is "whitespace that is not a line break", so
+    // a list nested under a heading still counts.
+    (n) => !new RegExp(`^[^\\S\\r\\n]*${n}[.)]`, "m").test(text)
+  );
+  if (missing.length === 0) return null;
+
+  // Naming the fix, not just the fault: a refusal that does not teach the
+  // correct alternative is a rule the AI cannot comply with, and it will simply
+  // retry the same message.
+  return (
+    `numbered_buttons_without_list: numeric button labels need a matching numbered line in the ` +
+    `message text, and ${missing.map((n) => `"${n}"`).join(", ")} ` +
+    `${missing.length === 1 ? "has" : "have"} none. Either add one line per number to the text ` +
+    `(e.g. "1. Lanjut backup" / "2. Batalkan"), or drop the numbers and use short descriptive ` +
+    `labels instead (e.g. "✅ Ya" / "❌ Tidak"). Nothing was sent -- fix and resend.`
+  );
+}
+
 function buildInlineKeyboard(rows: ButtonRow[]): InlineKeyboard {
   const kb = new InlineKeyboard();
   for (const [i, row] of rows.entries()) {
@@ -523,6 +572,10 @@ export function main(): void {
         if (!chatId) return { ok: false, error: "no_known_chat" };
         const bot = bots.get(conn.boundBot);
         if (!bot) return { ok: false, error: "unknown_bot" };
+        // Before anything is built or sent: a rejected reply must leave no trace
+        // on the user's phone, so this cannot sit after the sendMessage.
+        const unnarrated = findMissingButtonNarration(req.text, req.buttons);
+        if (unnarrated) return { ok: false, error: unnarrated };
         const replyMarkup = req.buttons ? buildInlineKeyboard(req.buttons) : undefined;
         // Telegram can reject a send for reasons entirely outside our control (429
         // rate limit, bot blocked by the user, text over 4096 chars, malformed

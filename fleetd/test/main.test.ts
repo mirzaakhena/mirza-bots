@@ -7,6 +7,7 @@ import {
   normalizeMessage,
   buildAlbumMessage,
   buildTappedMessageEdit,
+  findMissingButtonNarration,
   handleHistoryRequest,
   handleSearchRequest,
 } from "../src/main";
@@ -254,6 +255,98 @@ describe("buildTappedMessageEdit (U-2: a tapped keyboard must not stay tappable)
     // inaccessible. editMessageText would fail on both; the press still counts.
     expect(buildTappedMessageEdit({}, "confirm_yes")).toBeNull();
     expect(buildTappedMessageEdit(undefined, "confirm_yes")).toBeNull();
+  });
+});
+
+describe("findMissingButtonNarration (U-5: numbered buttons must be explained in the body)", () => {
+  const row = (...labels: string[]) => [labels.map((text) => ({ text, data: `d_${text}` }))];
+
+  test("numeric buttons with a matching numbered list are allowed", () => {
+    expect(
+      findMissingButtonNarration("Pilih:\n1. Lanjut backup\n2. Batalkan", row("1", "2"))
+    ).toBeNull();
+  });
+
+  test("numeric buttons with no numbered list at all are rejected", () => {
+    // The exact message the user kept receiving: two bare numbers on screen and
+    // nothing anywhere saying what they mean.
+    expect(findMissingButtonNarration("Pilih salah satu:", row("1", "2"))).not.toBeNull();
+  });
+
+  test("explaining only one of the numbers is still rejected, and the error names the missing one", () => {
+    const error = findMissingButtonNarration("Pilih:\n1. Lanjut backup", row("1", "2"));
+
+    // Half a legend is as unusable on a phone as none: "2" is still a mystery.
+    expect(error).not.toBeNull();
+    expect(error).toContain("2");
+  });
+
+  test("the paren style 1) 2) counts as a numbered list too", () => {
+    expect(
+      findMissingButtonNarration("Pilih:\n1) Lanjut backup\n2) Batalkan", row("1", "2"))
+    ).toBeNull();
+  });
+
+  test("an indented numbered line still counts", () => {
+    // Nested under a heading or a bullet is ordinary formatting, not a violation.
+    expect(
+      findMissingButtonNarration("Opsi:\n   1. Lanjut backup\n\t2. Batalkan", row("1", "2"))
+    ).toBeNull();
+  });
+
+  test("the escape-hatch button does not have to be numbered", () => {
+    // "✏️ Explain manually" is the convention's own required last button. Counting
+    // it would make every correctly-formed prompt unsendable.
+    expect(
+      findMissingButtonNarration(
+        "Pilih:\n1. Lanjut backup\n2. Batalkan",
+        row("1", "2", "✏️ Explain manually")
+      )
+    ).toBeNull();
+  });
+
+  test("descriptive labels never trigger the rule, list or no list", () => {
+    // The rule exists to make numbers meaningful, not to force numbering on
+    // labels that already say what they do.
+    expect(findMissingButtonNarration("Jadi lanjut?", row("✅ Ya", "❌ Tidak"))).toBeNull();
+  });
+
+  test("a single numeric button is below the threshold and is allowed", () => {
+    // One number is not enough signal: it may well be a quantity ("1" hour), and
+    // rejecting on a guess would block sends the convention never meant to cover.
+    expect(findMissingButtonNarration("Berapa jam?", row("1"))).toBeNull();
+  });
+
+  test("a reply with no buttons is never affected", () => {
+    expect(findMissingButtonNarration("1 dan 2 tanpa tombol")).toBeNull();
+    expect(findMissingButtonNarration("teks biasa", [])).toBeNull();
+  });
+
+  test("numeric labels split across separate rows are still counted together", () => {
+    // Row layout is cosmetic; the user sees one keyboard either way.
+    expect(
+      findMissingButtonNarration("Pilih salah satu:", [
+        [{ text: "1", data: "a" }],
+        [{ text: "2", data: "b" }],
+      ])
+    ).not.toBeNull();
+  });
+
+  test("a number mentioned mid-sentence does not count as explaining it", () => {
+    // "option 2 is safer" is prose, not a legend line -- the phone still shows a
+    // bare button with no line to read it against.
+    expect(
+      findMissingButtonNarration("1. Lanjut backup, though option 2 is safer", row("1", "2"))
+    ).not.toBeNull();
+  });
+
+  test("the error tells the AI both ways to fix it rather than only saying no", () => {
+    const error = findMissingButtonNarration("Pilih salah satu:", row("1", "2"))!;
+
+    // A refusal that does not teach the correct alternative is a rule the AI
+    // cannot comply with -- it just retries the same thing.
+    expect(error).toContain("1.");
+    expect(error.toLowerCase()).toContain("descriptive");
   });
 });
 
