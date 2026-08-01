@@ -56,6 +56,45 @@ describe("analyzeTranscript", () => {
     expect(a.latestReplyIdx).toBe(2);
   });
 
+  test("ignores a channel inbound that belongs to a DIFFERENT plugin", () => {
+    // Found in production 2026-08-01, within an hour of shipping the guard: a
+    // session can have BOTH this plugin and the old `telegram` plugin connected.
+    // That plugin now stamps the same terse-turn marker and its prompts also
+    // arrive with origin.kind === "channel", so the first version of this guard
+    // blocked on ITS messages -- looking for a cc-plugin reply that was never
+    // going to exist, because the answer had correctly gone out through the other
+    // plugin. Same family as the old system's sticky `telegramDriven` flag: not
+    // sticky across time, but bleeding across channels.
+    const foreign = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: `<channel source="plugin:telegram:telegram" chat_id="111">\n${TERSE_TURN_MARKER}\nhalo\n</channel>`,
+      },
+      origin: { kind: "channel", server: "plugin:telegram:telegram" },
+    });
+
+    const a = analyzeTranscript([foreign]);
+
+    expect(a.channelDriven).toBe(false);
+    expect(a.latestInboundIdx).toBe(-1);
+  });
+
+  test("still recognizes our own inbound when it sits next to another plugin's", () => {
+    const foreign = JSON.stringify({
+      type: "user",
+      message: { role: "user", content: "<channel source=\"plugin:telegram:telegram\">hai</channel>" },
+      origin: { kind: "channel", server: "plugin:telegram:telegram" },
+    });
+
+    const a = analyzeTranscript([foreign, inbound("32"), foreign]);
+
+    // The foreign message AFTER ours must not move the anchor either -- otherwise
+    // the guard would demand a cc-plugin reply to someone else's conversation.
+    expect(a.channelDriven).toBe(true);
+    expect(a.latestInboundIdx).toBe(1);
+  });
+
   test("a turn the user typed in the terminal is not a channel inbound", () => {
     // D-1 in reverse: this guard must never fire for ordinary terminal work,
     // where there is no AFK human waiting on a Telegram message.

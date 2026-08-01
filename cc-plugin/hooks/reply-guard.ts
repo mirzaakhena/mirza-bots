@@ -15,9 +15,12 @@
  * remembering.
  */
 import { readFileSync } from "node:fs";
-import { TERSE_TURN_MARKER } from "../src/server";
 
-const REPLY_TOOL = "mcp__plugin_cc-plugin_cc-plugin__reply";
+// How Claude Code names this plugin's MCP server. Both the inbound detection and
+// the reply-tool name are scoped by it, so the guard only ever speaks for its own
+// channel -- a session may have several channel plugins connected at once.
+const PLUGIN_ID = "cc-plugin";
+const REPLY_TOOL = `mcp__plugin_${PLUGIN_ID}_${PLUGIN_ID}__reply`;
 
 export interface TranscriptAnalysis {
   channelDriven: boolean;
@@ -58,13 +61,24 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
     }
 
     if (obj?.type === "user") {
-      // Two independent signals, either is enough. `origin` is what Claude Code
-      // records for a channel-delivered prompt; the marker is our own stamp on
-      // every push. Accepting either means neither one going away silently
-      // disarms the guard.
-      const viaOrigin = obj?.origin?.kind === "channel";
-      const viaMarker = textOf(obj?.message?.content).includes(TERSE_TURN_MARKER);
-      if (viaOrigin || viaMarker) {
+      // Both signals must name THIS plugin, not merely "some channel".
+      //
+      // The first version tested `origin.kind === "channel"` and the bare
+      // presence of the terse-turn marker, and blocked within an hour of
+      // shipping: a session can have this plugin AND the old `telegram` plugin
+      // connected at once, that plugin stamps the same marker, and its prompts
+      // are channel-delivered too. The guard demanded a cc-plugin reply to a
+      // conversation that had already been answered through the other plugin.
+      //
+      // Same family as the old system's sticky `telegramDriven` flag -- not
+      // sticky across time, but bleeding across channels.
+      const viaOrigin = String(obj?.origin?.server ?? "").includes(PLUGIN_ID);
+      // Fallback for when Claude Code records no `origin`: the channel tag names
+      // the server it came from. Still scoped to us, never "any channel".
+      const viaTag = new RegExp(`<channel[^>]*source="[^"]*${PLUGIN_ID}`).test(
+        textOf(obj?.message?.content)
+      );
+      if (viaOrigin || viaTag) {
         channelDriven = true;
         latestInboundIdx = idx;
       }
