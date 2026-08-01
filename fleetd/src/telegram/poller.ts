@@ -7,6 +7,7 @@ import { isAllowed } from "./allowlist";
 import { downloadToFile, redactToken } from "./media";
 import { insertMessage, encodeMetadata, type MessageMetadata } from "../db/conversations-schema";
 import { queueMessage } from "../db/bot-inbox";
+import { formatLocalTimestamp } from "../time";
 import { join } from "node:path";
 
 export type NormalizedMessage = {
@@ -170,6 +171,15 @@ export async function handleIncomingMessage(
   // between the two would let them disagree if a connection dropped in between.
   const sessionId = deps.registry.sessionIdFor(msg.bot);
 
+  // Push-only, never stored: the row keeps UTC because that is what stays
+  // sortable and DST-proof. This exists so the AI can tell a 00:37 UTC message
+  // from someone up late apart from one from someone who just woke up.
+  // undefined whenever the zone is unset OR unusable -- see the omission below.
+  const tsLocal =
+    deps.config.timezone !== undefined
+      ? formatLocalTimestamp(msg.ts, deps.config.timezone)
+      : undefined;
+
   // quote_is_manual is recorded only alongside a quote: on its own it would be a
   // fact about a quote that does not exist.
   const metadata: MessageMetadata = {
@@ -211,6 +221,7 @@ export async function handleIncomingMessage(
       // Spread-if-defined, never `key: value ?? undefined`: cc-plugin's SCAR-056
       // guard coerces with String(), which would turn a missing value into the
       // literal string "undefined" in front of the AI.
+      ...(tsLocal !== undefined ? { ts_local: tsLocal } : {}),
       ...(msg.messageId !== undefined ? { message_id: msg.messageId } : {}),
       ...(sessionId !== undefined ? { session_id: sessionId } : {}),
       ...(msg.replyTo !== undefined ? { reply_to_message_id: msg.replyTo } : {}),

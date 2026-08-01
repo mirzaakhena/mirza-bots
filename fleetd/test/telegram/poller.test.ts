@@ -606,6 +606,66 @@ describe("handleIncomingMessage", () => {
     expect("attachments" in sent[0]!.meta).toBe(false);
   });
 
+  test("pushes ts_local next to the UTC ts when the config names a timezone", async () => {
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+
+    await handleIncomingMessage(baseMsg({ ts: "2026-08-01T00:37:29.000Z" }), {
+      config: { ...config, timezone: "Asia/Jakarta" },
+      conversationsDb: openConversationsDb(":memory:"),
+      fleetDb: openFleetDb(":memory:"),
+      registry,
+      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+    });
+
+    // Both, not either: ts stays the unambiguous UTC instant, ts_local is what
+    // tells the AI the user is up at 07:37 rather than 00:37.
+    expect(sent[0]?.meta.ts).toBe("2026-08-01T00:37:29.000Z");
+    expect(sent[0]?.meta.ts_local).toBe("2026-08-01T07:37:29+07:00");
+    for (const value of Object.values(sent[0]!.meta)) expect(typeof value).toBe("string");
+  });
+
+  test("omits ts_local entirely when the config names no timezone", async () => {
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+
+    await handleIncomingMessage(baseMsg(), {
+      config,
+      conversationsDb: openConversationsDb(":memory:"),
+      fleetDb: openFleetDb(":memory:"),
+      registry,
+      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+    });
+
+    // SCAR-056: absent, never present-and-undefined -- String(undefined) would
+    // hand the AI the literal word "undefined" as a time.
+    expect("ts_local" in sent[0]!.meta).toBe(false);
+  });
+
+  test("a bogus timezone in config drops ts_local instead of killing the message", async () => {
+    const conversationsDb = openConversationsDb(":memory:");
+    const registry = new ConnectionRegistry();
+    const sent: PushMessage[] = [];
+    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+
+    // toLocaleString/Intl throw RangeError on an unknown zone. A config typo must
+    // degrade to "no ts_local", not to a dead poller that swallows every message.
+    await handleIncomingMessage(baseMsg({ text: "jam berapa sekarang" }), {
+      config: { ...config, timezone: "Asia/Jakartaaa" },
+      conversationsDb,
+      fleetDb: openFleetDb(":memory:"),
+      registry,
+      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+    });
+
+    expect(sent.length).toBe(1);
+    expect(sent[0]?.text).toBe("jam berapa sekarang");
+    expect("ts_local" in sent[0]!.meta).toBe(false);
+    expect(searchMessages(conversationsDb, "jam").length).toBe(1);
+  });
+
   test("an oversized document sent WITH a caption keeps the caption and appends the notice", async () => {
     const registry = new ConnectionRegistry();
     const sent: PushMessage[] = [];

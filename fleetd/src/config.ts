@@ -10,6 +10,10 @@ export const BotConfigSchema = z.strictObject({
 export const ConfigSchema = z.strictObject({
   allowFrom: z.array(z.string()),
   bots: z.record(z.string(), BotConfigSchema),
+  // IANA zone name (e.g. "Asia/Jakarta"), used only to render ts_local alongside
+  // the UTC ts we push. Deliberately NOT validated against the ICU zone list:
+  // a typo here should cost the AI its local time, not stop the daemon booting.
+  timezone: z.string().min(1).optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

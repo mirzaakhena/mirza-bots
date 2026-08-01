@@ -50,6 +50,31 @@ describe("config", () => {
     expect(() => loadConfig(join(tmp, "does-not-exist.json"))).toThrow(ConfigError);
   });
 
+  test("accepts an optional timezone and keeps it", () => {
+    writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        allowFrom: ["123456"],
+        bots: { "bot-01": { home: "/Users/mirza/Workspace/bot-01", token: "abc:def" } },
+        timezone: "Asia/Jakarta",
+      })
+    );
+    expect(loadConfig(cfgPath).timezone).toBe("Asia/Jakarta");
+  });
+
+  test("accepts a config with no timezone at all, leaving it undefined", () => {
+    // The field is additive: every config written before U-4 must keep loading
+    // untouched, and strictObject would have rejected it if it were required.
+    writeFileSync(
+      cfgPath,
+      JSON.stringify({
+        allowFrom: ["123456"],
+        bots: { "bot-01": { home: "/Users/mirza/Workspace/bot-01", token: "abc:def" } },
+      })
+    );
+    expect(loadConfig(cfgPath).timezone).toBeUndefined();
+  });
+
   test("rejects a config with an unrecognized top-level key", () => {
     writeFileSync(
       cfgPath,
