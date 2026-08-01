@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { analyzeTranscript, decideStop } from "../hooks/reply-guard";
+import { analyzeTranscript, decideStop, parseHookInput } from "../hooks/reply-guard";
 import { TERSE_TURN_MARKER } from "../src/server";
 
 // Shapes below are copied from a REAL transcript
@@ -71,6 +71,28 @@ describe("analyzeTranscript", () => {
 
     expect(a.channelDriven).toBe(true);
     expect(a.latestInboundIdx).toBe(3);
+  });
+});
+
+describe("parseHookInput", () => {
+  test("parses an ordinary payload", () => {
+    expect(parseHookInput('{"transcript_path":"/x.jsonl"}')).toEqual({ transcript_path: "/x.jsonl" });
+  });
+
+  test("parses a payload carrying a UTF-8 BOM instead of giving up on it", () => {
+    // Found the hard way on Windows 2026-08-01: a BOM on stdin makes JSON.parse
+    // throw, main() return early, and the guard do nothing -- while looking
+    // perfectly installed. For a hook whose entire job is "never fail silently",
+    // silently failing to read its own input is the worst possible bug. This is
+    // the third BOM incident in this project (SCAR-026).
+    expect(parseHookInput('﻿{"transcript_path":"/x.jsonl"}')).toEqual({
+      transcript_path: "/x.jsonl",
+    });
+  });
+
+  test("returns null for genuine garbage rather than throwing out of the hook", () => {
+    expect(parseHookInput("not json")).toBeNull();
+    expect(parseHookInput("")).toBeNull();
   });
 });
 

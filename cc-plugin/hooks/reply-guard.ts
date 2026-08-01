@@ -104,6 +104,26 @@ export function decideStop(
   };
 }
 
+/**
+ * Parses the hook payload, tolerating a leading UTF-8 BOM.
+ *
+ * The BOM matters more than it looks: with one in front, JSON.parse throws,
+ * main() returns early, and the guard does nothing at all -- while remaining
+ * perfectly installed and enabled. A hook whose whole purpose is "never fail
+ * silently" must not be silently disarmed by one invisible character. Third BOM
+ * incident in this project (SCAR-026).
+ *
+ * Returns null rather than throwing, so a genuinely malformed payload cannot
+ * take the hook down either.
+ */
+export function parseHookInput(raw: string): any | null {
+  try {
+    return JSON.parse(raw.replace(/^﻿/, ""));
+  } catch {
+    return null;
+  }
+}
+
 function main(): void {
   let raw = "";
   try {
@@ -111,12 +131,8 @@ function main(): void {
   } catch {
     return;
   }
-  let input: any;
-  try {
-    input = JSON.parse(raw);
-  } catch {
-    return;
-  }
+  const input = parseHookInput(raw);
+  if (input === null) return;
   if (input?.stop_hook_active === true) return;
 
   const path = input?.transcript_path;
