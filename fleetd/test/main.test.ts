@@ -6,6 +6,7 @@ import {
   deliverIncoming,
   normalizeMessage,
   buildAlbumMessage,
+  buildTappedMessageEdit,
   handleHistoryRequest,
   handleSearchRequest,
 } from "../src/main";
@@ -216,6 +217,43 @@ describe("buildAlbumMessage", () => {
     expect(msg.userId).toBe("111");
     expect(msg.userName).toBe("mirza");
     expect(msg.ts).toBe(new Date(1_800_000_000 * 1000).toISOString());
+  });
+});
+
+describe("buildTappedMessageEdit (U-2: a tapped keyboard must not stay tappable)", () => {
+  test("appends the chosen option to the end of the original text", () => {
+    const edit = buildTappedMessageEdit({ text: "Pilih salah satu:" }, "confirm_yes");
+
+    // The prompt itself has to survive: the chat history is the only record of
+    // what the question was once the buttons are gone.
+    expect(edit).toEqual({ text: "Pilih salah satu:\n\n→ confirm_yes" });
+  });
+
+  test("carries the original entities through, so formatting survives the edit", () => {
+    const entities = [{ type: "bold", offset: 0, length: 5 }];
+    const edit = buildTappedMessageEdit({ text: "Pilih salah satu:", entities }, "confirm_no");
+
+    // editMessageText treats the new text as plain, so an edit without entities
+    // silently strips every bold/italic/code run the original had. Appending at
+    // the END is what keeps the existing offsets pointing at the same characters.
+    expect(edit?.entities).toEqual(entities);
+    expect(edit?.text.startsWith("Pilih salah satu:")).toBe(true);
+  });
+
+  test("sends no entities key at all when the original had none", () => {
+    const edit = buildTappedMessageEdit({ text: "Pilih:", entities: [] }, "a");
+
+    // Also pins the mechanism that actually removes the keyboard: the payload
+    // carries no reply_markup, and Telegram drops the markup of any message
+    // edited without one.
+    expect(Object.keys(edit!)).toEqual(["text"]);
+  });
+
+  test("declines to edit a message that has no text of its own", () => {
+    // A caption-only message (photo with buttons) or one Telegram reports as
+    // inaccessible. editMessageText would fail on both; the press still counts.
+    expect(buildTappedMessageEdit({}, "confirm_yes")).toBeNull();
+    expect(buildTappedMessageEdit(undefined, "confirm_yes")).toBeNull();
   });
 });
 

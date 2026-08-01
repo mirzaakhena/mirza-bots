@@ -68,7 +68,8 @@ export function buildServer(client: FleetdClient): McpServer {
     "read_history",
     {
       description:
-        "Read stored conversation history around a Telegram message id. Use this when a message quotes or replies to an earlier one and you need what came before or after it -- the quoted message's id arrives as `reply_to_message_id` in a notification's meta. Defaults to this session's own bot; pass `bot` only when deliberately looking at another bot's conversation.",
+        "Read stored conversation history around a Telegram message id. Use this when a message quotes or replies to an earlier one and you need what came before or after it -- the quoted message's id arrives as `reply_to_message_id` in a notification's meta. Defaults to this session's own bot; pass `bot` only when deliberately looking at another bot's conversation. " +
+        "NEVER ask the user for a message id. They never see one: ids are an internal Telegram detail, not something a person can read off their screen. If you do not have an id, ask them to quote the message instead -- quoting delivers the id to you automatically. Do not print ids at them either.",
       inputSchema: {
         message_id: z.string().min(1),
         before: z.number().int().min(0).max(50).optional(),

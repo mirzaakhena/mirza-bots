@@ -1,4 +1,5 @@
 import { Bot, InlineKeyboard, type Context, type Filter } from "grammy";
+import type { MessageEntity } from "grammy/types";
 import {
   ensureStateDirs,
   configPath,
@@ -209,6 +210,38 @@ export function buildAlbumMessage(botName: string, items: AlbumItem[]): Normaliz
     isAlbum: true,
     messageIds: ordered.map((i) => String(i.messageId)),
   };
+}
+
+/**
+ * Decides how a message should read once one of its buttons has been tapped.
+ *
+ * Pure and exported for the same reason buildAlbumMessage is: these rules are
+ * worth testing without standing up grammy or a bot. `null` means "leave the
+ * message alone" -- there is nothing an editMessageText could do with a message
+ * that has no text (a caption-only one, or one Telegram reports as inaccessible).
+ *
+ * What removes the keyboard is what this payload does NOT carry: Telegram drops
+ * the markup of any message edited without a reply_markup. Left untouched, the
+ * same prompt stays tappable forever and gets answered twice.
+ *
+ * The original entities are carried over because the edit text is sent as plain
+ * text -- an edit without them silently strips every bold/italic/code run the
+ * message had. Appending at the END is what keeps those offsets valid.
+ */
+export function buildTappedMessageEdit(
+  message: { text?: string; entities?: MessageEntity[] } | undefined,
+  callbackData: string
+): { text: string; entities?: MessageEntity[] } | null {
+  if (typeof message?.text !== "string") return null;
+
+  // The callback DATA, not the button's label: Telegram does not send the label
+  // back with the query, and fleetd never stored the keyboard it forwarded on the
+  // AI's behalf. The data is the only truthful thing we have to show here.
+  const edit: { text: string; entities?: MessageEntity[] } = {
+    text: `${message.text}\n\n→ ${callbackData}`,
+  };
+  if (message.entities?.length) edit.entities = message.entities;
+  return edit;
 }
 
 /**
@@ -438,6 +471,23 @@ export function main(): void {
           { callbackData: ctx.callbackQuery.data }
         )
       );
+
+      // Only now, with the press safely stored and pushed, tidy the keyboard away
+      // so the same prompt cannot be answered a second time. Last on purpose:
+      // Telegram refuses edits for plenty of ordinary reasons (message too old,
+      // already edited, deleted by the user) and can be slow to say so, and none
+      // of that is worth delaying -- or losing -- the press the AI is waiting for.
+      const edit = buildTappedMessageEdit(ctx.callbackQuery.message, ctx.callbackQuery.data);
+      if (edit) {
+        try {
+          await ctx.editMessageText(
+            edit.text,
+            edit.entities ? { entities: edit.entities } : undefined
+          );
+        } catch (err) {
+          console.error(`fleetd: keyboard edit failed for ${botName} (press already delivered): ${err}`);
+        }
+      }
     });
 
     // Safety net, registered AFTER the `:data` handler above (which terminates the

@@ -15,6 +15,15 @@ type FakeTelegram = {
   server: ReturnType<typeof Bun.serve>;
   sentMessages: Array<{ chat_id: string; text: string; reply_markup?: unknown }>;
   answeredCallbackIds: string[];
+  // U-2: what fleetd sent to editMessageText after a tap. Recorded whole,
+  // because the assertion that matters is about a field being ABSENT.
+  editedMessages: Array<{
+    chat_id: string;
+    message_id: number;
+    text: string;
+    reply_markup?: unknown;
+    entities?: unknown;
+  }>;
 };
 
 // `failSendMessageForText` makes /sendMessage answer like a real Telegram
@@ -26,6 +35,7 @@ function startFakeTelegramApi(
 ): FakeTelegram {
   const sentMessages: Array<{ chat_id: string; text: string; reply_markup?: unknown }> = [];
   const answeredCallbackIds: string[] = [];
+  const editedMessages: FakeTelegram["editedMessages"] = [];
   let getUpdatesCalls = 0;
   const server = Bun.serve({
     port: 0,
@@ -82,10 +92,23 @@ function startFakeTelegramApi(
         answeredCallbackIds.push(body.callback_query_id);
         return Response.json({ ok: true, result: true });
       }
+      if (url.pathname.endsWith("/editMessageText")) {
+        const body = (await req.json()) as FakeTelegram["editedMessages"][number];
+        editedMessages.push(body);
+        return Response.json({
+          ok: true,
+          result: {
+            message_id: body.message_id,
+            date: 0,
+            chat: { id: body.chat_id, type: "private" },
+            text: body.text,
+          },
+        });
+      }
       return Response.json({ ok: false }, { status: 404 });
     },
   });
-  return { server, sentMessages, answeredCallbackIds };
+  return { server, sentMessages, answeredCallbackIds, editedMessages };
 }
 
 // Opens a socket client to fleetd and collects newline-delimited lines, split into
@@ -454,6 +477,8 @@ describe("fleetd Tahap 2 end-to-end: buttons", () => {
         message_id: 5,
         date: Math.floor(Date.now() / 1000),
         chat: { id: 111, type: "private" },
+        // The prompt the buttons were attached to -- U-2 rewrites this text.
+        text: "Pilih salah satu:",
       },
       chat_instance: "abc",
       data: "confirm_yes",
@@ -504,6 +529,18 @@ describe("fleetd Tahap 2 end-to-end: buttons", () => {
     // The press was stored as a message (searchable by its callback data).
     const convDbPath = join(home, "conversations.db");
     expect(await waitForStoredMessage(convDbPath, "confirm_yes", 4000)).toBe(1);
+
+    // U-2: the tapped keyboard is gone. Waited for separately because the edit
+    // deliberately runs after the press has been stored.
+    let edited: (typeof fake.editedMessages)[number] | undefined;
+    for (let waited = 0; waited < 8000 && !edited; waited += 100) {
+      await Bun.sleep(100);
+      edited = fake.editedMessages.find((m) => m.message_id === 5);
+    }
+    expect(edited?.text).toBe("Pilih salah satu:\n\n→ confirm_yes");
+    // The point of the whole feature: no reply_markup in the edit is what makes
+    // Telegram drop the keyboard, so the prompt cannot be answered twice.
+    expect(edited && "reply_markup" in edited).toBe(false);
 
     // Now send a reply WITH buttons and confirm the fake API received the right
     // inline_keyboard shape.
