@@ -67,6 +67,13 @@ sesi).
   `fleetd.sock`, mengenalkan diri lewat `hello` (identitasnya = folder kerja
   sesi), menyediakan tool **`reply`** (teks + tombol opsional) untuk membalas
   ke Telegram, dan meneruskan pesan masuk ke sesi sebagai notifikasi.
+- **Penjaga balasan (`Stop` hook).** Kalau giliran berakhir sementara belum ada
+  `reply` sejak pesan masuk terakhir, hook ini **memblokir sekali** dan menyuruh
+  AI menjawab dulu. Ada karena orang yang mengirim pesan sedang membaca Telegram,
+  bukan transkrip — giliran yang berakhir tanpa `reply` menghasilkan **diam
+  total** yang tidak bisa ia bedakan dari bot rusak. Protokol terse-turn menaikkan
+  risikonya (menutup giliran dengan "." membuat "sudah menjawab" dan "lupa
+  menjawab" tampak sama), jadi penjaganya mesin, bukan ingatan AI.
 
 - **Dokumen** (PDF, zip, `.md`, `.log`, `.txt`) diunduh otomatis sampai **20 MB**
   — batas Telegram sendiri untuk bot, jadi tidak ada aturan tambahan yang perlu
