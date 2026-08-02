@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { parseHookInput, sessionIdFrom } from "../../hooks/session-start";
+import { parseHookInput, sessionIdFrom, botForCwd } from "../../hooks/session-start";
 
 test("prefers the session id in the hook payload", () => {
   expect(
@@ -47,4 +47,38 @@ test("reads the id from a real /clear payload shape", () => {
   );
 
   expect(sessionIdFrom(payload, {} as any)).toBe("18e75c98-c4ee-4737-b365-911d36e9940d");
+});
+
+// botForCwd replaced the engine's zod-validated loader here. The hook needs one
+// string out of config.json, and importing the validator is what tied the
+// previous version to the engine's whole import graph -- a hook that looked
+// installed and did nothing.
+// Windows paths on purpose: `home` in the real config.json is a backslash path,
+// and the comparison is exact string equality.
+const WIN_HOME = "C:\\Users\\Mirza\\workspace\\bot-uji";
+
+test("finds the bot whose home matches the cwd", () => {
+  const raw = JSON.stringify({
+    allowFrom: ["1"],
+    bots: { "bot-uji": { home: WIN_HOME, token: "t" } },
+  });
+
+  expect(botForCwd(raw, WIN_HOME)).toBe("bot-uji");
+});
+
+test("returns undefined for a directory no bot claims", () => {
+  const raw = JSON.stringify({ bots: { "bot-uji": { home: WIN_HOME, token: "t" } } });
+  expect(botForCwd(raw, "C:\\Users\\Mirza\\workspace\\bot-99")).toBeUndefined();
+});
+
+// Malformed config must make the hook do nothing, not throw: it observes, and an
+// observer that crashes is worse than one that stays quiet.
+test("malformed config yields undefined instead of throwing", () => {
+  expect(botForCwd("{ not json", WIN_HOME)).toBeUndefined();
+  expect(botForCwd("{}", WIN_HOME)).toBeUndefined();
+});
+
+test("tolerates a BOM on config.json too, not just on the hook payload", () => {
+  const raw = "﻿" + JSON.stringify({ bots: { "bot-uji": { home: "/tmp/x", token: "t" } } });
+  expect(botForCwd(raw, "/tmp/x")).toBe("bot-uji");
 });

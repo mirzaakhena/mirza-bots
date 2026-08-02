@@ -2,36 +2,49 @@
 /**
  * SessionStart hook: records which Claude Code session this bot's window is on.
  *
- * It exists because the MCP process cannot learn this by itself. It reads
- * CLAUDE_CODE_SESSION_ID once when it is spawned, and `/clear` starts a new
- * session WITHOUT respawning it -- so the process keeps stamping an id that no
- * longer refers to anything. This hook is a fresh process every time, so it is
- * the one thing that sees the moment of the change.
+ * WHY IT EXISTS
  *
- * Measured before this was written (probe, 2026-08-02):
+ * The MCP process cannot learn this by itself. It reads CLAUDE_CODE_SESSION_ID
+ * once when spawned, and `/clear` starts a new session WITHOUT respawning it --
+ * so the process keeps stamping an id that no longer refers to anything.
+ * Measured 2026-08-02: Claude Code showed 2ef5b4c5-…, the engine was still
+ * writing f850dfd0-…. This hook is a fresh process every time, so it is the one
+ * thing that sees the change.
  *
- *   03:34:34  session=05b5ed06…  source="startup"
- *   03:36:37  session=18e75c98…  source="clear"
+ * WHY IT IMPORTS NOTHING BUT `node:`
  *
- * Both events are recorded the same way. `source` is not consulted: whichever
- * reason brought us here, the freshest id is the right one to store.
+ * The first version imported the engine's config/paths/identity modules "to
+ * avoid duplication", and never fired -- while the probe that preceded it, which
+ * deliberately imported only node builtins, fired every time. The duplication it
+ * avoided was a few lines; the price was a hook that looked installed and
+ * guarded nothing, which is the most expensive shape a bug takes in this
+ * project. A hook is not a good place to be clever about reuse.
  *
- * Every failure path returns quietly. This hook only observes -- something that
- * merely observes must never be able to take down the thing it is observing.
+ * WHY IT LOGS BEFORE DOING ANYTHING ELSE
+ *
+ * So that "did not fire" and "fired and failed" stop looking identical from the
+ * outside. The first line is written before any other work, and every later step
+ * appends its own outcome. Diagnosing the previous version cost a full round of
+ * guesswork precisely because it left nothing behind either way.
  */
-import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
-import { currentSessionPath, configPath } from "../src/engine/paths";
-import { loadConfig } from "../src/engine/config";
-import { resolveBotByCwd } from "../src/engine/identity";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
-/**
- * Parses the hook payload, tolerating a leading UTF-8 BOM.
- *
- * The BOM matters more than it looks: with one in front, JSON.parse throws,
- * main() returns early, and the hook does nothing at all -- while remaining
- * perfectly installed. Third BOM incident in this project (SCAR-026).
- */
+function stateRoot(): string {
+  return process.env.MIRZA_BOTS_HOME ?? join(homedir(), ".claude", "mirza-bots");
+}
+
+function note(line: string): void {
+  try {
+    const dir = join(stateRoot(), "logs");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "session-hook.log"), `${new Date().toISOString()} ${line}\n`);
+  } catch {
+    // Logging must never be the thing that breaks the hook.
+  }
+}
+
 export function parseHookInput(raw: string): any | null {
   try {
     return JSON.parse(raw.replace(/^﻿/, ""));
@@ -40,13 +53,6 @@ export function parseHookInput(raw: string): any | null {
   }
 }
 
-/**
- * The session id to record, or undefined when there is nothing trustworthy.
- *
- * Payload first, env var second. Undefined means "leave the previous value
- * alone" rather than "blank it": "don't know" and "no session" are different
- * claims, and only one of them would be true.
- */
 export function sessionIdFrom(input: any, env: NodeJS.ProcessEnv): string | undefined {
   const fromPayload = typeof input?.session_id === "string" ? input.session_id : "";
   if (fromPayload.length > 0) return fromPayload;
@@ -54,39 +60,74 @@ export function sessionIdFrom(input: any, env: NodeJS.ProcessEnv): string | unde
   return fromEnv.length > 0 ? fromEnv : undefined;
 }
 
+/**
+ * Which bot owns this directory, read straight from config.json.
+ *
+ * Plain JSON.parse rather than the engine's zod-validated loader: this hook needs
+ * exactly one string out of that file, and pulling in the validator is what tied
+ * the previous version to the engine's whole import graph. The engine still
+ * validates the same file properly, in the place where a complaint reaches
+ * someone who can act on it.
+ */
+export function botForCwd(configRaw: string, cwd: string): string | undefined {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(configRaw.replace(/^﻿/, ""));
+  } catch {
+    return undefined;
+  }
+  const bots = parsed?.bots;
+  if (typeof bots !== "object" || bots === null) return undefined;
+  for (const [name, bot] of Object.entries<any>(bots)) {
+    if (bot?.home === cwd) return name;
+  }
+  return undefined;
+}
+
 function main(): void {
+  note("fired");
+
   let raw = "";
   try {
     raw = readFileSync(0, "utf8");
   } catch {
-    // No stdin available; the env var may still answer.
+    note("stdin unreadable (falling back to env)");
   }
 
-  const id = sessionIdFrom(parseHookInput(raw) ?? {}, process.env);
-  if (id === undefined) return;
+  const payload = parseHookInput(raw) ?? {};
+  const id = sessionIdFrom(payload, process.env);
+  if (id === undefined) {
+    note("no session id in payload or env -- leaving the previous value alone");
+    return;
+  }
 
   const cwd = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-  let bot: string;
+  let configRaw = "";
   try {
-    const identity = resolveBotByCwd(loadConfig(configPath()), cwd);
-    // Not a bot folder: nothing to record, and nothing to complain about either.
-    // Telling the user here would mean shouting in every unrelated project they
-    // open, which is how a useful signal becomes noise people learn to ignore.
-    if (!identity.ok) return;
-    bot = identity.bot;
+    configRaw = readFileSync(join(stateRoot(), "config.json"), "utf8");
   } catch {
-    // An unreadable config is a real problem, but not this hook's to report:
-    // the engine says so through its tools, in a place someone is listening.
+    note(`config.json unreadable; cwd=${cwd}`);
+    return;
+  }
+
+  const bot = botForCwd(configRaw, cwd);
+  if (bot === undefined) {
+    // Not a bot folder. Nothing to record, and nothing to complain about either:
+    // saying so here would mean shouting in every unrelated project the user
+    // opens, which is how a useful signal turns into noise people filter out.
+    note(`no bot has home=${cwd} -- nothing to record`);
     return;
   }
 
   try {
-    const path = currentSessionPath(bot);
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, id);
-  } catch {
-    // Worst case the engine keeps using the previous id, which is exactly where
-    // it would have been without this hook -- never worse.
+    const dir = join(stateRoot(), "sessions");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${bot}.id`), id);
+    note(`wrote ${bot} = ${id} (source=${payload?.source ?? "-"})`);
+  } catch (err) {
+    // Worst case the engine keeps using the previous id -- exactly where it
+    // would have been without this hook, never worse.
+    note(`write failed for ${bot}: ${err}`);
   }
 }
 
