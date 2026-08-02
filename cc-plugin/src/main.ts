@@ -11,18 +11,8 @@ export function resolveIdentityCwd(): string {
   return process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
 }
 
-// Claude Code exports this into every MCP server it launches. It is a snapshot
-// taken when the MCP connection was made, not a live session tracker: if the
-// user runs /clear or switches sessions, the plugin process is not guaranteed to
-// restart with a new id (spec §8 risk 2). Good enough to attribute stored
-// messages to a session; authoritative session routing belongs to Tahap 4.
-export function resolveSessionId(): string | undefined {
-  const id = process.env.CLAUDE_CODE_SESSION_ID;
-  return id && id.length > 0 ? id : undefined;
-}
-
 export async function main(): Promise<void> {
-  const started = startEngine(resolveIdentityCwd(), resolveSessionId());
+  const started = startEngine(resolveIdentityCwd());
 
   if (!started.ok) {
     // Deliberately NOT an exit. A plugin that dies here is indistinguishable

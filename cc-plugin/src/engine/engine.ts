@@ -1,4 +1,5 @@
-import type { Context, Filter } from "grammy";
+import type { Context, Filter, InlineKeyboard } from "grammy";
+import type { Database } from "bun:sqlite";
 import {
   ensureStateDirs,
   configPath,
@@ -10,7 +11,8 @@ import {
 import { loadConfig } from "./config";
 import { resolveBotByCwd } from "./identity";
 import { acquireBotLock, releaseBotLock } from "./lock";
-import { openConversationsDb } from "./db/conversations-schema";
+import { openConversationsDb, insertMessage } from "./db/conversations-schema";
+import { commonMarkToMarkdownV2 } from "./markdown";
 import { openFleetDb } from "./db/fleet-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
@@ -29,6 +31,7 @@ import {
   handleSearchRequest,
 } from "./messages";
 import type { MessageSink, PushMessage } from "./sink";
+import { readCurrentSessionId } from "./session-file";
 import type { ButtonRow, HistoryMessage } from "./types";
 
 /**
@@ -41,7 +44,7 @@ import type { ButtonRow, HistoryMessage } from "./types";
  */
 export type Engine = {
   bot: string;
-  reply(text: string, buttons?: ButtonRow[]): Promise<void>;
+  reply(text: string, buttons?: ButtonRow[], replyTo?: string): Promise<void>;
   history(opts: {
     messageId: string;
     before?: number;
@@ -70,7 +73,74 @@ export type EngineStart = { ok: true; engine: Engine } | { ok: false; message: s
  *    caller is expected to keep serving its tools and report this message
  *    through them.
  */
-export function startEngine(cwd: string, sessionId?: string): EngineStart {
+
+/**
+ * Records a reply that Telegram has already accepted.
+ *
+ * Exported for tests, and called only AFTER sendMessage resolves. Two reasons,
+ * both load bearing:
+ *  - `message_id` exists ONLY in Telegram's answer. Storing first means storing
+ *    a row with no id, and an id-less row can never be quoted later.
+ *  - storing first would also record messages that were never delivered.
+ *
+ * The text stored is the AI's ORIGINAL CommonMark, not the MarkdownV2 the wire
+ * carried. What the AI re-reads later must be what it wrote, not the escaped
+ * form -- history full of backslashes would be worse than no history.
+ */
+export function storeOutgoing(
+  db: Database,
+  msg: {
+    bot: string;
+    chatId: string;
+    messageId?: string;
+    text: string;
+    sessionId?: string;
+    replyTo?: string;
+  }
+): void {
+  insertMessage(db, {
+    ts: new Date().toISOString(),
+    bot: msg.bot,
+    chatId: msg.chatId,
+    messageId: msg.messageId,
+    source: "assistant",
+    text: msg.text,
+    replyTo: msg.replyTo,
+    sessionId: msg.sessionId,
+  });
+}
+
+/**
+ * Assembles sendMessage's options object.
+ *
+ * Split out so the quoting rules are testable without a bot, and so "nothing to
+ * say" produces NO object rather than an empty one: grammy forwards this as-is,
+ * and a present-but-empty `reply_parameters` is a 400 from Telegram.
+ */
+export function buildSendOptions(
+  replyMarkup: InlineKeyboard | undefined,
+  replyTo: string | undefined
+): { reply_markup?: InlineKeyboard; reply_parameters?: { message_id: number } } | undefined {
+  const opts: { reply_markup?: InlineKeyboard; reply_parameters?: { message_id: number } } = {};
+  if (replyMarkup) opts.reply_markup = replyMarkup;
+  if (replyTo !== undefined) {
+    const id = Number(replyTo);
+    if (!Number.isInteger(id)) {
+      // Named here rather than left to Telegram's opaque 400, and the U-3 rule
+      // is repeated in the message because this is exactly the moment an AI is
+      // tempted to go ask the human for an id they have never seen.
+      throw new Error(
+        `reply_to must be a Telegram message id (a number); got "${replyTo}". ` +
+          `Ids arrive in a notification's meta as message_id or reply_to_message_id -- ` +
+          `never ask the user for one; ask them to quote the message instead.`
+      );
+    }
+    opts.reply_parameters = { message_id: id };
+  }
+  return Object.keys(opts).length > 0 ? opts : undefined;
+}
+
+export function startEngine(cwd: string): EngineStart {
   let config;
   try {
     ensureStateDirs();
@@ -105,7 +175,9 @@ export function startEngine(cwd: string, sessionId?: string): EngineStart {
   let handler: ((msg: PushMessage) => void) | undefined;
   const sink: MessageSink = {
     push: (msg) => (handler ? handler(msg) : buffered.push(msg)),
-    sessionId: () => sessionId,
+    // Read per push, never captured: /clear replaces the session without
+    // restarting this process. See session-file.ts for the measurement.
+    sessionId: () => readCurrentSessionId(botName),
   };
 
   const bot = makeBot(botConfig.token);
@@ -321,26 +393,46 @@ export function startEngine(cwd: string, sessionId?: string): EngineStart {
     engine: {
       bot: botName,
 
-      async reply(text: string, buttons?: ButtonRow[]): Promise<void> {
+      async reply(text: string, buttons?: ButtonRow[], replyTo?: string): Promise<void> {
         const chatId = lastChatByBot.get(botName);
         if (!chatId) {
           throw new Error(
             "no_known_chat: this bot has not received a message yet, so there is nobody to reply to"
           );
         }
-        // Before anything is built or sent: a rejected reply must leave no trace
-        // on the user's phone, so this cannot sit after the sendMessage.
+        // Reads the AI's own text, deliberately BEFORE the MarkdownV2 escaping:
+        // the numbered-list legend it looks for is written by the AI, and after
+        // escaping every "1." has become "1\." -- the rule would stop matching
+        // the very thing it exists to check.
         const unnarrated = findMissingButtonNarration(text, buttons);
         if (unnarrated) throw new Error(unnarrated);
+
         const replyMarkup = buttons ? buildInlineKeyboard(buttons) : undefined;
+        const options = buildSendOptions(replyMarkup, replyTo);
+
         // Telegram rejects sends for plenty of reasons outside our control (429,
         // blocked by the user, text over 4096 chars). Letting it reject means the
         // tool call fails loudly instead of reporting a send that never happened.
-        await bot.api.sendMessage(
-          chatId,
-          text,
-          replyMarkup ? { reply_markup: replyMarkup } : undefined
-        );
+        const sent = await bot.api.sendMessage(chatId, commonMarkToMarkdownV2(text), {
+          ...(options ?? {}),
+          parse_mode: "MarkdownV2",
+        });
+
+        // Never fatal. The message is already on the user's phone; throwing here
+        // would make the AI believe the send failed and send the whole thing
+        // again.
+        try {
+          storeOutgoing(conversationsDb, {
+            bot: botName,
+            chatId,
+            messageId: String(sent.message_id),
+            text,
+            sessionId: sink.sessionId(),
+            replyTo,
+          });
+        } catch (err) {
+          console.error(`cc-plugin: reply sent but not stored: ${err}`);
+        }
       },
 
       async history(opts): Promise<HistoryMessage[]> {
