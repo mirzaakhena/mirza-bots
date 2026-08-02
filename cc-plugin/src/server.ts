@@ -65,17 +65,21 @@ export function buildServer(backend: ServerBackend): McpServer {
     "reply",
     {
       description:
-        "Send a reply message to the user on Telegram. Optionally attach inline keyboard buttons as rows of {text, data} -- pressing a button delivers `data` back as the user's next message.",
+        "Send a reply message to the user on Telegram. Write ordinary markdown -- **bold**, *italic*, `code`, fenced blocks, links -- it is converted for you; there is no format flag to remember. " +
+        "Optionally attach inline keyboard buttons as rows of {text, data} -- pressing a button delivers `data` back as the user's next message. " +
+        "Pass `reply_to` with a Telegram message id to quote that message, e.g. when answering something said a while ago and the thread has moved on. " +
+        "NEVER ask the user for a message id. They never see one: ids are an internal Telegram detail, not something a person can read off their screen. If you do not have an id, ask them to quote the message instead -- quoting delivers the id to you automatically.",
       inputSchema: {
         text: z.string().min(1),
         buttons: z
           .array(z.array(z.object({ text: z.string().min(1), data: z.string().min(1) })))
           .optional(),
+        reply_to: z.string().min(1).optional(),
       },
     },
-    async ({ text, buttons }) => {
+    async ({ text, buttons, reply_to }) => {
       if (isUnavailable(backend)) return unavailableAnswer(backend);
-      await backend.reply(text, buttons);
+      await backend.reply(text, buttons, reply_to);
       return { content: [{ type: "text", text: "sent" }] };
     }
   );
