@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import type { HistoryMessage } from "../../../../fleetd/src/socket/protocol";
+import type { HistoryMessage } from "../types";
 
 // Table only. Indexes, FTS and triggers come after addMissingColumns() below,
 // because idx_messages_session cannot be created until session_id exists on a

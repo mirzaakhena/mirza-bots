@@ -10,14 +10,12 @@ import {
   findMissingButtonNarration,
   handleHistoryRequest,
   handleSearchRequest,
-} from "../src/main";
-import { insertMessage } from "../../cc-plugin/src/engine/db/conversations-schema";
-import type { BoundConnection } from "../src/socket/registry";
-import { openConversationsDb, searchMessages } from "../../cc-plugin/src/engine/db/conversations-schema";
-import { CollectingSink } from "../../cc-plugin/src/engine/sink";
-import { ConnectionRegistry } from "../src/socket/registry";
-import type { PollerDeps } from "../../cc-plugin/src/engine/telegram/poller";
-import type { Config } from "../../cc-plugin/src/engine/config";
+} from "../../src/engine/messages";
+import { insertMessage } from "../../src/engine/db/conversations-schema";
+import { openConversationsDb, searchMessages } from "../../src/engine/db/conversations-schema";
+import { CollectingSink } from "../../src/engine/sink";
+import type { PollerDeps } from "../../src/engine/telegram/poller";
+import type { Config } from "../../src/engine/config";
 
 const config: Config = {
   allowFrom: ["111"],
@@ -349,7 +347,7 @@ describe("findMissingButtonNarration (U-5: numbered buttons must be explained in
   });
 });
 
-describe("history and search socket handlers (K-3: default to the caller's own bot)", () => {
+describe("history and search (K-3: default to this session's own bot)", () => {
   function seeded() {
     const db = openConversationsDb(":memory:");
     insertMessage(db, { ts: "t", bot: "bot-01", chatId: "111", source: "user", messageId: "100", text: "punya bot-01 tentang backup" });
@@ -361,10 +359,9 @@ describe("history and search socket handlers (K-3: default to the caller's own b
     allowFrom: ["111"],
     bots: { "bot-01": { home: "/tmp/bot-01", token: "t" }, "bot-02": { home: "/tmp/bot-02", token: "t" } },
   };
-  const conn = (boundBot: string | null): BoundConnection => ({ send: () => {}, boundBot });
 
   test("history defaults to the calling bot and never leaks another bot's messages", () => {
-    const res = handleHistoryRequest({ type: "history", messageId: "100" }, conn("bot-01"), twoBots, seeded());
+    const res = handleHistoryRequest({ messageId: "100" }, "bot-01", twoBots, seeded());
 
     // bot-02 also has a message_id 100. Defaulting wrong here would hand one
     // bot's private conversation to another bot's AI with no one asking for it.
@@ -377,8 +374,8 @@ describe("history and search socket handlers (K-3: default to the caller's own b
 
   test("history crosses to another bot only when the bot parameter is given explicitly", () => {
     const res = handleHistoryRequest(
-      { type: "history", messageId: "100", bot: "bot-02" },
-      conn("bot-01"),
+      { messageId: "100", bot: "bot-02" },
+      "bot-01",
       twoBots,
       seeded()
     );
@@ -388,7 +385,7 @@ describe("history and search socket handlers (K-3: default to the caller's own b
   });
 
   test("search defaults to the calling bot and never leaks another bot's messages", () => {
-    const res = handleSearchRequest({ type: "search", query: "backup" }, conn("bot-01"), twoBots, seeded());
+    const res = handleSearchRequest({ query: "backup" }, "bot-01", twoBots, seeded());
 
     const messages = (res as { ok: true; messages: any[] }).messages;
     // Both bots have a message containing "backup"; only one is the caller's.
@@ -396,16 +393,10 @@ describe("history and search socket handlers (K-3: default to the caller's own b
     expect(messages[0].bot).toBe("bot-01");
   });
 
-  test("a connection that never said hello cannot read any history at all", () => {
-    expect(handleHistoryRequest({ type: "history", messageId: "100" }, conn(null), twoBots, seeded()))
-      .toEqual({ ok: false, error: "not_identified" });
-    expect(handleSearchRequest({ type: "search", query: "backup" }, conn(null), twoBots, seeded()))
-      .toEqual({ ok: false, error: "not_identified" });
-  });
 
   test("naming a bot that is not in the config is rejected rather than silently returning nothing", () => {
     expect(
-      handleSearchRequest({ type: "search", query: "backup", bot: "bot-99" }, conn("bot-01"), twoBots, seeded())
+      handleSearchRequest({ query: "backup", bot: "bot-99" }, "bot-01", twoBots, seeded())
     ).toEqual({ ok: false, error: "unknown_bot" });
   });
 
@@ -414,7 +405,7 @@ describe("history and search socket handlers (K-3: default to the caller's own b
     // queries, so this is a normal input, not an exotic one. Throwing here would
     // reach the socket server's catch-all as handler_failed -- answerable, but
     // useless to the AI, which cannot tell it should just rephrase.
-    const res = handleSearchRequest({ type: "search", query: 'backup"' }, conn("bot-01"), twoBots, seeded());
+    const res = handleSearchRequest({ query: 'backup"' }, "bot-01", twoBots, seeded());
 
     expect(res).toMatchObject({ ok: false });
     expect((res as { ok: false; error: string }).error).toContain("bad_search_query");

@@ -57,29 +57,9 @@ export type HistoryRequest = z.infer<typeof HistoryRequestSchema>;
 export type SearchRequest = z.infer<typeof SearchRequestSchema>;
 export type Request = z.infer<typeof RequestSchema>;
 
-// One stored message as it travels over the socket. Declared here rather than in
-// the db module because both sides of the wire need it, and a contract used by
-// more than one component may only have one copy (K-15).
-export type HistoryMessage = {
-  id: number;
-  ts: string;
-  bot: string;
-  chatId: string;
-  messageId: string | null;
-  source: string;
-  userName: string | null;
-  text: string | null;
-  replyTo: string | null;
-  metadata: string | null;
-};
-
-export type DoctorReport = {
-  botCount: number;
-  socketPath: string;
-  fleetTables: string[];
-  conversationsReady: boolean;
-  version: string;
-};
+// TEMPORARY re-export: these shapes now live in the engine, which outlives the
+// socket. Declared in one place only (K-15); this file disappears in Task 6.
+export type { HistoryMessage, DoctorReport } from "../../../cc-plugin/src/engine/types";
 
 export type PushMessage = {
   type: "push_message";
