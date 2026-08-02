@@ -2,22 +2,25 @@ import { describe, test, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { buildServer, TERSE_TURN_MARKER } from "../src/server";
-import type { FleetdClient, PushMessage } from "../src/fleetd-client";
+import type { Engine } from "../src/engine/engine";
+import type { PushMessage } from "../src/engine/sink";
 
-function fakeFleetdClient(overrides: Partial<FleetdClient> = {}): FleetdClient {
+function fakeEngine(overrides: Partial<Engine> = {}): Engine {
   return {
-    connect: async () => ({ bot: "bot-01" }),
+    bot: "bot-01",
     reply: async () => {},
+    history: async () => [],
+    search: async () => [],
     onPush: () => {},
     close: () => {},
     ...overrides,
-  } as unknown as FleetdClient;
+  } as unknown as Engine;
 }
 
 describe("cc-plugin MCP server", () => {
-  test("the reply tool proxies its text argument to FleetdClient.reply", async () => {
+  test("the reply tool proxies its text argument to Engine.reply", async () => {
     const replied: string[] = [];
-    const client = fakeFleetdClient({ reply: async (text: string) => { replied.push(text); } });
+    const client = fakeEngine({ reply: async (text: string) => { replied.push(text); } });
     const server = buildServer(client);
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -33,9 +36,9 @@ describe("cc-plugin MCP server", () => {
     await server.close();
   });
 
-  test("the reply tool passes an optional buttons argument through to FleetdClient.reply", async () => {
+  test("the reply tool passes an optional buttons argument through to Engine.reply", async () => {
     const calls: Array<{ text: string; buttons?: unknown }> = [];
-    const client = fakeFleetdClient({
+    const client = fakeEngine({
       reply: async (text: string, buttons?: any) => {
         calls.push({ text, buttons });
       },
@@ -67,7 +70,7 @@ describe("cc-plugin MCP server", () => {
 
   test("a push_message from fleetd is forwarded as notifications/claude/channel with string-only meta", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
-    const client = fakeFleetdClient({ onPush: (handler) => { capturedPushHandler = handler; } });
+    const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
     const server = buildServer(client);
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -101,7 +104,7 @@ describe("cc-plugin MCP server", () => {
 
   test("a push_message meta containing a non-primitive value is serialized to a string before sending, never sent as an object/array", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
-    const client = fakeFleetdClient({ onPush: (handler) => { capturedPushHandler = handler; } });
+    const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
     const server = buildServer(client);
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -132,7 +135,7 @@ describe("cc-plugin MCP server", () => {
 
   test("a push_message meta containing genuinely non-string values (number, undefined) is coerced to strings, never passed through as-is", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
-    const client = fakeFleetdClient({ onPush: (handler) => { capturedPushHandler = handler; } });
+    const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
     const server = buildServer(client);
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -169,7 +172,7 @@ describe("cc-plugin MCP server", () => {
   });
 
   test("the server declares MCP instructions that name the reply tool and the terse-turn marker", async () => {
-    const client = fakeFleetdClient();
+    const client = fakeEngine();
     const server = buildServer(client);
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -191,7 +194,7 @@ describe("cc-plugin MCP server", () => {
 
   test("a pushed message is stamped with the terse-turn marker while preserving the original text verbatim", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
-    const client = fakeFleetdClient({ onPush: (handler) => { capturedPushHandler = handler; } });
+    const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
     const server = buildServer(client);
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -220,7 +223,7 @@ describe("cc-plugin MCP server", () => {
 
   test("a button press (kind: callback) gets the same marker -- no special case", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
-    const client = fakeFleetdClient({ onPush: (handler) => { capturedPushHandler = handler; } });
+    const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
     const server = buildServer(client);
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -242,13 +245,13 @@ describe("cc-plugin MCP server", () => {
     await server.close();
   });
 
-  test("the read_history tool proxies to FleetdClient.history and returns the rows as JSON", async () => {
+  test("the read_history tool proxies to Engine.history and returns the rows as JSON", async () => {
     const calls: any[] = [];
     const row = {
       id: 7, ts: "t", bot: "bot-01", chatId: "111", messageId: "101", source: "user",
       userName: "mirza", text: "pesan kedua", replyTo: null, metadata: null,
     };
-    const client = fakeFleetdClient({
+    const client = fakeEngine({
       history: async (opts: any) => {
         calls.push(opts);
         return [row];
@@ -275,9 +278,9 @@ describe("cc-plugin MCP server", () => {
     await server.close();
   });
 
-  test("the search_history tool proxies to FleetdClient.search and passes an explicit bot through", async () => {
+  test("the search_history tool proxies to Engine.search and passes an explicit bot through", async () => {
     const calls: any[] = [];
-    const client = fakeFleetdClient({
+    const client = fakeEngine({
       search: async (opts: any) => {
         calls.push(opts);
         return [];
@@ -305,7 +308,7 @@ describe("cc-plugin MCP server", () => {
   });
 
   test("a search that fleetd refuses comes back as a tool error, not as an empty result", async () => {
-    const client = fakeFleetdClient({
+    const client = fakeEngine({
       search: async () => {
         throw new Error("request rejected: bad_search_query: unterminated string");
       },
@@ -320,6 +323,52 @@ describe("cc-plugin MCP server", () => {
 
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toContain("bad_search_query");
+
+    await mcpClient.close();
+    await server.close();
+  });
+});
+
+// W-16, at the layer the AI actually touches. When the engine cannot start, the
+// tools must still EXIST and must say why -- a plugin whose tools vanish is
+// indistinguishable from one that was never installed, and that is precisely the
+// failure that cost two hours on 2026-08-01 with no evidence left behind.
+describe("cc-plugin MCP server when the engine could not start", () => {
+  const unavailable = {
+    kind: "unavailable" as const,
+    reason: "this folder is not any bot's home; registered bots: bot-uji",
+  };
+
+  async function connected() {
+    const server = buildServer(unavailable);
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+    return { server, mcpClient };
+  }
+
+  test("still registers every tool rather than hiding them", async () => {
+    const { server, mcpClient } = await connected();
+
+    const { tools } = await mcpClient.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual(["read_history", "reply", "search_history"]);
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("every tool answers with the reason, as an error the AI can read", async () => {
+    const { server, mcpClient } = await connected();
+
+    for (const call of [
+      { name: "reply", arguments: { text: "halo" } },
+      { name: "read_history", arguments: { message_id: "1" } },
+      { name: "search_history", arguments: { query: "apa" } },
+    ]) {
+      const res = await mcpClient.callTool(call);
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.content)).toContain("bot-uji");
+    }
 
     await mcpClient.close();
     await server.close();

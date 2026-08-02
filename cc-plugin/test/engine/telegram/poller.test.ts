@@ -8,7 +8,7 @@ import {
   type NormalizedMessage,
 } from "../../../src/engine/telegram/poller";
 import type { Config } from "../../../src/engine/config";
-import type { PushMessage } from "../../../../fleetd/src/socket/protocol";
+import type { PushMessage } from "../../../src/engine/sink";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

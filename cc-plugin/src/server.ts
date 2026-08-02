@@ -1,6 +1,28 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import type { FleetdClient } from "./fleetd-client";
+import type { Engine } from "./engine/engine";
+
+/**
+ * What the server is when the engine could not start.
+ *
+ * It still registers every tool. A plugin that hides its tools on failure is
+ * indistinguishable from one that was never installed, and that silence is the
+ * failure this whole rewrite exists to end (W-16) -- so each tool answers with
+ * the reason instead of not being there.
+ */
+export type Unavailable = { kind: "unavailable"; reason: string };
+export type ServerBackend = Engine | Unavailable;
+
+function isUnavailable(b: ServerBackend): b is Unavailable {
+  return (b as Unavailable).kind === "unavailable";
+}
+
+function unavailableAnswer(b: Unavailable) {
+  return {
+    content: [{ type: "text" as const, text: `Telegram is not available: ${b.reason}` }],
+    isError: true,
+  };
+}
 
 // The single copy of this contract (K-15): the marker the push forwarder stamps
 // onto Telegram-triggered turns, and the marker SERVER_INSTRUCTIONS teaches the
@@ -20,7 +42,7 @@ export const SERVER_INSTRUCTIONS = [
   "This applies only to turns carrying that prefix. Turns the user types directly into this terminal are ordinary turns -- answer those in full, as usual.",
 ].join("\n");
 
-export function buildServer(client: FleetdClient): McpServer {
+export function buildServer(backend: ServerBackend): McpServer {
   const server = new McpServer(
     // "version" here is the MCP protocol identity of this server, not the
     // plugin/package version -- it is deliberately independent of
@@ -52,7 +74,8 @@ export function buildServer(client: FleetdClient): McpServer {
       },
     },
     async ({ text, buttons }) => {
-      await client.reply(text, buttons);
+      if (isUnavailable(backend)) return unavailableAnswer(backend);
+      await backend.reply(text, buttons);
       return { content: [{ type: "text", text: "sent" }] };
     }
   );
@@ -78,7 +101,8 @@ export function buildServer(client: FleetdClient): McpServer {
       },
     },
     async ({ message_id, before, after, bot }) => {
-      const messages = await client.history({
+      if (isUnavailable(backend)) return unavailableAnswer(backend);
+      const messages = await backend.history({
         messageId: message_id,
         ...(before !== undefined ? { before } : {}),
         ...(after !== undefined ? { after } : {}),
@@ -100,7 +124,8 @@ export function buildServer(client: FleetdClient): McpServer {
       },
     },
     async ({ query, limit, bot }) => {
-      const messages = await client.search({
+      if (isUnavailable(backend)) return unavailableAnswer(backend);
+      const messages = await backend.search({
         query,
         ...(limit !== undefined ? { limit } : {}),
         ...(bot !== undefined ? { bot } : {}),
@@ -109,7 +134,8 @@ export function buildServer(client: FleetdClient): McpServer {
     }
   );
 
-  client.onPush((msg) => {
+  if (!isUnavailable(backend)) {
+    backend.onPush((msg) => {
     // SCAR-056: Claude Code's notification meta schema is Record<string,string>
     // strictly -- fleetd's PushMessage.meta is already typed that way, but this
     // forwarder is the last point of defense: never pass a value through unless
@@ -141,7 +167,8 @@ export function buildServer(client: FleetdClient): McpServer {
       .catch((err) => {
         console.error(`cc-plugin: failed to forward push notification: ${err}`);
       });
-  });
+    });
+  }
 
   return server;
 }
