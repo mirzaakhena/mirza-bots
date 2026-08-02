@@ -1,8 +1,8 @@
 import { describe, test, expect } from "bun:test";
-import { openFleetDb, FLEET_TABLES } from "../src/db/fleet-schema";
-import { openConversationsDb } from "../src/db/conversations-schema";
-import { buildDoctorReport } from "../src/doctor";
-import type { Config } from "../src/config";
+import { openFleetDb, FLEET_TABLES } from "../../src/engine/db/fleet-schema";
+import { openConversationsDb } from "../../src/engine/db/conversations-schema";
+import { buildDoctorReport } from "../../src/engine/doctor";
+import type { Config } from "../../src/engine/config";
 
 describe("doctor report", () => {
   test("reports bot count, fleet tables, and conversations readiness", () => {

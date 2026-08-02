@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { isAllowed } from "../../src/telegram/allowlist";
-import type { Config } from "../../src/config";
+import { isAllowed } from "../../../src/engine/telegram/allowlist";
+import type { Config } from "../../../src/engine/config";
 
 const config: Config = {
   allowFrom: ["111", "222"],

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { extractQuote } from "../../src/telegram/quote";
+import { extractQuote } from "../../../src/engine/telegram/quote";
 
 describe("extractQuote", () => {
   test("prefers message.quote.text, and reports a hand-selected quote as manual", () => {

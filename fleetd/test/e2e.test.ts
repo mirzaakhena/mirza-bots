@@ -204,7 +204,7 @@ async function stopFleetdAndCleanup(proc: Bun.Subprocess, home: string): Promise
 // Polls conversations.db directly (no socket query API yet) until `term` shows up
 // or the budget runs out; returns how many matches were found.
 async function waitForStoredMessage(convDbPath: string, term: string, budgetMs = 8000) {
-  const { openConversationsDb, searchMessages } = await import("../src/db/conversations-schema");
+  const { openConversationsDb, searchMessages } = await import("../../cc-plugin/src/engine/db/conversations-schema");
   let count = 0;
   for (let waited = 0; waited < budgetMs && count === 0; waited += 100) {
     await Bun.sleep(100);

@@ -7,9 +7,9 @@ import { startSocketServer } from "../../src/socket/server";
 import { encode } from "../../src/socket/protocol";
 import type { Response } from "../../src/socket/protocol";
 import { ConnectionRegistry } from "../../src/socket/registry";
-import { openFleetDb } from "../../src/db/fleet-schema";
+import { openFleetDb } from "../../../cc-plugin/src/engine/db/fleet-schema";
 import { queueMessage, drainQueue } from "../../src/db/bot-inbox";
-import type { Config } from "../../src/config";
+import type { Config } from "../../../cc-plugin/src/engine/config";
 
 const testConfig: Config = {
   allowFrom: ["1"],

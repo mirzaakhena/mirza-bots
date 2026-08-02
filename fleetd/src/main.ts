@@ -7,22 +7,22 @@ import {
   conversationsDbPath,
   socketPath,
   stateRoot,
-} from "./paths";
-import { loadConfig } from "./config";
-import { openFleetDb } from "./db/fleet-schema";
-import { openConversationsDb, getMessagesAround, searchMessages } from "./db/conversations-schema";
+} from "../../cc-plugin/src/engine/paths";
+import { loadConfig } from "../../cc-plugin/src/engine/config";
+import { openFleetDb } from "../../cc-plugin/src/engine/db/fleet-schema";
+import { openConversationsDb, getMessagesAround, searchMessages } from "../../cc-plugin/src/engine/db/conversations-schema";
 import { startSocketServer } from "./socket/server";
 import { ConnectionRegistry, type BoundConnection } from "./socket/registry";
-import { buildDoctorReport } from "./doctor";
+import { buildDoctorReport } from "../../cc-plugin/src/engine/doctor";
 import {
   handleIncomingMessage,
   startPolling,
   type NormalizedMessage,
   type PollerDeps,
-} from "./telegram/poller";
-import { AlbumBuffer } from "./telegram/album-buffer";
-import { extractQuote } from "./telegram/quote";
-import { safeName, MAX_DOCUMENT_BYTES } from "./telegram/media";
+} from "../../cc-plugin/src/engine/telegram/poller";
+import { AlbumBuffer } from "../../cc-plugin/src/engine/telegram/album-buffer";
+import { extractQuote } from "../../cc-plugin/src/engine/telegram/quote";
+import { safeName, MAX_DOCUMENT_BYTES } from "../../cc-plugin/src/engine/telegram/media";
 import { drainQueue } from "./db/bot-inbox";
 import type {
   Request,
@@ -32,7 +32,7 @@ import type {
   SearchRequest,
 } from "./socket/protocol";
 import type { Database } from "bun:sqlite";
-import type { Config } from "./config";
+import type { Config } from "../../cc-plugin/src/engine/config";
 import pkg from "../package.json";
 
 const VERSION = pkg.version;

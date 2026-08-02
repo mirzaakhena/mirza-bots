@@ -4,7 +4,7 @@ import {
   insertMessage,
   searchMessages,
   getMessagesAround,
-} from "../src/db/conversations-schema";
+} from "../../src/engine/db/conversations-schema";
 import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

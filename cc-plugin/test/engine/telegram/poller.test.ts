@@ -1,16 +1,16 @@
 import { describe, test, expect } from "bun:test";
-import { openConversationsDb, searchMessages } from "../../src/db/conversations-schema";
-import { openFleetDb } from "../../src/db/fleet-schema";
-import { drainQueue } from "../../src/db/bot-inbox";
-import { ConnectionRegistry, type BoundConnection } from "../../src/socket/registry";
+import { openConversationsDb, searchMessages } from "../../../src/engine/db/conversations-schema";
+import { openFleetDb } from "../../../src/engine/db/fleet-schema";
+import { drainQueue } from "../../../../fleetd/src/db/bot-inbox";
+import { ConnectionRegistry, type BoundConnection } from "../../../../fleetd/src/socket/registry";
 import {
   handleIncomingMessage,
   startPolling,
   downloadAll,
   type NormalizedMessage,
-} from "../../src/telegram/poller";
-import type { Config } from "../../src/config";
-import type { PushMessage } from "../../src/socket/protocol";
+} from "../../../src/engine/telegram/poller";
+import type { Config } from "../../../src/engine/config";
+import type { PushMessage } from "../../../../fleetd/src/socket/protocol";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

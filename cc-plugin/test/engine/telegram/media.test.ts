@@ -2,7 +2,7 @@ import { describe, test, expect, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import { downloadToFile, safeName, MAX_DOCUMENT_BYTES } from "../../src/telegram/media";
+import { downloadToFile, safeName, MAX_DOCUMENT_BYTES } from "../../../src/engine/telegram/media";
 
 let tmp: string | undefined;
 let server: ReturnType<typeof Bun.serve> | undefined;

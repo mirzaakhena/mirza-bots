@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { formatLocalTimestamp } from "../src/time";
+import { formatLocalTimestamp } from "../../src/engine/time";
 
 describe("formatLocalTimestamp", () => {
   test("renders a UTC instant in a zone ahead of UTC, with its offset", () => {

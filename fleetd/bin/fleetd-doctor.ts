@@ -1,5 +1,5 @@
 import net from "node:net";
-import { socketPath } from "../src/paths";
+import { socketPath } from "../../cc-plugin/src/engine/paths";
 import { encode } from "../src/socket/protocol";
 
 function askDoctor(sockPath: string): Promise<unknown> {

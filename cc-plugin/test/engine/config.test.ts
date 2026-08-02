@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, botCount, ConfigError } from "../src/config";
+import { loadConfig, botCount, ConfigError } from "../../src/engine/config";
 
 let tmp: string;
 let cfgPath: string;

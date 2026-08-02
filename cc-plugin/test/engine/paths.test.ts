@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stateRoot, ensureStateDirs, logsDir } from "../src/paths";
+import { stateRoot, ensureStateDirs, logsDir } from "../../src/engine/paths";
 
 let tmp: string;
 

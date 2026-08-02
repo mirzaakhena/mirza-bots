@@ -1,12 +1,12 @@
 import type { Bot } from "grammy";
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config";
-import type { ConnectionRegistry } from "../socket/registry";
-import type { PushMessage } from "../socket/protocol";
+import type { ConnectionRegistry } from "../../../../fleetd/src/socket/registry";
+import type { PushMessage } from "../../../../fleetd/src/socket/protocol";
 import { isAllowed } from "./allowlist";
 import { downloadToFile, redactToken } from "./media";
 import { insertMessage, encodeMetadata, type MessageMetadata } from "../db/conversations-schema";
-import { queueMessage } from "../db/bot-inbox";
+import { queueMessage } from "../../../../fleetd/src/db/bot-inbox";
 import { formatLocalTimestamp } from "../time";
 import { join } from "node:path";
 

@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 import { FLEET_TABLES } from "./db/fleet-schema";
 import { botCount } from "./config";
 import type { Config } from "./config";
-import type { DoctorReport } from "./socket/protocol";
+import type { DoctorReport } from "../../../fleetd/src/socket/protocol";
 
 export function buildDoctorReport(
   config: Config,

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { AlbumBuffer } from "../../src/telegram/album-buffer";
+import { AlbumBuffer } from "../../../src/engine/telegram/album-buffer";
 
 describe("AlbumBuffer", () => {
   test("groups items added within the debounce window into one flush", async () => {

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { openFleetDb } from "../../src/db/fleet-schema";
+import { openFleetDb } from "../../../cc-plugin/src/engine/db/fleet-schema";
 import { queueMessage, drainQueue } from "../../src/db/bot-inbox";
 import type { PushMessage } from "../../src/socket/protocol";
 

@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openFleetDb, FLEET_TABLES } from "../src/db/fleet-schema";
+import { openFleetDb, FLEET_TABLES } from "../../src/engine/db/fleet-schema";
 
 describe("fleet.db schema", () => {
   test("creates all expected tables", () => {

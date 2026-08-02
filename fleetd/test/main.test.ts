@@ -11,13 +11,13 @@ import {
   handleHistoryRequest,
   handleSearchRequest,
 } from "../src/main";
-import { insertMessage } from "../src/db/conversations-schema";
+import { insertMessage } from "../../cc-plugin/src/engine/db/conversations-schema";
 import type { BoundConnection } from "../src/socket/registry";
-import { openConversationsDb, searchMessages } from "../src/db/conversations-schema";
-import { openFleetDb } from "../src/db/fleet-schema";
+import { openConversationsDb, searchMessages } from "../../cc-plugin/src/engine/db/conversations-schema";
+import { openFleetDb } from "../../cc-plugin/src/engine/db/fleet-schema";
 import { ConnectionRegistry } from "../src/socket/registry";
-import type { PollerDeps } from "../src/telegram/poller";
-import type { Config } from "../src/config";
+import type { PollerDeps } from "../../cc-plugin/src/engine/telegram/poller";
+import type { Config } from "../../cc-plugin/src/engine/config";
 
 const config: Config = {
   allowFrom: ["111"],

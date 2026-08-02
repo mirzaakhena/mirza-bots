@@ -1,7 +1,7 @@
 import net from "node:net";
 import { unlinkSync, existsSync } from "node:fs";
 import { encode, tryDecode, type Request, type Response, type PushMessage } from "./protocol";
-import type { Config } from "../config";
+import type { Config } from "../../../cc-plugin/src/engine/config";
 import { ConnectionRegistry, type BoundConnection } from "./registry";
 
 export type Handler = (req: Request, conn: BoundConnection) => Response | Promise<Response>;
