@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stateRoot, ensureStateDirs, logsDir } from "../../src/engine/paths";
+import { stateRoot, ensureStateDirs, logsDir, lockPath } from "../../src/engine/paths";
 
 let tmp: string;
 
@@ -26,5 +26,14 @@ describe("paths", () => {
     expect(existsSync(tmp)).toBe(true);
     expect(existsSync(join(tmp, "inbox"))).toBe(true);
     expect(existsSync(logsDir())).toBe(true);
+  });
+
+  test("lockPath lives under the fleet state root, not inside the bot's folder", () => {
+    expect(lockPath("bot-01")).toBe(join(tmp, "locks", "bot-01.pid"));
+  });
+
+  test("ensureStateDirs creates the locks directory too", () => {
+    ensureStateDirs();
+    expect(existsSync(join(tmp, "locks"))).toBe(true);
   });
 });

@@ -30,9 +30,21 @@ export function socketPath(): string {
   return join(stateRoot(), "fleetd.sock");
 }
 
+// Centralised on purpose. The old system kept each bot's pid file inside that
+// bot's own folder, which is the scattered-state pattern this rewrite exists to
+// undo: with them gathered here, "who currently holds which token" is one
+// directory listing rather than six.
+export function locksDir(): string {
+  return join(stateRoot(), "locks");
+}
+
+export function lockPath(bot: string): string {
+  return join(locksDir(), `${bot}.pid`);
+}
+
 export function ensureStateDirs(): void {
   const root = stateRoot();
-  for (const dir of [root, join(root, "inbox"), logsDir()]) {
+  for (const dir of [root, join(root, "inbox"), logsDir(), locksDir()]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }
