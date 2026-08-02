@@ -3,6 +3,9 @@ import { unlinkSync, existsSync } from "node:fs";
 import { encode, tryDecode, type Request, type Response, type PushMessage } from "./protocol";
 import type { Config } from "../../../cc-plugin/src/engine/config";
 import { ConnectionRegistry, type BoundConnection } from "./registry";
+// TEMPORARY: this whole file dies in Task 6. Until then it borrows the engine's
+// identity resolver so there is only one answer to "which bot is this cwd?".
+import { resolveBotByCwd } from "../../../cc-plugin/src/engine/identity";
 
 export type Handler = (req: Request, conn: BoundConnection) => Response | Promise<Response>;
 
@@ -10,13 +13,6 @@ export type Handler = (req: Request, conn: BoundConnection) => Response | Promis
 // already registered and able to receive pushes. main.ts uses it to drain
 // bot_inbox -- messages that arrived while no plugin was connected.
 export type OnBind = (bot: string, conn: BoundConnection) => void;
-
-function resolveBotByCwd(config: Config, cwd: string): string | null {
-  for (const [name, bot] of Object.entries(config.bots)) {
-    if (bot.home === cwd) return name;
-  }
-  return null;
-}
 
 // Called once the socket is genuinely accepting connections, and once if the bind
 // fails instead. They exist because listen() is asynchronous: a caller that
@@ -63,11 +59,12 @@ export function startSocketServer(
             rawConn.write(encode({ ok: false, error: "already_bound" }));
             continue;
           }
-          const bot = resolveBotByCwd(config, req.cwd);
-          if (!bot) {
+          const identity = resolveBotByCwd(config, req.cwd);
+          if (!identity.ok) {
             rawConn.write(encode({ ok: false, error: "unknown_cwd" }));
             continue;
           }
+          const bot = identity.bot;
           conn.boundBot = bot;
           conn.sessionId = req.sessionId;
           registry.register(bot, conn);
