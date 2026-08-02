@@ -1,21 +1,31 @@
 # mirza-bots
 
-Fleet harness untuk bot Telegram berbasis Claude Code. Satu program latar
-belakang (`fleetd`) memegang seluruh logika dan penyimpanan untuk beberapa
-bot sekaligus, lepas dari sesi Claude Code mana pun — sehingga bot tetap
-hidup walau sesi di-reset, di-`/clear`, atau crash.
+Fleet harness untuk bot Telegram berbasis Claude Code. **Satu paket:**
+`cc-plugin`, yang berisi seluruh engine — penarik pesan Telegram, database,
+dan tool MCP — dan berjalan di dalam proses tiap sesi Claude Code.
 
-Arsitektur lengkapnya (tiga komponen: `fleetd`, `bot-cc`, `cc-plugin`)
-didesain di repo `mirza-marketplace`
-(`docs/superpowers/specs/2026-07-27-fleet-harness-rebuild-design.md`) — README
-ini sengaja tidak menduplikasinya, hanya mendokumentasikan apa yang **sudah
-ada di repo ini**.
+**Tidak ada daemon.** `fleetd` dibubarkan 2026-08-02: alasannya, ongkos
+menjalankan dan mengawasinya, ada di
+`mirza-marketplace/docs/superpowers/specs/2026-08-02-penyatuan-engine-fleetd-design.md`.
+
+**Yang TIDAK ikut dibubarkan adalah pemusatan state.** Seluruh armada tetap
+berbagi satu `~/.claude/mirza-bots/`: satu config, satu riwayat yang bisa
+dicari lintas bot. Yang dibubarkan prosesnya, bukan gudangnya.
+
+Konsekuensi yang diterima sadar: **bot hanya hidup selama ada sesi Claude Code
+terbuka.** Pesan tidak hilang — Telegram menahan update yang belum diambil
+sampai 24 jam — tapi balasannya menunggu sesi berikutnya dibuka.
+
+Arsitektur aslinya (tiga komponen: `fleetd`, `bot-cc`, `cc-plugin`) didesain di
+`docs/superpowers/specs/2026-07-27-fleet-harness-rebuild-design.md`; bagian
+`fleetd`-nya sudah digantikan spec di atas.
 
 ## Status: Tahap 2 (Jalur Pesan)
 
-Jalur pesan dua arah sudah hidup: **Telegram → `fleetd` → sesi Claude Code →
-balik lagi ke Telegram**. Dua paket yang ada sekarang: `fleetd` (daemon) dan
-`cc-plugin` (plugin Claude Code). PTY `bot-cc` belum ada.
+Jalur pesan dua arah sudah hidup: **Telegram → sesi Claude Code → balik lagi ke
+Telegram**, seluruhnya dalam satu proses. Satu paket: `cc-plugin`. PTY `bot-cc`
+belum ada, dan alasan terbesarnya ("menyalakan `fleetd` bila belum berjalan")
+sudah hilang bersama daemonnya.
 
 **Diverifikasi hidup dengan bot Telegram sungguhan (2026-07-30, `bot-01`):**
 teks, foto tunggal, album (3 foto → 1 baris tergabung), dan tombol inline
@@ -37,13 +47,10 @@ sesi).
   - `conversations.db` — riwayat percakapan dengan pencarian teks penuh
     (FTS5), disinkron otomatis lewat trigger SQL setiap kali baris pesan
     ditambah/diubah/dihapus.
-- **Soket Unix** (`fleetd.sock`) dengan protokol JSON satu baris per pesan
-  — pola dasar yang nanti dipakai hook dan koneksi panjang MCP. Setiap
-  request divalidasi zod di batas soket (`fleetd` satu-satunya titik
-  validasi), dan request yang cacat selalu dijawab `{"ok":false,...}` —
-  tidak pernah menggantung pemanggilnya.
+- **Kunci satu-penarik-per-token** (`locks/<bot>.pid`) — dijelaskan di
+  "Menjalankan" di bawah.
 - **`doctor`** — status check yang melaporkan jumlah bot terdaftar, tabel
-  yang ada, dan kesiapan kedua database.
+  yang ada, kesiapan kedua database, dan siapa yang memegang tiap token.
 
 ### Jalur pesan masuk (Tahap 2 + 2.5-MASUK)
 
@@ -63,10 +70,11 @@ sesi).
   Claude Code yang terhubung, pesan itu ditulis ke `bot_inbox`. Begitu ada
   plugin yang menyambung (`hello`), antreannya langsung dikuras dan dikirim —
   jadi pesan yang datang waktu bot "mati" tidak hilang.
-- **`cc-plugin`** — plugin Claude Code (MCP server) yang menyambung ke
-  `fleetd.sock`, mengenalkan diri lewat `hello` (identitasnya = folder kerja
-  sesi), menyediakan tool **`reply`** (teks + tombol opsional) untuk membalas
-  ke Telegram, dan meneruskan pesan masuk ke sesi sebagai notifikasi.
+- **`cc-plugin`** — plugin Claude Code (MCP server) yang **berisi engine-nya**:
+  ia menentukan bot mana dirinya dari folder kerja sesi, mengklaim token bot itu,
+  menarik pesannya sendiri, menyediakan tool **`reply`** (teks + tombol opsional)
+  untuk membalas ke Telegram, dan meneruskan pesan masuk ke sesi sebagai
+  notifikasi.
 - **Penjaga balasan (`Stop` hook).** Kalau giliran berakhir sementara belum ada
   `reply` sejak pesan masuk terakhir, hook ini **memblokir sekali** dan menyuruh
   AI menjawab dulu. Ada karena orang yang mengirim pesan sedang membaca Telegram,
@@ -95,7 +103,7 @@ sesi).
   (itulah yang mencopot keyboard-nya) dan ditambahi `→ <pilihan>`, jadi prompt yang
   sama tidak bisa dijawab dua kali. Entities aslinya dikirim ulang supaya format
   tidak terhapus, dan penandanya ditempel di akhir supaya offset lama tetap sah.
-- **Tombol bernomor wajib punya keterangannya.** `fleetd` **menolak** `reply` yang
+- **Tombol bernomor wajib punya keterangannya.** Engine **menolak** `reply` yang
   labelnya angka telanjang bila badan pesannya tidak memuat daftar bernomor yang
   cocok — ditolak sebelum apa pun terkirim, dan pesan errornya menyebutkan cara
   memperbaikinya. Aturan ini dulu hanya hidup sebagai teks yang meminta AI
@@ -111,22 +119,21 @@ sesi).
 Yang **belum** ada (menyusul di tahap berikutnya): PTY `bot-cc`,
 handoff/delegasi antar-bot, routing sesi yang sebenarnya (untuk sekarang
 `reply` menyasar chat terakhir yang menyapa bot itu, disimpan di memori dan
-hilang saat `fleetd` restart).
+hilang saat sesinya ditutup), dan konversi CommonMark→MarkdownV2 (2.5-KELUAR)
+— sampai itu ada, `**bintang**` tampil mentah di Telegram.
 
 ## Instalasi
 
-Butuh [Bun](https://bun.sh) 1.3+. Dua paket, masing-masing punya dependensi
-sendiri:
+Butuh [Bun](https://bun.sh) 1.3+. Satu paket:
 
 ```bash
-cd fleetd && bun install
-cd ../cc-plugin && bun install
+cd cc-plugin && bun install
 ```
 
 ## Konfigurasi
 
-Buat `~/.claude/mirza-bots/config.json` (folder ini dibuat otomatis oleh
-`fleetd` kalau belum ada):
+Buat `~/.claude/mirza-bots/config.json` (folder ini dibuat otomatis saat
+sesi pertama dibuka):
 
 ```json
 {
@@ -144,8 +151,8 @@ Buat `~/.claude/mirza-bots/config.json` (folder ini dibuat otomatis oleh
 - `bots` — satu entri per bot. Nama bot bebas (jadi key), `home` folder
   kerja bot itu, `token` token BotFather. Boleh lebih dari satu bot.
 
-Path lain yang dipakai `fleetd`, semuanya di bawah `~/.claude/mirza-bots/`:
-`fleet.db`, `conversations.db`, `fleetd.sock`, `inbox/`, `logs/`.
+Path lain yang dipakai engine, semuanya di bawah `~/.claude/mirza-bots/`:
+`fleet.db`, `conversations.db`, `inbox/`, `logs/`, dan `locks/<bot>.pid`.
 
 **Untuk testing tanpa menyentuh folder asli**, override dengan env var
 `MIRZA_BOTS_HOME=/path/ke/folder/sementara` — semua path di atas ikut
@@ -153,15 +160,29 @@ pindah ke situ.
 
 ## Menjalankan
 
-```bash
-cd fleetd
-bun run start     # menyalakan fleetd, dengar di socket
-```
+**Tidak ada yang perlu dinyalakan.** Engine hidup di dalam sesi Claude Code:
+buka sesi di folder yang terdaftar sebagai `home` sebuah bot, dan bot itu mulai
+menarik pesan.
 
-Di terminal lain, cek statusnya:
+### Satu penarik per token
+
+Telegram hanya mengizinkan **satu** konsumen `getUpdates` per token. Dua
+penarik tidak menghasilkan galat yang keras — mereka membagi pesanmu secara
+acak, yang terbaca sebagai "botnya kadang mendengar".
+
+Karena itu tiap sesi mengklaim `~/.claude/mirza-bots/locks/<bot>.pid` saat
+start. **Sesi terbaru menang:** kalau kunci itu dipegang proses yang masih
+hidup, sesi baru menghentikannya dan mengambil alih, lalu mencatatnya ke
+stderr. Sesi lama berhenti menerima pesan Telegram — itu disengaja, dan bukan
+kerusakan.
+
+Enam bot dengan enam token berbeda **tidak pernah** berebut; kunci ini hanya
+soal satu bot dengan dua sesi.
+
+### Memeriksa keadaan
 
 ```bash
-cd fleetd
+cd cc-plugin
 bun run doctor
 ```
 
@@ -170,20 +191,30 @@ Contoh keluaran:
 ```json
 {
   "ok": true,
-  "report": {
-    "botCount": 1,
-    "socketPath": "/Users/kamu/.claude/mirza-bots/fleetd.sock",
-    "fleetTables": ["sessions", "handoffs", "injections", "bot_inbox", "incidents"],
-    "conversationsReady": true,
-    "version": "0.1.0"
-  }
+  "botCount": 1,
+  "locks": [{ "bot": "bot-uji", "pid": 41234, "alive": true }],
+  "fleetTables": ["sessions", "handoffs", "injections", "bot_inbox", "incidents"],
+  "conversationsReady": true,
+  "version": "0.4.0"
 }
 ```
 
+`locks` memuat **setiap** bot di config, dipegang atau tidak — `pid: null`
+berarti tidak ada sesi yang melayani bot itu sekarang, dan `alive: false`
+dengan `pid` terisi berarti kuncinya basi (sesi mati tanpa melepasnya).
+
+### Kalau bot ini tidak mau bicara
+
+Engine **tidak pernah mati diam-diam**. Kalau ia tidak bisa start, plugin tetap
+hidup dan ketiga tool-nya tetap ada — tiap panggilan menjawab dengan alasannya,
+mis. *"This directory (...) is not the home of any bot in config.json …
+registered bots: bot-uji"*. Kalau kamu melihat pesan seperti itu, perbaiki
+`config.json` lalu buka ulang sesinya.
+
 ## Memasang `cc-plugin` di Claude Code
 
-**Verifikasi lapangan (Task 10, 2026-07-30):** pesan masuk sampai ke `fleetd`
-dan ke proses `cc-plugin` dengan benar lewat `.mcp.json`/`--plugin-dir` biasa —
+**Verifikasi lapangan (Task 10, 2026-07-30, waktu daemonnya masih ada):**
+pesan masuk sampai ke proses `cc-plugin` dengan benar lewat `.mcp.json`/`--plugin-dir` biasa —
 tapi notifikasinya **tidak pernah muncul di sesi Claude Code**, tanpa error apa
 pun. Root cause: Claude Code hanya meneruskan `notifications/claude/channel`
 dari MCP server yang (a) mendeklarasikan capability `experimental: {
@@ -229,15 +260,25 @@ claude plugin update cc-plugin@mirza-bots
    mengingatkan *"Restart to apply changes"*; sesi yang sedang berjalan tetap
    menjalankan kode lama sampai dibuka ulang.
 
+⚠️ **Langkah 3 bukan formalitas, dan tidak ada apa pun yang mengingatkanmu kalau
+ia terlewat.** Claude Code mengunci versi plugin saat sesi dibuka. Sebuah sesi
+yang mulai 14 menit sebelum sebuah perbaikan dipasang akan terus menjalankan
+versi lama sampai dibuka ulang — termasuk hook-nya, yang bisa memblokir giliran
+dengan logika yang sudah dihapus dari repo. Persis itu yang terjadi 2026-08-02
+(W-18), dan gejalanya sama sekali tidak menunjuk ke versi.
+
 Pastikan dengan `claude plugin list | grep -A 2 cc-plugin` bahwa versinya
 memang yang baru.
 
 ### Setiap sesi
 
-Syaratnya: `fleetd` sudah jalan lebih dulu, dan identitas yang dikirim plugin
-lewat `hello` sama dengan `home` salah satu bot di `config.json`. Kalau tidak
-cocok, `hello` dijawab `unknown_cwd` dan plugin gagal start dengan pesan itu.
-Identitas itu diambil lewat `resolveIdentityCwd()` (`cc-plugin/src/main.ts`):
+Syarat satu-satunya: folder sesi itu sama dengan `home` salah satu bot di
+`config.json`. Tidak ada daemon yang harus dinyalakan lebih dulu.
+
+Kalau tidak cocok, plugin **tetap start** dan tiap tool menjawab dengan
+alasannya, berikut daftar bot yang terdaftar — ia tidak lagi menghilang tanpa
+suara (W-16). Identitas itu diambil lewat `resolveIdentityCwd()`
+(`cc-plugin/src/main.ts`):
 mengutamakan env var `CLAUDE_PROJECT_DIR`, baru jatuh ke `process.cwd()` kalau
 env var itu tidak ada — **terverifikasi bekerja** persis dengan `home` di
 `config.json` untuk `bot-01` (`/Users/mirza/Workspace/mirza-bots`), tanpa
@@ -257,11 +298,11 @@ baru yang berisiko di repo ini. Notifikasi masuk (▎ *Channels (experimental)�
 akan muncul begitu sesi terbuka; pesan Telegram sungguhan langsung tampil
 sebagai giliran baru di sesi.
 
-Kalau `fleetd` di-restart saat sesi hidup, koneksi plugin ikut mati: `reply`
-akan langsung gagal dengan error "connection lost"/"not connected" — bukan
-menggantung. Sambungkan ulang lewat `/mcp` di Claude Code (koneksi soket akan
-tersambung ulang; flag channel tidak perlu diulang karena itu properti sesi,
-bukan koneksi MCP).
+Tidak ada lagi koneksi yang bisa putus di tengah: engine hidup di dalam proses
+plugin itu sendiri, jadi ia hidup dan mati bersamanya. Yang bisa terjadi
+sebagai gantinya adalah **pengambilalihan token** — sesi lain di folder bot yang
+sama mengklaim kuncinya, dan sesi ini berhenti menerima pesan. Itu dicatat ke
+stderr oleh sesi yang mengambil alih.
 
 ### Protokol giliran ringkas (terse-turn)
 
@@ -286,21 +327,14 @@ yang putus.
 ## Testing
 
 ```bash
-cd fleetd && bun test        # 59 test
-cd ../cc-plugin && bun test  # 19 test
+cd cc-plugin && bun test     # 168 test
 ```
 
-`fleetd` — mencakup validasi config, kedua skema database (termasuk
-sinkronisasi trigger FTS5 saat update/delete), protokol socket (termasuk
-kasus pesan terpotong lintas paket, request cacat, dan handler yang melempar),
-gerbang allowlist beserta jaminan bahwa chat yang ditolak tidak pernah jadi
-tujuan balasan, penyatuan album, redaksi token bot di pesan error, lalu
-beberapa test end-to-end yang benar-benar menyalakan `fleetd` sebagai proses
-terpisah — dengan Telegram API palsu, bukan simulasi in-process — dan
-membuktikan pesan yang masuk saat tidak ada plugin tersambung tetap terkirim
-setelah plugin menyambung.
-
-`cc-plugin` — handshake `hello`, tool `reply` (dengan dan tanpa tombol),
-penerusan push, perilaku saat `fleetd` menghilang, deklarasi `instructions`
-MCP, serta pembubuhan marker terse-turn pada pesan yang diteruskan (baik
-pesan biasa maupun penekanan tombol).
+Mencakup validasi config, kedua skema database (termasuk sinkronisasi trigger
+FTS5 saat update/delete), gerbang allowlist beserta jaminan bahwa chat yang
+ditolak tidak pernah jadi tujuan balasan, penyatuan album, redaksi token bot di
+pesan error, kunci satu-penarik-per-token, resolusi identitas bot dari folder
+sesi, perakitan engine, tool MCP (dengan dan tanpa tombol), penerusan push,
+pembubuhan marker terse-turn, dan **mode `unavailable`**: kalau engine gagal
+start, ketiga tool tetap terdaftar dan menjawab dengan alasan yang bisa dibaca
+manusia.

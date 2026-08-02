@@ -1,13 +1,6 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { FleetdClient } from "./fleetd-client";
+import { startEngine } from "./engine/engine";
 import { buildServer } from "./server";
-
-export function resolveSocketPath(): string {
-  const root = process.env.MIRZA_BOTS_HOME ?? join(homedir(), ".claude", "mirza-bots");
-  return join(root, "fleetd.sock");
-}
 
 // Claude Code sets CLAUDE_PROJECT_DIR for MCP servers precisely so they can
 // resolve the session's project directory without depending on the process's
@@ -29,11 +22,22 @@ export function resolveSessionId(): string | undefined {
 }
 
 export async function main(): Promise<void> {
-  const client = new FleetdClient();
-  const { bot } = await client.connect(resolveSocketPath(), resolveIdentityCwd(), resolveSessionId());
-  console.error(`cc-plugin: connected to fleetd as bot "${bot}"`);
+  const started = startEngine(resolveIdentityCwd(), resolveSessionId());
 
-  const server = buildServer(client);
+  if (!started.ok) {
+    // Deliberately NOT an exit. A plugin that dies here is indistinguishable
+    // from a plugin that was never installed -- which is exactly what cost two
+    // hours on 2026-08-01 (W-16) and left nothing behind to diagnose, because a
+    // process that dies before it can speak leaves no evidence. Serve the tools
+    // anyway, so the reason reaches whoever calls one.
+    console.error(`cc-plugin: ${started.message}`);
+    const server = buildServer({ kind: "unavailable", reason: started.message });
+    await server.connect(new StdioServerTransport());
+    return;
+  }
+
+  console.error(`cc-plugin: engine running for bot "${started.engine.bot}"`);
+  const server = buildServer(started.engine);
   await server.connect(new StdioServerTransport());
 }
 

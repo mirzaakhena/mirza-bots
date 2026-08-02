@@ -1,12 +1,14 @@
 {
   "name": "cc-plugin",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
-    "start": "bun run src/main.ts"
+    "start": "bun run src/main.ts",
+    "doctor": "bun run bin/doctor.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "grammy": "^1.45.1",
     "zod": "^4.4.3"
   }
 }
