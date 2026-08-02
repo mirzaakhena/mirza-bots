@@ -1,4 +1,5 @@
 import type { Config } from "./config";
+import { samePath } from "./same-path";
 
 export type IdentityResult = { ok: true; bot: string } | { ok: false; message: string };
 
@@ -18,7 +19,9 @@ export type IdentityResult = { ok: true; bot: string } | { ok: false; message: s
  */
 export function resolveBotByCwd(config: Config, cwd: string): IdentityResult {
   for (const [name, bot] of Object.entries(config.bots)) {
-    if (bot.home === cwd) return { ok: true, bot: name };
+    // samePath, not ===: the same directory reaches this function spelled two
+    // different ways depending on which part of Claude Code handed it over.
+    if (samePath(bot.home, cwd)) return { ok: true, bot: name };
   }
 
   const names = Object.keys(config.bots);

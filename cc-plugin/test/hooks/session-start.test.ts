@@ -82,3 +82,11 @@ test("tolerates a BOM on config.json too, not just on the hook payload", () => {
   const raw = "﻿" + JSON.stringify({ bots: { "bot-uji": { home: "/tmp/x", token: "t" } } });
   expect(botForCwd(raw, "/tmp/x")).toBe("bot-uji");
 });
+
+// The exact failure from the log, 2026-08-02: Claude Code handed the hook
+// forward slashes while config.json held backslashes, and the bot never
+// recognised its own home.
+test("matches a home written with backslashes against a cwd with forward slashes", () => {
+  const raw = JSON.stringify({ bots: { "bot-uji": { home: WIN_HOME, token: "t" } } });
+  expect(botForCwd(raw, "C:/Users/Mirza/workspace/bot-uji")).toBe("bot-uji");
+});

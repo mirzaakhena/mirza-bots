@@ -69,6 +69,23 @@ export function sessionIdFrom(input: any, env: NodeJS.ProcessEnv): string | unde
  * validates the same file properly, in the place where a complaint reaches
  * someone who can act on it.
  */
+/**
+ * Same-directory test, spelled out here rather than imported from the engine.
+ *
+ * This hook imports nothing but `node:` on purpose (see the header), so it keeps
+ * its own five-line copy instead of reaching into src/. The duplication is the
+ * price of a hook that cannot be broken by anything upstream of it.
+ *
+ * Separators only, never case: Windows would call C:/BOT and C:/bot the same and
+ * Linux would not, and answering "same" for two different directories is worse
+ * than missing a match -- a missed match shows up in this hook's own log.
+ */
+function normalize(p: string): string {
+  const withSlashes = p.split("\\").join("/");
+  if (/^\/$/.test(withSlashes) || /^[A-Za-z]:\/$/.test(withSlashes)) return withSlashes;
+  return withSlashes.endsWith("/") ? withSlashes.slice(0, -1) : withSlashes;
+}
+
 export function botForCwd(configRaw: string, cwd: string): string | undefined {
   let parsed: any;
   try {
@@ -79,7 +96,7 @@ export function botForCwd(configRaw: string, cwd: string): string | undefined {
   const bots = parsed?.bots;
   if (typeof bots !== "object" || bots === null) return undefined;
   for (const [name, bot] of Object.entries<any>(bots)) {
-    if (bot?.home === cwd) return name;
+    if (typeof bot?.home === "string" && normalize(bot.home) === normalize(cwd)) return name;
   }
   return undefined;
 }
