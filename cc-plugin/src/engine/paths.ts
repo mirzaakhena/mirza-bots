@@ -38,9 +38,21 @@ export function lockPath(bot: string): string {
   return join(locksDir(), `${bot}.pid`);
 }
 
+// Written by the SessionStart hook, read by the engine on every push. Separate
+// from the lock on purpose: the lock answers "which PROCESS owns this token",
+// this answers "which SESSION that process's window is on" -- and the second
+// changes without the first moving at all.
+export function sessionsDir(): string {
+  return join(stateRoot(), "sessions");
+}
+
+export function currentSessionPath(bot: string): string {
+  return join(sessionsDir(), `${bot}.id`);
+}
+
 export function ensureStateDirs(): void {
   const root = stateRoot();
-  for (const dir of [root, join(root, "inbox"), logsDir(), locksDir()]) {
+  for (const dir of [root, join(root, "inbox"), logsDir(), locksDir(), sessionsDir()]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }

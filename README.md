@@ -112,6 +112,21 @@ sesi).
   IANA); saat diisi, push `meta` mendapat `ts_local` di samping `ts` yang **tetap
   UTC**. Penyimpanan sengaja tidak diubah — UTC tidak ambigu, bisa diurutkan, dan
   kebal DST; yang ditambahkan hanya cara menampilkannya.
+- **Balasan keluar ikut disimpan.** Barisnya ber-`source='assistant'` berikut
+  `message_id` yang dikembalikan Telegram, dan disimpan **sesudah** kirim
+  berhasil — id itu hanya ada di jawaban Telegram, dan baris tanpa id tidak bisa
+  dikutip belakangan. Sebelum ini `read_history` menyajikan transkrip sepihak.
+- **Bot bisa mengutip.** Tool `reply` menerima `reply_to` berisi id pesan yang
+  dikutip — pesan user maupun pesan bot sendiri. **AI tidak boleh pernah meminta
+  id itu ke user** (U-3); kalau tidak punya, minta user meng-*quote*.
+- **Markdown dikonversi otomatis, tanpa flag.** AI menulis CommonMark biasa
+  (`**tebal**`, `` `kode` ``, blok berpagar, tautan) dan engine mengubahnya ke
+  MarkdownV2 — termasuk meng-escape tiap `. - ( ) ! +` yang kalau tidak, membuat
+  Telegram menolak seluruh pesan dengan 400. **Yang disimpan ke database tetap
+  teks aslinya**, bukan hasil escape.
+- **Identitas sesi dibaca, bukan dipotret.** Hook `SessionStart` menulis id sesi
+  terbaru ke `sessions/<bot>.id`; engine membacanya tiap kali push. Tanpa ini,
+  `/clear` membuat pesan berikutnya distempel id sesi lama — terukur 2026-08-02.
 - **Belum ditangani, disengaja:** voice note, video, video_note, dan sticker.
   Pesan jenis itu diabaikan diam-diam — kalau suatu hari muncul keluhan "kok
   bot-nya diam?", ini kandidat pertama yang diperiksa, bukan misteri baru.
@@ -327,7 +342,7 @@ yang putus.
 ## Testing
 
 ```bash
-cd cc-plugin && bun test     # 168 test
+cd cc-plugin && bun test     # 191 test
 ```
 
 Mencakup validasi config, kedua skema database (termasuk sinkronisasi trigger

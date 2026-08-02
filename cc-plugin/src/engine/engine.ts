@@ -31,6 +31,7 @@ import {
   handleSearchRequest,
 } from "./messages";
 import type { MessageSink, PushMessage } from "./sink";
+import { readCurrentSessionId } from "./session-file";
 import type { ButtonRow, HistoryMessage } from "./types";
 
 /**
@@ -139,7 +140,7 @@ export function buildSendOptions(
   return Object.keys(opts).length > 0 ? opts : undefined;
 }
 
-export function startEngine(cwd: string, sessionId?: string): EngineStart {
+export function startEngine(cwd: string): EngineStart {
   let config;
   try {
     ensureStateDirs();
@@ -174,7 +175,9 @@ export function startEngine(cwd: string, sessionId?: string): EngineStart {
   let handler: ((msg: PushMessage) => void) | undefined;
   const sink: MessageSink = {
     push: (msg) => (handler ? handler(msg) : buffered.push(msg)),
-    sessionId: () => sessionId,
+    // Read per push, never captured: /clear replaces the session without
+    // restarting this process. See session-file.ts for the measurement.
+    sessionId: () => readCurrentSessionId(botName),
   };
 
   const bot = makeBot(botConfig.token);

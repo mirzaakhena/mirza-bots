@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bun run \"${CLAUDE_PLUGIN_ROOT}/hooks/session-probe.ts\""
+            "command": "bun run \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.ts\""
           }
         ]
       }
