@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "cc-plugin",
-      "description": "MCP server that proxies the reply tool to fleetd over a Unix socket and forwards incoming Telegram messages as notifications/claude/channel.",
+      "description": "Claude Code plugin for the mirza-bots fleet: contains the whole engine -- polls this session bot on Telegram, stores the fleet shared history, and exposes reply/read_history/search_history as MCP tools. No daemon.",
       "category": "productivity",
       "source": "./cc-plugin"
     }
