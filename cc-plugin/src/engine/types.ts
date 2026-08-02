@@ -25,9 +25,13 @@ export type HistoryMessage = {
   metadata: string | null;
 };
 
+/** Who holds one bot's Telegram token right now, if anyone. */
+export type LockStatus = { bot: string; pid: number | null; alive: boolean };
+
 export type DoctorReport = {
   botCount: number;
-  socketPath: string;
+  /** One entry per configured bot, held or not -- see doctor.ts for why. */
+  locks: LockStatus[];
   fleetTables: string[];
   conversationsReady: boolean;
   version: string;

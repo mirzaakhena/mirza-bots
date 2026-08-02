@@ -67,6 +67,11 @@ export const FLEET_TABLES = ["sessions", "handoffs", "injections", "bot_inbox", 
 export function openFleetDb(path: string): Database {
   const db = new Database(path);
   db.exec("PRAGMA journal_mode = WAL;");
+  // WAL already lets readers and writers run in parallel, but two writers
+  // still serialise. Up to six sessions now open this file instead of one
+  // daemon, so the loser of a write race must WAIT rather than fail --
+  // SQLITE_BUSY surfaces as a random, hard-to-trace error at the call site.
+  db.exec("PRAGMA busy_timeout = 5000;");
   db.exec(SCHEMA);
   return db;
 }

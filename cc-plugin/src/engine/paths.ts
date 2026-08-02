@@ -26,10 +26,6 @@ export function logsDir(): string {
   return join(stateRoot(), "logs");
 }
 
-export function socketPath(): string {
-  return join(stateRoot(), "fleetd.sock");
-}
-
 // Centralised on purpose. The old system kept each bot's pid file inside that
 // bot's own folder, which is the scattered-state pattern this rewrite exists to
 // undo: with them gathered here, "who currently holds which token" is one
