@@ -35,3 +35,34 @@ test("an inline code span keeps its contents literal", () => {
   const out = commonMarkToMarkdownV2("pakai `a.b(c)` ya");
   expect(out).toContain("a.b(c)");
 });
+
+// Found live 2026-08-02: the bot's first TWO sends were rejected outright --
+// "Character '|' is reserved and must be escaped", then the same for '-'. The
+// library's default strategy is `keep`, which passes markdown Telegram has no
+// syntax for (tables, thematic breaks) through untouched, and MarkdownV2 then
+// rejects the WHOLE message.
+test("a markdown table is escaped, not passed through raw", () => {
+  const out = commonMarkToMarkdownV2("| a | b |\n|---|---|\n| 1 | 2 |");
+
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] === "|") expect(out[i - 1]).toBe("\\");
+  }
+});
+
+test("a horizontal rule is escaped, not passed through raw", () => {
+  const out = commonMarkToMarkdownV2("sebelum\n\n---\n\nsesudah");
+  expect(out).toContain("\-");
+  expect(out).toContain("sebelum");
+  expect(out).toContain("sesudah");
+});
+
+// `remove` would also stop the 400 -- by deleting the table entirely, returning
+// an empty string for a message the user asked to send. Content that vanishes
+// without a word is the exact failure class this project keeps paying for, so
+// escaping (ugly but complete) wins over removing (clean but silent).
+test("unsupported markdown is kept as text rather than deleted", () => {
+  const out = commonMarkToMarkdownV2("| Bahasa | Rilis |\n|---|---|\n| Python | 1991 |");
+  expect(out).toContain("Python");
+  expect(out).toContain("1991");
+  expect(out.length).toBeGreaterThan(0);
+});

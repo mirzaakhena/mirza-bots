@@ -21,5 +21,18 @@ export function commonMarkToMarkdownV2(input: string): string {
   // Some versions throw on empty input. Short-circuit so an empty reply surfaces
   // as an empty reply rather than a confusing library error.
   if (!input) return "";
-  return telegramifyMarkdown(input);
+
+  // "escape", explicitly, because the default ("keep") is what bit us live on
+  // 2026-08-02: two sends rejected outright with "Character '|' is reserved and
+  // must be escaped", then the same for '-'. Telegram has no syntax for tables
+  // or thematic breaks, and `keep` hands those characters over untouched --
+  // which makes MarkdownV2 refuse the WHOLE message, not just that line.
+  //
+  // The other option that stops the 400 is "remove", and it is worse: it
+  // deletes the table and returns an empty string for a message the user asked
+  // to send. Content that vanishes without a word is the failure class this
+  // project keeps paying for. Escaping is uglier -- a table arrives as plain
+  // text with visible pipes -- but nothing is lost, and the human can see
+  // exactly what happened.
+  return telegramifyMarkdown(input, "escape");
 }
