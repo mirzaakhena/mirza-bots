@@ -1,12 +1,10 @@
 import type { Bot } from "grammy";
 import type { Database } from "bun:sqlite";
 import type { Config } from "../config";
-import type { ConnectionRegistry } from "../../../../fleetd/src/socket/registry";
-import type { PushMessage } from "../../../../fleetd/src/socket/protocol";
+import type { MessageSink, PushMessage } from "../sink";
 import { isAllowed } from "./allowlist";
 import { downloadToFile, redactToken } from "./media";
 import { insertMessage, encodeMetadata, type MessageMetadata } from "../db/conversations-schema";
-import { queueMessage } from "../../../../fleetd/src/db/bot-inbox";
 import { formatLocalTimestamp } from "../time";
 import { join } from "node:path";
 
@@ -48,8 +46,7 @@ export type DocumentAttachment = { url: string; fileName: string; sizeBytes?: nu
 export type PollerDeps = {
   config: Config;
   conversationsDb: Database;
-  fleetDb: Database;
-  registry: ConnectionRegistry;
+  sink: MessageSink;
   inboxRoot: string;
 };
 
@@ -169,7 +166,7 @@ export async function handleIncomingMessage(
 
   // Read once: the same value goes into the row and into meta, and re-reading it
   // between the two would let them disagree if a connection dropped in between.
-  const sessionId = deps.registry.sessionIdFor(msg.bot);
+  const sessionId = deps.sink.sessionId();
 
   // Push-only, never stored: the row keeps UTC because that is what stays
   // sortable and DST-proof. This exists so the AI can tell a 00:37 UTC message
@@ -248,10 +245,11 @@ export async function handleIncomingMessage(
     },
   };
 
-  const delivered = deps.registry.push(msg.bot, pushMsg);
-  if (!delivered) {
-    queueMessage(deps.fleetDb, msg.bot, pushMsg);
-  }
+  // No "was anyone listening?" branch any more. The poller only runs inside the
+  // process that owns this bot's token, so there is always exactly one
+  // destination -- and Telegram itself holds undelivered updates for 24 hours,
+  // which is what bot_inbox was standing in for.
+  deps.sink.push(pushMsg);
 
   return true;
 }

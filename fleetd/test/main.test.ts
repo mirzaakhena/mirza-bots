@@ -14,7 +14,7 @@ import {
 import { insertMessage } from "../../cc-plugin/src/engine/db/conversations-schema";
 import type { BoundConnection } from "../src/socket/registry";
 import { openConversationsDb, searchMessages } from "../../cc-plugin/src/engine/db/conversations-schema";
-import { openFleetDb } from "../../cc-plugin/src/engine/db/fleet-schema";
+import { CollectingSink } from "../../cc-plugin/src/engine/sink";
 import { ConnectionRegistry } from "../src/socket/registry";
 import type { PollerDeps } from "../../cc-plugin/src/engine/telegram/poller";
 import type { Config } from "../../cc-plugin/src/engine/config";
@@ -28,8 +28,7 @@ function makeDeps(): PollerDeps {
   return {
     config,
     conversationsDb: openConversationsDb(":memory:"),
-    fleetDb: openFleetDb(":memory:"),
-    registry: new ConnectionRegistry(),
+    sink: new CollectingSink(),
     inboxRoot: mkdtempSync(join(tmpdir(), "main-test-")),
   };
 }

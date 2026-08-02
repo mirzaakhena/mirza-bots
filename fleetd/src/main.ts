@@ -23,7 +23,8 @@ import {
 import { AlbumBuffer } from "../../cc-plugin/src/engine/telegram/album-buffer";
 import { extractQuote } from "../../cc-plugin/src/engine/telegram/quote";
 import { safeName, MAX_DOCUMENT_BYTES } from "../../cc-plugin/src/engine/telegram/media";
-import { drainQueue } from "./db/bot-inbox";
+import { drainQueue, queueMessage } from "./db/bot-inbox";
+import type { MessageSink } from "../../cc-plugin/src/engine/sink";
 import type {
   Request,
   Response,
@@ -347,11 +348,20 @@ export function main(): void {
     const bot = makeBot(botConfig.token);
     bots.set(botName, bot);
 
+    // TEMPORARY bridge, dies with the socket layer in Task 6. The poller now
+    // talks to a one-destination sink; the daemon still has N connections per
+    // bot and an offline queue, so it presents them behind that interface.
+    const sink: MessageSink = {
+      push: (msg) => {
+        if (!registry.push(botName, msg)) queueMessage(fleetDb, botName, msg);
+      },
+      sessionId: () => registry.sessionIdFor(botName),
+    };
+
     const deps: PollerDeps = {
       config,
       conversationsDb,
-      fleetDb,
-      registry,
+      sink,
       inboxRoot: stateRoot(),
     };
 

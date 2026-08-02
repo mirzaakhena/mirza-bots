@@ -1,8 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { openConversationsDb, searchMessages } from "../../../src/engine/db/conversations-schema";
-import { openFleetDb } from "../../../src/engine/db/fleet-schema";
-import { drainQueue } from "../../../../fleetd/src/db/bot-inbox";
-import { ConnectionRegistry, type BoundConnection } from "../../../../fleetd/src/socket/registry";
+import { CollectingSink } from "../../../src/engine/sink";
 import {
   handleIncomingMessage,
   startPolling,
@@ -35,16 +33,13 @@ function baseMsg(overrides: Partial<NormalizedMessage> = {}): NormalizedMessage 
 describe("handleIncomingMessage", () => {
   test("stores an allowed text message and pushes it when a connection is registered", async () => {
     const conversationsDb = openConversationsDb(":memory:");
-    const fleetDb = openFleetDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     await handleIncomingMessage(baseMsg(), {
       config,
       conversationsDb,
-      fleetDb,
-      registry,
+      sink,
       inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
@@ -58,8 +53,7 @@ describe("handleIncomingMessage", () => {
     const accepted = await handleIncomingMessage(baseMsg(), {
       config,
       conversationsDb: openConversationsDb(":memory:"),
-      fleetDb: openFleetDb(":memory:"),
-      registry: new ConnectionRegistry(),
+      sink: new CollectingSink(),
       inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
@@ -68,8 +62,7 @@ describe("handleIncomingMessage", () => {
 
   test("ignores a message from a chat id not in allowFrom, and reports rejection (false)", async () => {
     const conversationsDb = openConversationsDb(":memory:");
-    const fleetDb = openFleetDb(":memory:");
-    const registry = new ConnectionRegistry();
+    const sink = new CollectingSink();
 
     // The boolean is the security-relevant half: callers must be able to tell a
     // dropped message apart from an accepted one BEFORE they record its chat id as
@@ -79,35 +72,17 @@ describe("handleIncomingMessage", () => {
       {
         config,
         conversationsDb,
-        fleetDb,
-        registry,
+        sink,
         inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
       }
     );
 
     expect(accepted).toBe(false);
     expect(searchMessages(conversationsDb, "bukan").length).toBe(0);
-    // Nor may a dropped message leak into the offline queue.
-    expect(drainQueue(fleetDb, "bot-01").length).toBe(0);
+    // Nor may a dropped message reach the AI.
+    expect(sink.sent.length).toBe(0);
   });
 
-  test("queues to bot_inbox instead of pushing when no connection is registered", async () => {
-    const conversationsDb = openConversationsDb(":memory:");
-    const fleetDb = openFleetDb(":memory:");
-    const registry = new ConnectionRegistry(); // nothing registered
-
-    await handleIncomingMessage(baseMsg({ text: "siapa yang dengar" }), {
-      config,
-      conversationsDb,
-      fleetDb,
-      registry,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
-    });
-
-    const queued = drainQueue(fleetDb, "bot-01");
-    expect(queued.length).toBe(1);
-    expect(queued[0]?.text).toBe("siapa yang dengar");
-  });
 
   test("downloads a single photo into the bot's inbox directory before storing", async () => {
     const server = Bun.serve({
@@ -115,13 +90,12 @@ describe("handleIncomingMessage", () => {
       fetch: () => new Response(new Uint8Array([9, 9, 9]), { headers: { "content-type": "image/jpeg" } }),
     });
     const conversationsDb = openConversationsDb(":memory:");
-    const fleetDb = openFleetDb(":memory:");
-    const registry = new ConnectionRegistry();
+    const sink = new CollectingSink();
     const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
       baseMsg({ text: undefined, photoUrls: [`http://localhost:${server.port}/photo.jpg`] }),
-      { config, conversationsDb, fleetDb, registry, inboxRoot }
+      { config, conversationsDb, sink, inboxRoot }
     );
 
     const rows = conversationsDb.query("SELECT attachments FROM messages").all() as Array<{ attachments: string }>;
@@ -139,10 +113,8 @@ describe("handleIncomingMessage", () => {
       fetch: () => new Response(new Uint8Array([9, 9, 9]), { headers: { "content-type": "image/jpeg" } }),
     });
     const conversationsDb = openConversationsDb(":memory:");
-    const fleetDb = openFleetDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
     const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
@@ -154,7 +126,7 @@ describe("handleIncomingMessage", () => {
           `http://localhost:${server.port}/photo3.jpg`,
         ],
       }),
-      { config, conversationsDb, fleetDb, registry, inboxRoot }
+      { config, conversationsDb, sink, inboxRoot }
     );
 
     // Exactly ONE row, not three -- this is the whole point of grouping an album.
@@ -177,16 +149,13 @@ describe("handleIncomingMessage", () => {
 
   test("a button press (callbackData set) is stored and pushed as the pressed button's data, tagged kind=callback", async () => {
     const conversationsDb = openConversationsDb(":memory:");
-    const fleetDb = openFleetDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     await handleIncomingMessage(baseMsg({ text: undefined, callbackData: "confirm_yes" }), {
       config,
       conversationsDb,
-      fleetDb,
-      registry,
+      sink,
       inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
@@ -199,16 +168,13 @@ describe("handleIncomingMessage", () => {
 
   test("stores the Telegram message id and pushes it in meta", async () => {
     const conversationsDb = openConversationsDb(":memory:");
-    const fleetDb = openFleetDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     await handleIncomingMessage(baseMsg({ messageId: "4321" }), {
       config,
       conversationsDb,
-      fleetDb,
-      registry,
+      sink,
       inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
@@ -220,15 +186,13 @@ describe("handleIncomingMessage", () => {
   });
 
   test("omits message_id from meta entirely when there is none, rather than sending 'undefined'", async () => {
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     await handleIncomingMessage(baseMsg(), {
       config,
       conversationsDb: openConversationsDb(":memory:"),
-      fleetDb: openFleetDb(":memory:"),
-      registry,
+      sink,
       inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
@@ -237,21 +201,15 @@ describe("handleIncomingMessage", () => {
     expect("message_id" in sent[0]!.meta).toBe(false);
   });
 
-  test("stamps the message with the session id of the connection bound to that bot", async () => {
+  test("stamps the message with the session id its sink reports", async () => {
     const conversationsDb = openConversationsDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", {
-      send: (m) => sent.push(m),
-      boundBot: "bot-01",
-      sessionId: "sess-abc",
-    });
+    const sink = new CollectingSink("sess-abc");
+    const sent = sink.sent;
 
     await handleIncomingMessage(baseMsg(), {
       config,
       conversationsDb,
-      fleetDb: openFleetDb(":memory:"),
-      registry,
+      sink,
       inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
@@ -274,8 +232,7 @@ describe("handleIncomingMessage", () => {
       {
         config,
         conversationsDb,
-        fleetDb: openFleetDb(":memory:"),
-        registry: new ConnectionRegistry(),
+        sink: new CollectingSink(),
         inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
       }
     );
@@ -291,17 +248,15 @@ describe("handleIncomingMessage", () => {
   });
 
   test("a quoted reply pushes quote_text, quote_is_manual and reply_to_message_id as strings in meta", async () => {
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     await handleIncomingMessage(
       baseMsg({ text: "maksud saya yang ini", replyTo: "4300", quoteText: "bagian ini saja", quoteIsManual: false }),
       {
         config,
         conversationsDb: openConversationsDb(":memory:"),
-        fleetDb: openFleetDb(":memory:"),
-        registry,
+        sink,
         inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
       }
     );
@@ -318,15 +273,13 @@ describe("handleIncomingMessage", () => {
 
   test("a message with no quote carries no quote keys in meta and no metadata row", async () => {
     const conversationsDb = openConversationsDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     await handleIncomingMessage(baseMsg(), {
       config,
       conversationsDb,
-      fleetDb: openFleetDb(":memory:"),
-      registry,
+      sink,
       inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
@@ -349,9 +302,8 @@ describe("handleIncomingMessage", () => {
           : new Response(new Uint8Array([9, 9, 9]), { headers: { "content-type": "image/jpeg" } }),
     });
     const conversationsDb = openConversationsDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
     const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
@@ -363,7 +315,7 @@ describe("handleIncomingMessage", () => {
           `http://localhost:${server.port}/ok2.jpg`,
         ],
       }),
-      { config, conversationsDb, fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+      { config, conversationsDb, sink, inboxRoot }
     );
 
     // The message got through. Before this change, the rejected fetch escaped
@@ -380,14 +332,13 @@ describe("handleIncomingMessage", () => {
   test("every download failing still delivers the message, just with no attachments", async () => {
     const server = Bun.serve({ port: 0, fetch: () => new Response("gone", { status: 404 }) });
     const conversationsDb = openConversationsDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
     const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
       baseMsg({ text: "foto yang hilang semua", photoUrls: [`http://localhost:${server.port}/a.jpg`] }),
-      { config, conversationsDb, fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+      { config, conversationsDb, sink, inboxRoot }
     );
 
     expect(sent.length).toBe(1);
@@ -446,9 +397,8 @@ describe("handleIncomingMessage", () => {
           ? new Response("not found", { status: 404 })
           : new Response(new Uint8Array([9]), { headers: { "content-type": "image/jpeg" } }),
     });
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
     const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
@@ -462,7 +412,7 @@ describe("handleIncomingMessage", () => {
           `http://localhost:${server.port}/c.jpg`,
         ],
       }),
-      { config, conversationsDb: openConversationsDb(":memory:"), fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+      { config, conversationsDb: openConversationsDb(":memory:"), sink, inboxRoot }
     );
 
     // Our own text, not the sender's -- so it may live in the content the AI
@@ -477,9 +427,8 @@ describe("handleIncomingMessage", () => {
 
   test("an album whose photos ALL fail says so, instead of arriving as a bare caption", async () => {
     const server = Bun.serve({ port: 0, fetch: () => new Response("gone", { status: 404 }) });
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
     const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
@@ -488,7 +437,7 @@ describe("handleIncomingMessage", () => {
         isAlbum: true,
         photoUrls: [`http://localhost:${server.port}/a.jpg`, `http://localhost:${server.port}/b.jpg`],
       }),
-      { config, conversationsDb: openConversationsDb(":memory:"), fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+      { config, conversationsDb: openConversationsDb(":memory:"), sink, inboxRoot }
     );
 
     expect(sent[0]?.text).toBe("lihat ini\n⚠️ Failed to load the album photos.");
@@ -503,9 +452,8 @@ describe("handleIncomingMessage", () => {
       fetch: () => new Response(new Uint8Array([9]), { headers: { "content-type": "image/jpeg" } }),
     });
     const conversationsDb = openConversationsDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
     const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
@@ -520,7 +468,7 @@ describe("handleIncomingMessage", () => {
           `http://localhost:${server.port}/c.jpg`,
         ],
       }),
-      { config, conversationsDb, fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+      { config, conversationsDb, sink, inboxRoot }
     );
 
     expect(sent[0]?.text).toBe("tiga foto");
@@ -540,9 +488,8 @@ describe("handleIncomingMessage", () => {
       fetch: () => new Response(new Uint8Array([1, 2, 3]), { headers: { "content-type": "application/pdf" } }),
     });
     const conversationsDb = openConversationsDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
     const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
@@ -556,7 +503,7 @@ describe("handleIncomingMessage", () => {
           },
         ],
       }),
-      { config, conversationsDb, fleetDb: openFleetDb(":memory:"), registry, inboxRoot }
+      { config, conversationsDb, sink, inboxRoot }
     );
 
     const rows = conversationsDb.query("SELECT attachments, metadata FROM messages").all() as Array<{
@@ -579,9 +526,8 @@ describe("handleIncomingMessage", () => {
   });
 
   test("a document over the 20 MB limit is not downloaded, and the AI is told rather than left in silence", async () => {
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     await handleIncomingMessage(
       baseMsg({
@@ -591,8 +537,7 @@ describe("handleIncomingMessage", () => {
       {
         config,
         conversationsDb: openConversationsDb(":memory:"),
-        fleetDb: openFleetDb(":memory:"),
-        registry,
+        sink,
         inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
       }
     );
@@ -607,15 +552,13 @@ describe("handleIncomingMessage", () => {
   });
 
   test("pushes ts_local next to the UTC ts when the config names a timezone", async () => {
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     await handleIncomingMessage(baseMsg({ ts: "2026-08-01T00:37:29.000Z" }), {
       config: { ...config, timezone: "Asia/Jakarta" },
       conversationsDb: openConversationsDb(":memory:"),
-      fleetDb: openFleetDb(":memory:"),
-      registry,
+      sink,
       inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
@@ -627,15 +570,13 @@ describe("handleIncomingMessage", () => {
   });
 
   test("omits ts_local entirely when the config names no timezone", async () => {
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     await handleIncomingMessage(baseMsg(), {
       config,
       conversationsDb: openConversationsDb(":memory:"),
-      fleetDb: openFleetDb(":memory:"),
-      registry,
+      sink,
       inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
@@ -646,17 +587,15 @@ describe("handleIncomingMessage", () => {
 
   test("a bogus timezone in config drops ts_local instead of killing the message", async () => {
     const conversationsDb = openConversationsDb(":memory:");
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     // toLocaleString/Intl throw RangeError on an unknown zone. A config typo must
     // degrade to "no ts_local", not to a dead poller that swallows every message.
     await handleIncomingMessage(baseMsg({ text: "jam berapa sekarang" }), {
       config: { ...config, timezone: "Asia/Jakartaaa" },
       conversationsDb,
-      fleetDb: openFleetDb(":memory:"),
-      registry,
+      sink,
       inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
@@ -667,9 +606,8 @@ describe("handleIncomingMessage", () => {
   });
 
   test("an oversized document sent WITH a caption keeps the caption and appends the notice", async () => {
-    const registry = new ConnectionRegistry();
-    const sent: PushMessage[] = [];
-    registry.register("bot-01", { send: (m) => sent.push(m), boundBot: "bot-01" });
+    const sink = new CollectingSink();
+    const sent = sink.sent;
 
     await handleIncomingMessage(
       baseMsg({
@@ -679,8 +617,7 @@ describe("handleIncomingMessage", () => {
       {
         config,
         conversationsDb: openConversationsDb(":memory:"),
-        fleetDb: openFleetDb(":memory:"),
-        registry,
+        sink,
         inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
       }
     );
