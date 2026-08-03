@@ -28,8 +28,12 @@ describe("buildCommandMenu", () => {
     }
   });
 
-  test("mendaftarkan /rename dan /new, dan hanya itu di tahap ini", () => {
-    expect(buildCommandMenu().map((e) => e.command).sort()).toEqual(["new", "rename"]);
+  test("mendaftarkan /rename, /new, /context -- dan hanya itu di tahap ini", () => {
+    expect(buildCommandMenu().map((e) => e.command).sort()).toEqual([
+      "context",
+      "new",
+      "rename",
+    ]);
   });
 
   // Pagar untuk tahap berikutnya: menambah /switch ke KNOWN_COMMANDS tanpa

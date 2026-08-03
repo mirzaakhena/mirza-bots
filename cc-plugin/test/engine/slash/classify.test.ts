@@ -54,7 +54,10 @@ describe("classify", () => {
     expect(classify("/").kind).toBe("not-slash");
   });
 
-  test("daftar dikenal persis dua di tahap ini", () => {
-    expect([...KNOWN_COMMANDS].sort()).toEqual(["/new", "/rename"]);
+  // Daftarnya dikunci PERSIS, bukan sekadar "memuat" -- supaya menambah
+  // sesuatu ke KNOWN_COMMANDS tidak pernah bisa terjadi diam-diam. /context
+  // masuk di tahap 2; /switch belum, karena daftar sesi bernama belum ada.
+  test("daftar dikenal persis tiga di tahap ini", () => {
+    expect([...KNOWN_COMMANDS].sort()).toEqual(["/context", "/new", "/rename"]);
   });
 });
