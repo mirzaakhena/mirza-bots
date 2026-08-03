@@ -44,17 +44,42 @@ export function childEnv(base: NodeJS.ProcessEnv = process.env): Record<string, 
 }
 
 /**
- * Hidupkan Claude Code di dalam PTY.
+ * Susun shell + argumen untuk menghidupkan CC.
  *
  * Di Windows `claude` adalah shim .cmd yang butuh cmd.exe untuk diresolusi.
  * ConPTY biasanya menyerahkannya ke shell sendiri, tapi menyebutkannya
  * eksplisit lebih bisa diandalkan.
+ *
+ * `extraArgs` diteruskan APA ADANYA. Wrapper tidak berpendapat soal flag CC,
+ * sama seperti ia tidak berpendapat soal command mana yang boleh disuntik —
+ * kebijakan itu milik lapisan atas. User menjalankan CC dengan flag sendiri
+ * (mis. --dangerously-skip-permissions,
+ * --dangerously-load-development-channels), dan wrapper yang tidak bisa
+ * meneruskannya berarti wrapper yang tidak bisa dipakai.
+ *
+ * Murni supaya bisa diuji untuk kedua platform tanpa menjalankan keduanya.
  */
-export function spawnClaude(opts?: { cwd?: string; cols?: number; rows?: number }): IPty {
+export function buildSpawnArgs(
+  bin: string,
+  extraArgs: string[],
+  isWindows: boolean
+): { shell: string; args: string[] } {
+  return isWindows
+    ? { shell: "cmd.exe", args: ["/c", bin, ...extraArgs] }
+    : { shell: bin, args: [...extraArgs] };
+}
+
+/** Hidupkan Claude Code di dalam PTY. */
+export function spawnClaude(opts?: {
+  cwd?: string;
+  cols?: number;
+  rows?: number;
+  /** Flag yang diteruskan ke `claude` apa adanya. */
+  extraArgs?: string[];
+}): IPty {
   const isWindows = process.platform === "win32";
   const bin = process.env.CLAUDE_BIN ?? "claude";
-  const shell = isWindows ? "cmd.exe" : bin;
-  const args = isWindows ? ["/c", bin] : [];
+  const { shell, args } = buildSpawnArgs(bin, opts?.extraArgs ?? [], isWindows);
   return spawn(shell, args, {
     name: "xterm-256color",
     cols: opts?.cols ?? process.stdout.columns ?? 100,

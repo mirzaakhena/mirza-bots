@@ -25,8 +25,13 @@ const INBOX_POLL_MS = 500;
 
 mkdirSync(PENDING_DIR, { recursive: true });
 
+// Semua argumen sesudah nama skrip diteruskan APA ADANYA ke `claude`, jadi
+// wrapper bisa dipakai persis seperti memanggil `claude` sendiri:
+//   npx tsx src/main.ts --dangerously-skip-permissions
+const extraArgs = process.argv.slice(2);
+
 const queue = new InjectionQueue();
-const pty = spawnClaude({ cwd: PROJECT_DIR });
+const pty = spawnClaude({ cwd: PROJECT_DIR, extraArgs });
 
 // PTY -> terminal pengguna, dan stdin pengguna -> PTY. Tanpa ini wrapper tidak
 // terasa seperti menjalankan `claude` biasa, dan itu syarat paling dasar:

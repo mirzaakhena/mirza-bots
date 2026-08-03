@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { runPlan, childEnv } from "../src/pty";
+import { runPlan, childEnv, buildSpawnArgs } from "../src/pty";
 import { planCommand, SUBMIT_DELAY_MS } from "../src/typer";
 
 describe("runPlan", () => {
@@ -44,5 +44,46 @@ describe("childEnv", () => {
   test("membuang nilai undefined", () => {
     const env = childEnv({ A: "1", B: undefined });
     expect(env).toEqual({ A: "1" });
+  });
+});
+
+describe("buildSpawnArgs", () => {
+  // Wrapper tidak berpendapat soal flag CC: apa pun yang diberikan ke wrapper
+  // diteruskan apa adanya. Sama seperti ia tidak berpendapat soal command.
+  test("windows: claude dibungkus cmd.exe /c", () => {
+    expect(buildSpawnArgs("claude", [], true)).toEqual({
+      shell: "cmd.exe",
+      args: ["/c", "claude"],
+    });
+  });
+
+  test("windows: flag tambahan diteruskan sesudah nama binary", () => {
+    expect(
+      buildSpawnArgs("claude", ["--dangerously-skip-permissions"], true)
+    ).toEqual({
+      shell: "cmd.exe",
+      args: ["/c", "claude", "--dangerously-skip-permissions"],
+    });
+  });
+
+  test("posix: binary dipanggil langsung, flag diteruskan", () => {
+    expect(buildSpawnArgs("claude", ["--resume", "abc"], false)).toEqual({
+      shell: "claude",
+      args: ["--resume", "abc"],
+    });
+  });
+
+  test("nilai berisi titik dua tidak diutak-atik", () => {
+    const { args } = buildSpawnArgs(
+      "claude",
+      ["--dangerously-load-development-channels", "plugin:cc-plugin@mirza-bots"],
+      true
+    );
+    expect(args).toEqual([
+      "/c",
+      "claude",
+      "--dangerously-load-development-channels",
+      "plugin:cc-plugin@mirza-bots",
+    ]);
   });
 });
