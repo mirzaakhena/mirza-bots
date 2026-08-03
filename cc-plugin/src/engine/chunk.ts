@@ -49,6 +49,55 @@ export function chunkRaw(text: string, limit: number): string[] {
   return out;
 }
 
+/**
+ * Jahit ulang fence pagar (```) yang terpotong oleh chunkRaw().
+ *
+ * W: insiden 2026-08-03 -- tabel markdown 120 baris terbungkus fence dikirim
+ * lewat satu reply. chunkRaw() memotongnya di batas paragraf/baris tanpa tahu
+ * apa-apa soal fence (dan MEMANG tidak boleh tahu -- lihat komentar di
+ * chunkRaw()). Fence pembuka mendarat di potongan 1, fence penutup di
+ * potongan 5. Tiap potongan diparse SENDIRI-SENDIRI (constraint yang sama
+ * yang memaksa commonMarkToMarkdownV2 dipanggil per-potongan di planParts())
+ * -- jadi potongan 5 cuma melihat satu ``` kesepian dan membacanya sebagai
+ * PEMBUKA, menelan pertanyaan penutup dan daftar bernomor jadi satu blok
+ * kode. Isinya utuh, tapi di HP user tampil monospace dengan tombol "COPY
+ * CODE", bukan pertanyaan yang bisa dibaca.
+ *
+ * Kenapa membuka-ulang, bukan mengajari chunkRaw() menghindari potong-di-
+ * dalam-fence: chunkRaw() memilih batas dari panjang karakter mentah saja,
+ * tanpa parsing markdown apa pun -- itu yang membuatnya murah dan diuji
+ * sendiri (lihat test chunk.test.ts). Mengajarinya soal fence berarti ia
+ * harus mem-parse CommonMark buat tahu kapan posisi potong ada di dalam blok
+ * kode -- pekerjaan yang sudah dilakukan commonMarkToMarkdownV2 dan sekarang
+ * harus diduplikasi cuma buat cari batas potong. Lebih murah dan lebih
+ * jelas: biarkan potongannya jatuh di mana pun batas paragraf/baris
+ * menaruhnya, lalu jahit tiap potongan supaya berdiri sendiri sebagai
+ * CommonMark yang valid -- pembuka yang terbawa ditutup di akhir potongan,
+ * dan potongan berikutnya membuka ulang fence yang sama, sehingga isinya
+ * tetap tampil sebagai kode di kedua sisi sambungan, bukan tercecer jadi
+ * teks polos atau (lebih parah, ini yang terjadi 2026-08-03) menelan konten
+ * di luar fence.
+ */
+export function balanceFences(parts: string[]): string[] {
+  let openFence: string | null = null;
+
+  return parts.map((part) => {
+    let text = openFence !== null ? `${openFence}\n${part}` : part;
+
+    let scanOpen: string | null = null;
+    for (const line of text.split("\n")) {
+      if (line.trim().startsWith("```")) {
+        scanOpen = scanOpen === null ? line.trim() : null;
+      }
+    }
+
+    if (scanOpen !== null) text = `${text}\n\`\`\``;
+
+    openFence = scanOpen;
+    return text;
+  });
+}
+
 /** Satu pesan Telegram yang siap dikirim. */
 export interface OutboundPart {
   /** Yang dikirim ke Telegram. */
@@ -76,7 +125,7 @@ export function planParts(text: string): OutboundPart[] {
   const whole = commonMarkToMarkdownV2(text);
   if (whole.length <= TELEGRAM_MAX_CHARS) return [{ wire: whole, raw: text, mv2: true }];
 
-  return chunkRaw(text, CHUNK_MARGIN).map((raw) => {
+  return balanceFences(chunkRaw(text, CHUNK_MARGIN)).map((raw) => {
     const converted = commonMarkToMarkdownV2(raw);
     // Escaping yang membengkak melewati batas: kirim potongan itu apa adanya
     // sebagai teks polos. Jelek, tapi tidak ada yang hilang -- dan "isi lenyap
