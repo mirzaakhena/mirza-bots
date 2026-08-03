@@ -26,6 +26,7 @@ import {
   type PollerDeps,
 } from "./telegram/poller";
 import { classify } from "./slash/classify";
+import { buildCommandMenu } from "./slash/menu";
 import {
   handleSlash,
   handleConfirm,
@@ -615,6 +616,18 @@ export function startEngine(cwd: string): EngineStart {
   bot.on("callback_query", async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => {});
   });
+
+  // Menu "/" di aplikasi Telegram. Didaftarkan sekali saat boot; server
+  // Telegram yang menyimpannya, jadi ini tidak perlu diulang per pesan.
+  //
+  // Sengaja TIDAK di-await dan tidak fatal: ia kosmetik. Bot yang menolak
+  // melayani pesan karena gagal memperbarui daftar menu menukar sesuatu yang
+  // penting dengan sesuatu yang tidak.
+  bot.api
+    .setMyCommands(buildCommandMenu())
+    .catch((err) =>
+      console.error(`cc-plugin: setMyCommands failed for ${botName} (continuing): ${err}`)
+    );
 
   startPolling(bot, {
     name: botName,
