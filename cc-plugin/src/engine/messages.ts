@@ -217,24 +217,22 @@ export function buildTappedMessageEdit(
 }
 
 /**
- * The ONLY place `lastChatByBot` is ever written, and it happens strictly after
- * handleIncomingMessage's allowlist gate has accepted the message.
+ * Returns whether this message was accepted, not just a side effect.
  *
- * Writing it before the gate (the old behaviour, duplicated across all four
- * handlers) meant any stranger who messaged the bot became the target of the AI's
- * next `reply` -- an information-disclosure bug, since their own message was
+ * The caller must distinguish "accepted" from "rejected by allowlist" to decide
+ * whether to enable the typing indicator. `lastChatByBot` cannot answer this:
+ * the map retains the previous chat when a message is rejected, so checking it
+ * would cause a message from a stranger to trigger the indicator for a
+ * legitimate user's session.
+ *
+ * The ONLY place `lastChatByBot` is ever written, and it happens strictly after
+ * handleIncomingMessage's allowlist gate has accepted the message. Writing it
+ * before the gate (the old behaviour, duplicated across all four handlers)
+ * meant any stranger who messaged the bot became the target of the AI's next
+ * `reply` -- an information-disclosure bug, since their own message was
  * dropped but the AI's answer would have gone to them.
  *
  * Exported for tests.
- */
-/**
- * Mengembalikan apakah pesan ini diterima -- bukan sekadar efek samping.
- *
- * Pemanggilnya butuh membedakan "diterima" dari "ditolak allowlist" untuk
- * memutuskan menyalakan indikator "typing...". `lastChatByBot` tidak bisa
- * menjawab itu: peta ini MENYIMPAN chat sebelumnya saat sebuah pesan ditolak,
- * jadi menebak lewat isinya akan membuat pesan dari orang asing memicu
- * indikator ke user yang sah.
  */
 export async function deliverIncoming(
   msg: NormalizedMessage,
