@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { sendAttachments, type AttachmentApi } from "../../src/engine/engine";
+import {
+  sendAttachments,
+  assertNoButtonsWithFiles,
+  prepareReply,
+  type AttachmentApi,
+} from "../../src/engine/engine";
 import type { PlannedAttachment } from "../../src/engine/attach";
 
 type Call = { method: "photo" | "document"; chatId: string; file: unknown };
@@ -79,4 +84,77 @@ test("daftar kosong tidak memanggil API sama sekali", async () => {
   const { api, calls } = fakeApi();
   expect(await sendAttachments(api, "111", [], (p) => p, () => {})).toBe(0);
   expect(calls.length).toBe(0);
+});
+
+// Berkas dikirim SESUDAH teks, jadi tombolnya nyangkut di pesan yang sekarang
+// ada di atas berkas -- user harus scroll balik ke atas untuk menekannya.
+test("buttons dan files bersama ditolak, dan pesannya menyebut jalan keluarnya", () => {
+  let message = "";
+  try {
+    assertNoButtonsWithFiles([[{ text: "ya", data: "y" }]], ["C:/x/a.png"]);
+  } catch (err) {
+    message = (err as Error).message;
+  }
+  expect(message).toContain("buttons");
+  expect(message).toContain("files");
+  expect(message).toContain("separate");
+});
+
+test("salah satu saja tidak ditolak", () => {
+  expect(() => assertNoButtonsWithFiles([[{ text: "ya", data: "y" }]], undefined)).not.toThrow();
+  expect(() => assertNoButtonsWithFiles(undefined, ["C:/x/a.png"])).not.toThrow();
+  expect(() => assertNoButtonsWithFiles(undefined, undefined)).not.toThrow();
+});
+
+// files: [] setara dengan tidak memberikan files sama sekali.
+test("files kosong bersama buttons tidak ditolak", () => {
+  expect(() => assertNoButtonsWithFiles([[{ text: "ya", data: "y" }]], [])).not.toThrow();
+});
+
+const sizer = (sizes: Record<string, number>) => (p: string) => {
+  const s = sizes[p];
+  if (s === undefined) throw new Error("ENOENT");
+  return s;
+};
+
+test("prepareReply mengembalikan potongan teks dan berkas terklasifikasi", () => {
+  const out = prepareReply("halo", undefined, ["C:/x/a.png"], sizer({ "C:/x/a.png": 10 }));
+  expect(out.parts.length).toBe(1);
+  expect(out.planned).toEqual([{ path: "C:/x/a.png", kind: "photo", bytes: 10 }]);
+});
+
+test("tanpa files, planned kosong", () => {
+  expect(prepareReply("halo", undefined, undefined, sizer({})).planned).toEqual([]);
+});
+
+// Inti kontraknya: berkas yang tidak ada membatalkan SEBELUM ada yang terkirim.
+// Karena seluruh pagar duduk di fungsi ini dan fungsi ini dipanggil satu kali di
+// atas loop pengiriman, urutan itu dijaga oleh struktur, bukan oleh ingatan.
+test("berkas yang tidak ada membatalkan seluruh balasan", () => {
+  expect(() => prepareReply("halo", undefined, ["C:/x/hilang.png"], sizer({}))).toThrow(/not found/);
+});
+
+// Pagar U-5 hanya menyala untuk label numerik 2 atau lebih -- label deskriptif
+// bukan urusannya. prepareReply harus meneruskannya apa adanya, bukan
+// melonggarkannya.
+test("pagar tombol tak ternarasi tetap berlaku lewat prepareReply", () => {
+  expect(() =>
+    prepareReply(
+      "halo tanpa daftar bernomor",
+      [[{ text: "1", data: "a" }, { text: "2", data: "b" }]],
+      undefined,
+      sizer({})
+    )
+  ).toThrow(/numbered_buttons_without_list/);
+});
+
+test("buttons bersama files dibatalkan di sini juga", () => {
+  expect(() =>
+    prepareReply(
+      "Options:\n1. ya\n2. tidak",
+      [[{ text: "ya", data: "y" }]],
+      ["C:/x/a.png"],
+      sizer({ "C:/x/a.png": 10 })
+    )
+  ).toThrow(/cannot be combined/);
 });
