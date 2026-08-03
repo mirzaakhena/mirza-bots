@@ -95,7 +95,7 @@ export function buildServer(backend: ServerBackend): McpServer {
         "Optionally attach inline keyboard buttons as rows of {text, data} -- pressing a button delivers `data` back as the user's next message. " +
         "Pass `reply_to` with a Telegram message id to quote that message, e.g. when answering something said a while ago and the thread has moved on. " +
         "NEVER ask the user for a message id. They never see one: ids are an internal Telegram detail, not something a person can read off their screen. If you do not have an id, ask them to quote the message instead -- quoting delivers the id to you automatically. " +
-        `Keep it short -- aim for about ${REPLY_LENGTH_GUIDELINE} characters. Long replies are split into several Telegram messages automatically, so nothing is lost by writing more, but a wall of text on a phone is worse than three short messages that each land.`,
+        `Keep it short -- aim for about ${REPLY_LENGTH_GUIDELINE} characters. Long replies are split into several Telegram messages automatically, but that is a safety net, not a target: if the answer needs more room, send several focused \`reply\` calls that each stand on their own, rather than one long block.`,
       inputSchema: {
         text: z.string().min(1),
         buttons: z

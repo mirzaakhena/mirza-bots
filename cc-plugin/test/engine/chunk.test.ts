@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { chunkRaw, planParts, TELEGRAM_MAX_CHARS, CHUNK_MARGIN } from "../../src/engine/chunk";
+import { commonMarkToMarkdownV2 } from "../../src/engine/markdown";
 
 test("teks pendek tidak disentuh sama sekali", () => {
   expect(chunkRaw("halo", 100)).toEqual(["halo"]);
@@ -49,11 +50,15 @@ test("potongan kerdil ditolak: kandidat batas harus melewati setengah jendela", 
 });
 
 test("jalur cepat: yang muat setelah dikonversi tetap satu potongan", () => {
-  const parts = planParts("halo **bro**");
+  const text = "halo **bro**";
+  const parts = planParts(text);
   expect(parts.length).toBe(1);
   expect(parts[0]!.mv2).toBe(true);
-  expect(parts[0]!.raw).toBe("halo **bro**");
-  expect(parts[0]!.wire).toContain("bro");
+  expect(parts[0]!.raw).toBe(text);
+  // Janjinya bukan "mengandung kata yang benar" tapi "identik byte demi byte
+  // dengan yang dulu dikirim sebelum chunking ada" -- itu cuma bisa dibuktikan
+  // dengan kesetaraan penuh terhadap konversi yang sama, bukan substring.
+  expect(parts[0]!.wire).toBe(commonMarkToMarkdownV2(text));
 });
 
 test("yang tidak muat dipecah, dan tiap potongan dikonversi sendiri", () => {
@@ -66,4 +71,36 @@ test("yang tidak muat dipecah, dan tiap potongan dikonversi sendiri", () => {
 test("konstanta batasnya eksplisit, bukan angka ajaib yang tersebar", () => {
   expect(TELEGRAM_MAX_CHARS).toBe(4096);
   expect(CHUNK_MARGIN).toBe(2048);
+});
+
+// Cabang mv2:false (chunk.ts:76-78) sebelumnya nol test, dan bukan cabang
+// teoretis: pada 2026-08-02 sebuah tabel markdown nyata membengkak lewat
+// escaping MarkdownV2 dan produksi mengirimnya mentah. Kolom lebar memaksa
+// baris pemisah "| --- |" ikut melebar jadi tanda hubung sepanjang kolom, dan
+// setiap tanda hubung di-escape jadi dua karakter -- itu yang membuat rasio
+// pembengkakan tabel jauh di atas teks biasa (terukur ~2.27x, kadang lebih
+// untuk kolom lebar) dan cukup untuk membuat satu potongan 2048-karakter
+// MENTAH menjadi lebih dari 4096 karakter setelah dikonversi.
+test("tabel markdown yang lebar memicu fallback teks polos (W: insiden 2026-08-02)", () => {
+  const header =
+    "| Kolom-Pertama-Panjang | Kolom-Kedua-Panjang | Kolom-Ketiga-Panjang | Kolom-Keempat-Panjang |\n";
+  const sep = "| --- | --- | --- | --- |\n";
+  let table = header + sep;
+  let i = 0;
+  while (table.length < 6500) {
+    table += `| A-${i} | B-${i} | C-${i} | D-${i} |\n`;
+    i++;
+  }
+
+  const parts = planParts(table);
+
+  const plainParts = parts.filter((p) => p.mv2 === false);
+  expect(plainParts.length).toBeGreaterThan(0);
+  // Fallback berarti kirim MENTAH apa adanya -- `wire` yang dikirim ke Telegram
+  // harus sama persis dengan `raw` yang disimpan ke riwayat, bukan versi yang
+  // sudah (gagal) dikonversi.
+  for (const p of plainParts) expect(p.wire).toBe(p.raw);
+  // Properti yang paling menjaga: apa pun jalurnya (mv2 true atau false), tidak
+  // ada satu potongan pun yang boleh melewati batas keras Telegram.
+  for (const p of parts) expect(p.wire.length).toBeLessThanOrEqual(TELEGRAM_MAX_CHARS);
 });

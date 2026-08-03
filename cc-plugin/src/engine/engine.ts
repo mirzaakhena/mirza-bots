@@ -12,7 +12,6 @@ import { loadConfig } from "./config";
 import { resolveBotByCwd } from "./identity";
 import { acquireBotLock, releaseBotLock } from "./lock";
 import { openConversationsDb, insertMessage } from "./db/conversations-schema";
-import { commonMarkToMarkdownV2 } from "./markdown";
 import { openFleetDb } from "./db/fleet-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
@@ -35,14 +34,6 @@ import { readCurrentSessionId } from "./session-file";
 import type { ButtonRow, HistoryMessage } from "./types";
 import { planParts } from "./chunk";
 
-/**
- * Everything cc-plugin needs from the Telegram side, in the shape its MCP tools
- * already expect.
- *
- * Deliberately identical to the old FleetdClient surface: the socket is being
- * removed, not the contract, and server.ts should not have to know which one it
- * is talking to.
- */
 /** Apa yang benar-benar terkirim -- dipakai server untuk memberi umpan balik ke AI. */
 export interface ReplyResult {
   /** Panjang CommonMark yang ditulis AI, bukan panjang setelah escaping. */
@@ -51,6 +42,16 @@ export interface ReplyResult {
   parts: number;
 }
 
+/**
+ * Everything cc-plugin needs from the Telegram side, in the shape its MCP tools
+ * already expect.
+ *
+ * Deliberately identical to the old FleetdClient surface: the socket is being
+ * removed, not the contract, and server.ts should not have to know which one it
+ * is talking to. The one deliberate exception: `reply` now returns a
+ * `ReplyResult` instead of `void`, so the caller can report chars/parts back to
+ * the AI -- every other member is unchanged.
+ */
 export type Engine = {
   bot: string;
   reply(text: string, buttons?: ButtonRow[], replyTo?: string): Promise<ReplyResult>;

@@ -9,7 +9,15 @@ export const TELEGRAM_MAX_CHARS = 4096;
  * Setengah dari batas keras, karena escaping MarkdownV2 membengkakkan teks dan
  * seberapa besar bengkaknya tidak bisa diketahui sebelum dikonversi. Margin ini
  * bukan tempat kebenarannya berdiri -- verifikasi per-potongan di planParts()
- * yang menjaga itu. Margin hanya membuat verifikasi tersebut jarang gagal.
+ * yang menjaga itu.
+ *
+ * Terukur, bukan diperkirakan: pada inflasi tepat 2x (potongan berisi tanda
+ * baca yang semuanya harus di-escape) potongan mentah 2048 karakter menjadi
+ * 4097 dan MELUAP batas keras setiap kali; tabel markdown terukur ~2.27x.
+ * Jadi angka ini TIDAK membuat fallback ke teks polos jadi tak terjangkau --
+ * yang menjamin kebenaran tetap verifikasi per-potongan di planParts(), bukan
+ * margin ini. Menurunkan angkanya pun tidak akan menghilangkan fallback itu,
+ * cuma menggeser seberapa sering ia kena.
  */
 export const CHUNK_MARGIN = 2048;
 
