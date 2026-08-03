@@ -1,8 +1,16 @@
 # mirza-bots
 
-Fleet harness untuk bot Telegram berbasis Claude Code. **Satu paket:**
-`cc-plugin`, yang berisi seluruh engine — penarik pesan Telegram, database,
-dan tool MCP — dan berjalan di dalam proses tiap sesi Claude Code.
+Fleet harness untuk bot Telegram berbasis Claude Code. **Dua paket:**
+
+| Paket | Perannya | Runtime |
+|---|---|---|
+| **`cc-plugin`** | Seluruh engine — penarik pesan Telegram, database, tool MCP. Berjalan di dalam proses tiap sesi Claude Code | Bun |
+| **`cc-wrapper`** | Membungkus Claude Code di dalam PTY supaya slash command CC bisa disuntikkan dari luar sesi | **Node + `tsx`** |
+
+Perbedaan runtime itu **bukan pilihan gaya**: `pty.write()` gagal di Bun 1.3.11
+dengan `ERR_SOCKET_CLOSED` sementara Node v22 bekerja. Diukur, bukan ditebak —
+`cc-wrapper/PROBE.md`. Test kedua paket tetap `bun test`, karena seluruh logika
+`cc-wrapper` ada di modul murni yang tidak menyentuh `node-pty`.
 
 **Tidak ada daemon.** `fleetd` dibubarkan 2026-08-02: alasannya, ongkos
 menjalankan dan mengawasinya, ada di
@@ -20,12 +28,21 @@ Arsitektur aslinya (tiga komponen: `fleetd`, `bot-cc`, `cc-plugin`) didesain di
 `docs/superpowers/specs/2026-07-27-fleet-harness-rebuild-design.md`; bagian
 `fleetd`-nya sudah digantikan spec di atas.
 
-## Status: Tahap 2 (Jalur Pesan)
+## Status: Tahap 2 (Jalur Pesan) + fondasi `cc-wrapper`
 
 Jalur pesan dua arah sudah hidup: **Telegram → sesi Claude Code → balik lagi ke
-Telegram**, seluruhnya dalam satu proses. Satu paket: `cc-plugin`. PTY `bot-cc`
-belum ada, dan alasan terbesarnya ("menyalakan `fleetd` bila belum berjalan")
-sudah hilang bersama daemonnya.
+Telegram**, seluruhnya dalam satu proses (`cc-plugin`).
+
+**`cc-wrapper` fondasinya berdiri sejak 2026-08-03** dan terverifikasi hidup:
+perintah tunggal maupun batch mendarat di TUI, termasuk saat CC sedang sibuk.
+Menggantikan rencana lama "`bot-cc`" — alasan terbesarnya dulu ("menyalakan
+`fleetd` bila belum berjalan") memang hilang bersama daemonnya, tapi **alasan
+yang jauh lebih besar menggantikannya**: sejak daemon dibubarkan, umur sesi =
+umur bot, jadi wrapper adalah satu-satunya hal yang membuat bot selamat dari
+sesi yang crash.
+
+Desainnya:
+`mirza-marketplace/docs/superpowers/specs/2026-08-03-cc-wrapper-design.md`.
 
 **Diverifikasi hidup dengan bot Telegram sungguhan (2026-07-30, `bot-01`):**
 teks, foto tunggal, album (3 foto → 1 baris tergabung), dan tombol inline
