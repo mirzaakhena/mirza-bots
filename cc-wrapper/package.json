@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "test": "bun test",
+    "typecheck": "tsc --noEmit",
     "start": "tsx src/main.ts",
     "probe": "tsx probe/spawn-probe.ts"
   },
