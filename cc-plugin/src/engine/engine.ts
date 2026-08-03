@@ -33,6 +33,7 @@ import type { MessageSink, PushMessage } from "./sink";
 import { readCurrentSessionId } from "./session-file";
 import type { ButtonRow, HistoryMessage } from "./types";
 import { planParts } from "./chunk";
+import { type PlannedAttachment } from "./attach";
 import { createTypingKeepalive } from "./typing";
 
 /** Apa yang benar-benar terkirim -- dipakai server untuk memberi umpan balik ke AI. */
@@ -179,6 +180,55 @@ export function planSendOptionsFor(
   const isFirst = index === 0;
   const isLast = index === total - 1;
   return buildSendOptions(isLast ? replyMarkup : undefined, isFirst ? replyTo : undefined);
+}
+
+/**
+ * Bagian API Telegram yang dibutuhkan pengiriman berkas -- dua metode, bukan
+ * seluruh objek grammy, supaya test tidak perlu bot sungguhan.
+ */
+export type AttachmentApi = {
+  sendPhoto(chatId: string, file: unknown): Promise<{ message_id: number }>;
+  sendDocument(chatId: string, file: unknown): Promise<{ message_id: number }>;
+};
+
+/**
+ * Mengirim berkas satu per satu, berurutan.
+ *
+ * `onSent` dipanggil sesudah TIAP kiriman sukses, bukan sekali di akhir: kalau
+ * berkas ketiga meledak, dua yang pertama sudah ada di HP user dan barisnya
+ * harus tetap tercatat.
+ *
+ * `toInput` menyuntikkan pembungkus berkas grammy (`InputFile`) supaya seluruh
+ * urutan kirim di sini bisa diuji tanpa menyentuh filesystem maupun jaringan.
+ */
+export async function sendAttachments(
+  api: AttachmentApi,
+  chatId: string,
+  planned: PlannedAttachment[],
+  toInput: (path: string) => unknown,
+  onSent: (a: PlannedAttachment, messageId: string) => void
+): Promise<number> {
+  let sent = 0;
+  for (const a of planned) {
+    let msg;
+    try {
+      const input = toInput(a.path);
+      msg =
+        a.kind === "photo"
+          ? await api.sendPhoto(chatId, input)
+          : await api.sendDocument(chatId, input);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      // "text already delivered" ada supaya pemanggilnya tahu mengirim ulang
+      // seluruh balasan akan menggandakan teksnya.
+      throw new Error(
+        `reply failed after ${sent} of ${planned.length} attachment(s) sent (text already delivered): ${reason}`
+      );
+    }
+    sent++;
+    onSent(a, String(msg.message_id));
+  }
+  return sent;
 }
 
 export function startEngine(cwd: string): EngineStart {
