@@ -93,6 +93,30 @@ describe("deliverIncoming (the reply-target gate)", () => {
 
     expect(lastChatByBot.has("bot-01")).toBe(false);
   });
+
+  // Nilai balik ini yang dipakai engine untuk memutuskan menyalakan indikator
+  // "typing...". Menebaknya lewat lastChatByBot tidak bisa: peta itu MENYIMPAN
+  // chat sebelumnya ketika sebuah pesan ditolak, jadi pengirim non-allowlist
+  // akan membuat bot tampak sedang mengetik ke user yang sah.
+  test("mengembalikan true saat pesan diterima", async () => {
+    const deps = makeDeps();
+    const accepted = await deliverIncoming(
+      normalizeMessage("bot-01", { chatId: 111, userId: 111 }, { text: "halo bot" }),
+      deps,
+      new Map()
+    );
+    expect(accepted).toBe(true);
+  });
+
+  test("mengembalikan false saat pesan ditolak allowlist", async () => {
+    const deps = makeDeps();
+    const accepted = await deliverIncoming(
+      normalizeMessage("bot-01", { chatId: 999, userId: 999 }, { text: "hijack the AI" }),
+      deps,
+      new Map()
+    );
+    expect(accepted).toBe(false);
+  });
 });
 
 describe("normalizeMessage", () => {

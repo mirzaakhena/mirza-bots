@@ -83,6 +83,14 @@ sesi).
   risikonya (menutup giliran dengan "." membuat "sudah menjawab" dan "lupa
   menjawab" tampak sama), jadi penjaganya mesin, bukan ingatan AI.
 
+- **Indikator "typing…" hidup sepanjang giliran.** Menyala begitu pesan masuk
+  lolos allowlist, diperbarui tiap 4 detik, dan berhenti di balasan pertama.
+  Indikator Telegram sendiri padam ~5 detik setelah pembaruan terakhir,
+  sementara 97,6% giliran berlangsung lebih lama dari itu — satu tembakan
+  seperti sistem lama akan senyap sepanjang sisa giliran. Ada batas aman 300
+  detik supaya giliran yang mati tanpa membalas tidak meninggalkan indikator
+  nyangkut.
+
 - **Dokumen** (PDF, zip, `.md`, `.log`, `.txt`) diunduh otomatis sampai **20 MB**
   — batas Telegram sendiri untuk bot, jadi tidak ada aturan tambahan yang perlu
   diingat. Di atas itu berkasnya tidak diambil dan AI diberi tahu (nama +

@@ -33,6 +33,7 @@ import type { MessageSink, PushMessage } from "./sink";
 import { readCurrentSessionId } from "./session-file";
 import type { ButtonRow, HistoryMessage } from "./types";
 import { planParts } from "./chunk";
+import { createTypingKeepalive } from "./typing";
 
 /** Apa yang benar-benar terkirim -- dipakai server untuk memberi umpan balik ke AI. */
 export interface ReplyResult {
@@ -213,6 +214,14 @@ export function startEngine(cwd: string): EngineStart {
   };
 
   const bot = makeBot(botConfig.token);
+
+  // Indikator "typing...". Pakai `bot.api` langsung, bukan lewat helper kirim
+  // apa pun: ini bukan pesan, tidak disimpan ke riwayat, dan tidak boleh ikut
+  // jalur mana pun yang punya efek samping.
+  const typing = createTypingKeepalive({
+    send: chatId => bot.api.sendChatAction(chatId, "typing"),
+  });
+
   const deps: PollerDeps = { config, conversationsDb, sink, inboxRoot: stateRoot() };
 
   // Tracks the chat `reply` answers. Written ONLY by deliverIncoming, strictly
@@ -220,7 +229,13 @@ export function startEngine(cwd: string): EngineStart {
   // let a non-allowlisted stranger become the target of the AI's next reply.
   const lastChatByBot = new Map<string, string>();
 
-  const deliver = (msg: NormalizedMessage) => deliverIncoming(msg, deps, lastChatByBot);
+  // Indikator dinyalakan hanya untuk pesan yang LOLOS gerbang -- pesan yang
+  // ditolak tidak boleh membuat bot tampak sedang menyiapkan jawaban.
+  const deliver = async (msg: NormalizedMessage) => {
+    const accepted = await deliverIncoming(msg, deps, lastChatByBot);
+    if (accepted) typing.start(msg.chatId);
+    return accepted;
+  };
 
   // One album buffer, keyed by Telegram's media_group_id. onFlush fires
   // once the debounce window closes (all photos of the album have arrived) or
@@ -432,6 +447,12 @@ export function startEngine(cwd: string): EngineStart {
             "no_known_chat: this bot has not received a message yet, so there is nobody to reply to"
           );
         }
+        // Dimatikan di AWAL, bukan di akhir: pengiriman berpotongan bisa makan
+        // beberapa detik, dan selama itu pesan-pesannya sudah mendarat satu per
+        // satu. "typing..." yang menggantung di antara potongan tidak menambah
+        // apa pun.
+        typing.stop(chatId);
+
         // Reads the AI's own text, deliberately BEFORE the MarkdownV2 escaping:
         // the numbered-list legend it looks for is written by the AI, and after
         // escaping every "1." has become "1\." -- the rule would stop matching
@@ -515,6 +536,7 @@ export function startEngine(cwd: string): EngineStart {
       },
 
       close(): void {
+        typing.stopAll();
         releaseBotLock(lockPath(botName), process.pid);
         conversationsDb.close();
         fleetDb.close();
