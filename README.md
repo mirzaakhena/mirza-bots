@@ -224,7 +224,7 @@ Contoh keluaran:
   "locks": [{ "bot": "bot-uji", "pid": 41234, "alive": true }],
   "fleetTables": ["sessions", "handoffs", "injections", "bot_inbox", "incidents"],
   "conversationsReady": true,
-  "version": "0.7.0"
+  "version": "0.8.0"
 }
 ```
 
@@ -356,7 +356,7 @@ yang putus.
 ## Testing
 
 ```bash
-cd cc-plugin && bun test     # 241 test
+cd cc-plugin && bun test     # 274 test
 ```
 
 Mencakup validasi config, kedua skema database (termasuk sinkronisasi trigger
