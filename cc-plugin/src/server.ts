@@ -30,6 +30,30 @@ function unavailableAnswer(b: Unavailable) {
 // looking for a marker that no longer arrives, and nothing anywhere would error.
 export const TERSE_TURN_MARKER = "[protocol: terse-turn]";
 
+/**
+ * Panjang balasan yang disasar, dalam karakter.
+ *
+ * Bukan gerbang -- tidak ada yang ditolak karena kepanjangan, karena isi yang
+ * hilang lebih buruk daripada isi yang panjang (keputusan user, 2026-08-02).
+ * Angkanya dipilih dari sebaran nyata: 34% balasan 30 hari terakhir
+ * melewatinya, cukup sering untuk menggigit tiap hari tanpa jadi mustahil.
+ */
+export const REPLY_LENGTH_GUIDELINE = 1000;
+
+/**
+ * Apa yang dilihat AI setelah `reply` berhasil.
+ *
+ * Dulu selalu "sent". Sebuah aturan yang tidak pernah membalas apa pun tidak
+ * bisa dipelajari -- ini yang menutup jarak antara aturan yang ditulis dan
+ * aturan yang terasa. Hanya AI yang melihat baris ini; user tidak.
+ */
+export function formatSendResult(result: { chars: number; parts: number }): string {
+  const parts = result.parts > 1 ? ` in ${result.parts} parts` : "";
+  const over =
+    result.chars > REPLY_LENGTH_GUIDELINE ? `, over the ${REPLY_LENGTH_GUIDELINE} guideline` : "";
+  return `sent (${result.chars} chars${parts}${over})`;
+}
+
 // Lives in the MCP server's `instructions`, which Claude Code holds for the
 // whole session: paid once, not once per turn. English on purpose (K-16 -- this
 // is a machine-to-AI instruction, not a message to the user); the AI's `reply`
@@ -40,6 +64,8 @@ export const SERVER_INSTRUCTIONS = [
   `When an incoming message is prefixed with ${TERSE_TURN_MARKER}, do not write prose in that turn. Say everything you have to say through the \`reply\` tool, then end the turn with a single "." and nothing else. Never restate, summarize, or explain in the transcript what you already sent via \`reply\` -- nobody reads it, and it keeps costing tokens on every later turn of the session.`,
   "",
   "This applies only to turns carrying that prefix. Turns the user types directly into this terminal are ordinary turns -- answer those in full, as usual.",
+  "",
+  `Keep replies short: aim for about ${REPLY_LENGTH_GUIDELINE} characters. This is a chat on someone's phone, not a document. If a topic needs more room, send several focused \`reply\` calls that each stand on their own rather than one long block. Nothing is ever rejected for being long -- a reply past Telegram's hard limit is split into several messages automatically -- so this is about what is worth reading, not about what fits.`,
 ].join("\n");
 
 export function buildServer(backend: ServerBackend): McpServer {
@@ -68,7 +94,8 @@ export function buildServer(backend: ServerBackend): McpServer {
         "Send a reply message to the user on Telegram. Write ordinary markdown -- **bold**, *italic*, `code`, fenced blocks, links -- it is converted for you; there is no format flag to remember. " +
         "Optionally attach inline keyboard buttons as rows of {text, data} -- pressing a button delivers `data` back as the user's next message. " +
         "Pass `reply_to` with a Telegram message id to quote that message, e.g. when answering something said a while ago and the thread has moved on. " +
-        "NEVER ask the user for a message id. They never see one: ids are an internal Telegram detail, not something a person can read off their screen. If you do not have an id, ask them to quote the message instead -- quoting delivers the id to you automatically.",
+        "NEVER ask the user for a message id. They never see one: ids are an internal Telegram detail, not something a person can read off their screen. If you do not have an id, ask them to quote the message instead -- quoting delivers the id to you automatically. " +
+        `Keep it short -- aim for about ${REPLY_LENGTH_GUIDELINE} characters. Long replies are split into several Telegram messages automatically, so nothing is lost by writing more, but a wall of text on a phone is worse than three short messages that each land.`,
       inputSchema: {
         text: z.string().min(1),
         buttons: z
@@ -79,8 +106,8 @@ export function buildServer(backend: ServerBackend): McpServer {
     },
     async ({ text, buttons, reply_to }) => {
       if (isUnavailable(backend)) return unavailableAnswer(backend);
-      await backend.reply(text, buttons, reply_to);
-      return { content: [{ type: "text", text: "sent" }] };
+      const result = await backend.reply(text, buttons, reply_to);
+      return { content: [{ type: "text", text: formatSendResult(result) }] };
     }
   );
 

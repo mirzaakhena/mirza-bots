@@ -8,7 +8,7 @@ import type { PushMessage } from "../src/engine/sink";
 function fakeEngine(overrides: Partial<Engine> = {}): Engine {
   return {
     bot: "bot-01",
-    reply: async () => {},
+    reply: async () => ({ chars: 0, parts: 1 }),
     history: async () => [],
     search: async () => [],
     onPush: () => {},
@@ -20,7 +20,12 @@ function fakeEngine(overrides: Partial<Engine> = {}): Engine {
 describe("cc-plugin MCP server", () => {
   test("the reply tool proxies its text argument to Engine.reply", async () => {
     const replied: string[] = [];
-    const client = fakeEngine({ reply: async (text: string) => { replied.push(text); } });
+    const client = fakeEngine({
+      reply: async (text: string) => {
+        replied.push(text);
+        return { chars: text.length, parts: 1 };
+      },
+    });
     const server = buildServer(client);
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
@@ -41,6 +46,7 @@ describe("cc-plugin MCP server", () => {
     const client = fakeEngine({
       reply: async (text: string, buttons?: any) => {
         calls.push({ text, buttons });
+        return { chars: text.length, parts: 1 };
       },
     });
     const server = buildServer(client);
@@ -373,4 +379,30 @@ describe("cc-plugin MCP server when the engine could not start", () => {
     await mcpClient.close();
     await server.close();
   });
+});
+
+import { formatSendResult, REPLY_LENGTH_GUIDELINE, SERVER_INSTRUCTIONS } from "../src/server";
+
+test("balasan pendek dilaporkan apa adanya, tanpa teguran", () => {
+  expect(formatSendResult({ chars: 642, parts: 1 })).toBe("sent (642 chars)");
+});
+
+// Aturan tanpa umpan balik akan luntur. Proyek ini sudah membayarnya sekali:
+// parameter `format` di sistem lama yang seharusnya diingat AI, sampai user
+// melihat **tebal** mendarat mentah di HP-nya.
+test("balasan yang lewat pedoman menyebutkan itu -- ke AI, bukan ke user", () => {
+  expect(formatSendResult({ chars: 1240, parts: 1 })).toBe(
+    "sent (1240 chars, over the 1000 guideline)"
+  );
+});
+
+test("balasan berpotongan menyebut jumlah pesannya", () => {
+  expect(formatSendResult({ chars: 5100, parts: 3 })).toBe(
+    "sent (5100 chars in 3 parts, over the 1000 guideline)"
+  );
+});
+
+test("pedomannya satu angka bernama, bukan tersebar di beberapa tempat", () => {
+  expect(REPLY_LENGTH_GUIDELINE).toBe(1000);
+  expect(SERVER_INSTRUCTIONS).toContain("1000");
 });
