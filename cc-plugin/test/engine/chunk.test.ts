@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chunkRaw, planParts, TELEGRAM_MAX_CHARS, CHUNK_MARGIN } from "../../src/engine/chunk";
+import { balanceFences, chunkRaw, planParts, TELEGRAM_MAX_CHARS, CHUNK_MARGIN } from "../../src/engine/chunk";
 import { commonMarkToMarkdownV2 } from "../../src/engine/markdown";
 
 test("teks pendek tidak disentuh sama sekali", () => {
@@ -103,4 +103,105 @@ test("tabel markdown yang lebar memicu fallback teks polos (W: insiden 2026-08-0
   // Properti yang paling menjaga: apa pun jalurnya (mv2 true atau false), tidak
   // ada satu potongan pun yang boleh melewati batas keras Telegram.
   for (const p of parts) expect(p.wire.length).toBeLessThanOrEqual(TELEGRAM_MAX_CHARS);
+});
+
+// W: insiden 2026-08-03 -- tabel 120 baris terbungkus fence dikirim satu
+// reply, chunkRaw() memotongnya jadi 5 potongan tanpa tahu-menahu soal fence
+// (dan memang tidak boleh, lihat komentar di chunkRaw()). Pembuka mendarat di
+// potongan 1, penutup di potongan 5; potongan 5 diparse sendirian dan
+// membaca satu ``` kesepian sebagai PEMBUKA, menelan pertanyaan penutup dan
+// daftar bernomor jadi blok kode di HP user.
+const countFenceLines = (s: string) => s.split("\n").filter((l) => l.trim().startsWith("```")).length;
+
+test("balanceFences: fence yang terbuka di potongan 1 dan tertutup di potongan 3 dijahit ulang", () => {
+  const parts = ["before\n```", "line in fence", "```\nafter"];
+  const balanced = balanceFences(parts);
+
+  expect(balanced.length).toBe(3);
+  for (const p of balanced) expect(countFenceLines(p) % 2).toBe(0);
+
+  expect(balanced[0]).toBe("before\n```\n```");
+  expect(balanced[1]).toBe("```\nline in fence\n```");
+  expect(balanced[2]).toBe("```\n```\nafter");
+});
+
+test("balanceFences: info string bahasa dipertahankan saat fence dibuka ulang, penutup tambahan polos", () => {
+  const parts = ["before\n```ts", "code line", "```\nafter"];
+  const balanced = balanceFences(parts);
+
+  // Potongan 1 tidak punya penutup sendiri -- yang ditambahkan harus polos,
+  // bukan membawa "ts" ikut serta.
+  expect(balanced[0]).toBe("before\n```ts\n```");
+  // Potongan 2 dibuka ulang dengan tag bahasa yang sama persis.
+  expect(balanced[1]).toBe("```ts\ncode line\n```");
+  expect(balanced[2]).toBe("```ts\n```\nafter");
+});
+
+// Catatan: test ini lolos juga kalau balanceFences diganti fungsi identitas
+// -- ia menjaga "jangan sentuh apa yang tidak perlu disentuh" (properti yang
+// tetap layak dijaga terpisah), tapi TIDAK membuktikan balancer bekerja
+// benar. Test-test lain di file ini (fence yang benar-benar terpotong,
+// indentasi 4 spasi, run backtick 4+) yang jadi penjaga sungguhan -- mereka
+// gagal di bawah fungsi identitas.
+test("balanceFences: potongan tanpa fence sama sekali kembali persis sama", () => {
+  const parts = ["halo dunia", "paragraf kedua\n\nparagraf ketiga", "baris terakhir tanpa backtick"];
+  expect(balanceFences(parts)).toEqual(parts);
+});
+
+// W: review 2026-08-03 -- .trim() sebelum ngetes "startsWith backtick" buang
+// info indentasi. CommonMark cuma menganggap fence sah kalau indentasinya
+// paling banyak 3 spasi; ``` berindentasi 4 spasi adalah TEKS BIASA (blok
+// kode berindentasi), bukan fence. Sebelum perbaikan ini, balancer salah
+// membaca baris itu sebagai pembuka dan membungkus "after" -- yang tidak
+// pernah ada di dalam fence manapun di sumbernya -- jadi kode juga.
+test("balanceFences: fence berindentasi 4 spasi bukan fence sungguhan, tidak menelan teks setelahnya (Finding 1)", () => {
+  const parts = ["before", "    ```\n    still indented code", "after"];
+  const balanced = balanceFences(parts);
+
+  // Tidak ada fence sah di input manapun -- keluarannya harus identik.
+  expect(balanced).toEqual(parts);
+});
+
+// W: review 2026-08-03 -- fence yang dibuka dengan 4 backtick (cara sah
+// CommonMark menaruh contoh yang isinya sendiri mengandung ```) cuma boleh
+// ditutup oleh larik backtick TELANJANG sepanjang atau lebih panjang dari
+// pembukanya. Sebelum perbaikan ini, toggle menerima larik >=3 backtick apa
+// pun sebagai penutup, dan penutup yang ditambahkan sendiri selalu tiga
+// backtick -- remark tidak menganggap itu menutup fence 4-backtick, jadi
+// bagian sesudahnya tetap terbaca sebagai isi kode.
+test("balanceFences: fence 4-backtick ditutup dan dibuka ulang dengan jumlah backtick yang sama (Finding 2)", () => {
+  const parts = ["intro\n````", "content", "````\nafter"];
+  const balanced = balanceFences(parts);
+
+  expect(balanced[0]).toBe("intro\n````\n````");
+  expect(balanced[1]).toBe("````\ncontent\n````");
+  expect(balanced[2]).toBe("````\n````\nafter");
+  for (const p of balanced) expect(countFenceLines(p) % 2).toBe(0);
+});
+
+test("balanceFences lewat planParts: fence panjang tidak menelan teks setelahnya (W: insiden 2026-08-03)", () => {
+  const rows = Array.from(
+    { length: 200 },
+    (_, i) => `| No ${i} | Kode-${i} | Keterangan baris nomor ${i} yang agak panjang |`,
+  ).join("\n");
+  const text =
+    `Tabel 120 baris, satu panggilan reply saja\n\n\`\`\`\n${rows}\n\`\`\`\n\n` +
+    `Mau lihat detail baris yang mana?\n\n1. Baris 34 ...\n`;
+
+  const parts = planParts(text);
+  expect(parts.length).toBeGreaterThanOrEqual(3);
+
+  for (const p of parts) expect(countFenceLines(p.raw) % 2).toBe(0);
+
+  const questionPart = parts.find((p) => p.raw.includes("Mau lihat detail"));
+  expect(questionPart).toBeDefined();
+
+  let open = false;
+  for (const line of questionPart!.raw.split("\n")) {
+    if (line.trim().startsWith("```")) open = !open;
+    if (line.includes("Mau lihat detail")) {
+      expect(open).toBe(false);
+      break;
+    }
+  }
 });
