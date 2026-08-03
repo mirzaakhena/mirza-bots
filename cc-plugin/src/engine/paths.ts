@@ -50,9 +50,29 @@ export function currentSessionPath(bot: string): string {
   return join(sessionsDir(), `${bot}.id`);
 }
 
+// Ditulis bridge statusline, dibaca engine saat menjawab /context. Terpusat
+// seperti sessions/ dan locks/ -- bukan di dalam folder project masing-masing.
+// Menyebarkannya per-folder adalah pola scattered-state yang justru dibongkar
+// rewrite ini: "apa status bot X" harus satu kali listing, bukan menyusuri enam
+// folder yang tidak saling tahu.
+export function statusDir(): string {
+  return join(stateRoot(), "status");
+}
+
+export function statusPath(bot: string): string {
+  return join(statusDir(), `${bot}.json`);
+}
+
+// Statusline pendahulu yang WAJIB dipanggil bridge sesudah menangkap. Satu
+// berkas untuk seluruh armada: bridge-nya sama, dan yang digantikan selalu
+// statusline yang sama juga.
+export function chainedStatuslinePath(): string {
+  return join(statusDir(), "chained-statusline");
+}
+
 export function ensureStateDirs(): void {
   const root = stateRoot();
-  for (const dir of [root, join(root, "inbox"), logsDir(), locksDir(), sessionsDir()]) {
+  for (const dir of [root, join(root, "inbox"), logsDir(), locksDir(), sessionsDir(), statusDir()]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }
