@@ -137,9 +137,46 @@ test("balanceFences: info string bahasa dipertahankan saat fence dibuka ulang, p
   expect(balanced[2]).toBe("```ts\n```\nafter");
 });
 
+// Catatan: test ini lolos juga kalau balanceFences diganti fungsi identitas
+// -- ia menjaga "jangan sentuh apa yang tidak perlu disentuh" (properti yang
+// tetap layak dijaga terpisah), tapi TIDAK membuktikan balancer bekerja
+// benar. Test-test lain di file ini (fence yang benar-benar terpotong,
+// indentasi 4 spasi, run backtick 4+) yang jadi penjaga sungguhan -- mereka
+// gagal di bawah fungsi identitas.
 test("balanceFences: potongan tanpa fence sama sekali kembali persis sama", () => {
   const parts = ["halo dunia", "paragraf kedua\n\nparagraf ketiga", "baris terakhir tanpa backtick"];
   expect(balanceFences(parts)).toEqual(parts);
+});
+
+// W: review 2026-08-03 -- .trim() sebelum ngetes "startsWith backtick" buang
+// info indentasi. CommonMark cuma menganggap fence sah kalau indentasinya
+// paling banyak 3 spasi; ``` berindentasi 4 spasi adalah TEKS BIASA (blok
+// kode berindentasi), bukan fence. Sebelum perbaikan ini, balancer salah
+// membaca baris itu sebagai pembuka dan membungkus "after" -- yang tidak
+// pernah ada di dalam fence manapun di sumbernya -- jadi kode juga.
+test("balanceFences: fence berindentasi 4 spasi bukan fence sungguhan, tidak menelan teks setelahnya (Finding 1)", () => {
+  const parts = ["before", "    ```\n    still indented code", "after"];
+  const balanced = balanceFences(parts);
+
+  // Tidak ada fence sah di input manapun -- keluarannya harus identik.
+  expect(balanced).toEqual(parts);
+});
+
+// W: review 2026-08-03 -- fence yang dibuka dengan 4 backtick (cara sah
+// CommonMark menaruh contoh yang isinya sendiri mengandung ```) cuma boleh
+// ditutup oleh larik backtick TELANJANG sepanjang atau lebih panjang dari
+// pembukanya. Sebelum perbaikan ini, toggle menerima larik >=3 backtick apa
+// pun sebagai penutup, dan penutup yang ditambahkan sendiri selalu tiga
+// backtick -- remark tidak menganggap itu menutup fence 4-backtick, jadi
+// bagian sesudahnya tetap terbaca sebagai isi kode.
+test("balanceFences: fence 4-backtick ditutup dan dibuka ulang dengan jumlah backtick yang sama (Finding 2)", () => {
+  const parts = ["intro\n````", "content", "````\nafter"];
+  const balanced = balanceFences(parts);
+
+  expect(balanced[0]).toBe("intro\n````\n````");
+  expect(balanced[1]).toBe("````\ncontent\n````");
+  expect(balanced[2]).toBe("````\n````\nafter");
+  for (const p of balanced) expect(countFenceLines(p) % 2).toBe(0);
 });
 
 test("balanceFences lewat planParts: fence panjang tidak menelan teks setelahnya (W: insiden 2026-08-03)", () => {

@@ -50,6 +50,17 @@ export function chunkRaw(text: string, limit: number): string[] {
 }
 
 /**
+ * Satu baris yang berpotensi jadi fence pagar, diuraikan sesuai aturan
+ * CommonMark: indentasi paling banyak 3 spasi, lalu larik backtick sepanjang
+ * >=3, lalu sisa baris (info string kalau ia PEMBUKA, atau harus kosong
+ * kalau ia dimaksudkan jadi PENUTUP).
+ */
+function matchFence(line: string): { ticks: number; info: string } | null {
+  const m = /^ {0,3}(`{3,})(.*)$/.exec(line);
+  return m ? { ticks: m[1]!.length, info: m[2]! } : null;
+}
+
+/**
  * Jahit ulang fence pagar (```) yang terpotong oleh chunkRaw().
  *
  * W: insiden 2026-08-03 -- tabel markdown 120 baris terbungkus fence dikirim
@@ -77,23 +88,56 @@ export function chunkRaw(text: string, limit: number): string[] {
  * tetap tampil sebagai kode di kedua sisi sambungan, bukan tercecer jadi
  * teks polos atau (lebih parah, ini yang terjadi 2026-08-03) menelan konten
  * di luar fence.
+ *
+ * W: review setelah perbaikan pertama (masih 2026-08-03) menemukan dua celah
+ * di deteksi fence-nya sendiri -- deteksi yang kasar di sini bikin balancer
+ * menyimpang dari aturan CommonMark yang benar-benar dipakai
+ * commonMarkToMarkdownV2 di hilir, dan penyimpangan itu ADALAH kelas bug yang
+ * sama yang baru saja diperbaiki, cuma pindah tempat:
+ * (1) blok kode berindentasi 4 spasi bukan fence sama sekali di CommonMark
+ *     (fence cuma sah sampai indentasi 3 spasi) -- men-trim baris sebelum
+ *     dites membuang informasi itu dan salah membaca ``` yang berindentasi
+ *     sebagai pembuka sungguhan, sampai-sampai teks polos SETELAHNYA ikut
+ *     terbungkus fence yang tidak pernah ada di sumbernya;
+ * (2) fence yang dibuka dengan 4-backtick-atau-lebih (cara valid CommonMark
+ *     menaruh contoh berisi ``` literal) cuma boleh ditutup oleh larik
+ *     backtick TELANJANG (tanpa info string) yang SAMA PANJANG ATAU LEBIH
+ *     panjang -- baris tiga-backtick di dalamnya bukan penutup, dan penutup
+ *     yang kita tambahkan sendiri harus memakai jumlah backtick yang sama
+ *     dengan pembukanya, bukan selalu tiga.
+ * Baris yang diingat untuk dibuka-ulang disimpan APA ADANYA (bukan
+ * di-trim), supaya indentasi asli (0-3 spasi) dan info string ikut terbawa
+ * persis seperti aslinya.
  */
 export function balanceFences(parts: string[]): string[] {
-  let openFence: string | null = null;
+  // Fence yang sedang terbuka: baris pembuka APA ADANYA (buat dibuka ulang)
+  // plus panjang larik backtick-nya (buat tahu apa yang sah menutupnya).
+  let open: { line: string; ticks: number } | null = null;
 
   return parts.map((part) => {
-    let text = openFence !== null ? `${openFence}\n${part}` : part;
+    let text = open !== null ? `${open.line}\n${part}` : part;
 
-    let scanOpen: string | null = null;
+    let scanOpen: { line: string; ticks: number } | null = null;
     for (const line of text.split("\n")) {
-      if (line.trim().startsWith("```")) {
-        scanOpen = scanOpen === null ? line.trim() : null;
+      const fence = matchFence(line);
+      if (!fence) continue;
+
+      if (scanOpen === null) {
+        scanOpen = { line, ticks: fence.ticks };
+      } else if (fence.ticks >= scanOpen.ticks && fence.info.trim() === "") {
+        // Larik telanjang sepanjang (atau lebih panjang dari) pembukanya --
+        // ini yang CommonMark terima sebagai penutup yang cocok.
+        scanOpen = null;
       }
+      // Selain itu: baris backtick di dalam fence yang bukan penutup sah
+      // (info string terisi, atau larik lebih pendek, atau indentasi >3
+      // spasi sehingga bukan fence sama sekali) -- konten literal, bukan
+      // peristiwa fence.
     }
 
-    if (scanOpen !== null) text = `${text}\n\`\`\``;
+    if (scanOpen !== null) text = `${text}\n${"`".repeat(scanOpen.ticks)}`;
 
-    openFence = scanOpen;
+    open = scanOpen;
     return text;
   });
 }
