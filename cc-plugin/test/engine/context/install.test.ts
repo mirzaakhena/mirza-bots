@@ -2,7 +2,12 @@ import { test, expect, describe } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { installBridge, type InstallDeps } from "../../../src/engine/context/install";
+import {
+  installBridge,
+  buildBridgeCommand,
+  pluginRootFrom,
+  type InstallDeps,
+} from "../../../src/engine/context/install";
 
 const BRIDGE = 'bun run "C:/plugins/cc-plugin/bin/statusline-bridge.ts"';
 
@@ -156,5 +161,36 @@ describe("installBridge", () => {
 
     expect(r.kind).toBe("rolled-back");
     expect(existsSync(s.projectSettings)).toBe(false);
+  });
+});
+
+describe("buildBridgeCommand + pluginRootFrom", () => {
+  test("perintah selalu forward slash, walau root-nya backslash Windows", () => {
+    expect(buildBridgeCommand("C:\\plugins\\cc-plugin")).toBe(
+      'bun run "C:/plugins/cc-plugin/bin/statusline-bridge.ts"'
+    );
+  });
+
+  // resolveChain membandingkan perintah apa adanya untuk tahu apakah bridge
+  // sudah terpasang. Bentuk yang berubah-ubah = bridge dipasang di atas dirinya.
+  test("bentuknya stabil: trailing slash tidak mengubah hasil", () => {
+    expect(buildBridgeCommand("C:/x/")).toBe(buildBridgeCommand("C:/x"));
+  });
+
+  test("env dipakai kalau ada", () => {
+    expect(pluginRootFrom("C:/dari/env", "file:///C:/lain/src/engine/engine.ts")).toBe(
+      "C:/dari/env"
+    );
+  });
+
+  test("env kosong atau spasi diabaikan, jatuh ke URL modul", () => {
+    expect(pluginRootFrom("   ", "file:///C:/x/y/src/engine/engine.ts")).toBe("C:/x/y");
+    expect(pluginRootFrom(undefined, "file:///C:/x/y/src/engine/engine.ts")).toBe("C:/x/y");
+  });
+
+  test("path dengan spasi ter-decode benar", () => {
+    expect(pluginRootFrom(undefined, "file:///C:/Program%20Files/p/src/engine/engine.ts")).toBe(
+      "C:/Program Files/p"
+    );
   });
 });

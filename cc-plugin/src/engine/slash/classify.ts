@@ -6,11 +6,11 @@
  * ditolak -- ia lewat jalur konfirmasi tombol, jadi mencoret sesuatu dari
  * daftar tidak menghilangkan kemampuannya, hanya menambah satu tap.
  *
- * Tahap ini hanya /rename dan /new. /switch dan /context butuh barang yang
- * belum ada (daftar sesi bernama, jembatan statusline) dan punya rencana
- * sendiri.
+ * /context bergabung di tahap 2: ia dikenal, tapi TIDAK menghasilkan payload
+ * wrapper sama sekali -- dijawab dari data lokal (spec tahap 1 §4). /switch
+ * masih menunggu daftar sesi bernama dan punya rencana sendiri.
  */
-export const KNOWN_COMMANDS = ["/rename", "/new"] as const;
+export const KNOWN_COMMANDS = ["/rename", "/new", "/context"] as const;
 
 export type Classified =
   | { kind: "known"; name: string; arg: string }

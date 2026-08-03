@@ -20,6 +20,7 @@ export type BotCommandEntry = { command: string; description: string };
 export const COMMAND_DESCRIPTIONS: Record<string, string> = {
   "/rename": "Ganti nama sesi yang sedang berjalan",
   "/new": "Mulai sesi baru dengan nama",
+  "/context": "Pemakaian context, rate limit, dan biaya sesi",
 };
 
 export function buildCommandMenu(): BotCommandEntry[] {

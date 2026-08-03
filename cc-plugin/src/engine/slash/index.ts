@@ -15,6 +15,11 @@ export type SlashOutcome =
   | { kind: "passthrough" }
   /** Payload sudah ditulis; `ack` layak dikirim ke user. */
   | { kind: "sent"; ack: string }
+  /**
+   * Dikenal, dicegat, tapi TIDAK pernah sampai ke Claude Code -- dijawab dari
+   * data lokal (spec tahap 1 §4). Tidak ada payload wrapper yang lahir.
+   */
+  | { kind: "local"; command: string }
   /** Slash dikenal tapi argumennya tidak sah. */
   | { kind: "error"; message: string }
   /** Slash tak dikenal: minta konfirmasi sebelum disuntik. */
@@ -78,6 +83,12 @@ export function handleSlash(text: string, deps: SlashDeps): SlashOutcome {
       prompt: `Kirim \`${c.command}\` ke Claude Code?`,
     };
   }
+
+  // /context tidak punya padanan di Claude Code: ia dijawab dari berkas
+  // tangkapan statusline, bukan disuntikkan ke sesi. Ditaruh SEBELUM mapKnown
+  // dengan sengaja -- mapKnown menolak command yang dikenal tapi tidak punya
+  // pemetaan, dan pagar itu harus tetap berlaku untuk yang lain.
+  if (c.name === "/context") return { kind: "local", command: "/context" };
 
   const m = mapKnown(c.name, c.arg);
   if (!m.ok) return { kind: "error", message: m.message };

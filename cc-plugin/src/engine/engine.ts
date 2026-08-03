@@ -3,6 +3,8 @@ import { InputFile } from "grammy";
 import type { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   ensureStateDirs,
   configPath,
@@ -10,7 +12,12 @@ import {
   conversationsDbPath,
   stateRoot,
   lockPath,
+  statusPath,
+  chainedStatuslinePath,
 } from "./paths";
+import { installBridge, buildBridgeCommand, pluginRootFrom } from "./context/install";
+import { readCapturedStatus } from "./context/status-file";
+import { renderContext } from "./context/render";
 import { loadConfig } from "./config";
 import { resolveBotByCwd } from "./identity";
 import { acquireBotLock, releaseBotLock } from "./lock";
@@ -451,6 +458,10 @@ export function startEngine(cwd: string): EngineStart {
       await ctx.reply(outcome.ack);
       return;
     }
+    if (outcome.kind === "local") {
+      await ctx.reply(renderLocalContext(botName, botConfig.home));
+      return;
+    }
     await ctx.reply(outcome.prompt, {
       reply_markup: {
         inline_keyboard: [
@@ -768,4 +779,47 @@ export function startEngine(cwd: string): EngineStart {
       },
     },
   };
+}
+
+/**
+ * Menjawab /context dari data lokal. TIDAK pernah menghubungi Claude Code.
+ *
+ * Bridge dipasang di sini -- saat fitur benar-benar dipakai -- bukan saat
+ * engine boot. Menyentuh settings.json user untuk fitur yang mungkin tidak
+ * pernah dipanggil adalah biaya yang tidak perlu ditagihkan di muka.
+ *
+ * Kalau pemasangannya ditolak atau di-rollback, yang dilaporkan adalah
+ * ALASANNYA, apa adanya. Itu inti syarat spec §1: statusline user menang, dan
+ * /context harus mengatakan kenapa ia mengalah, bukan diam-diam gagal.
+ */
+function renderLocalContext(botName: string, projectDir: string): string {
+  const install = installBridge({
+    projectDir,
+    userSettingsPath: join(homedir(), ".claude", "settings.json"),
+    bridgeCommand: buildBridgeCommand(pluginRootFrom(process.env.CLAUDE_PLUGIN_ROOT, import.meta.url)),
+    chainPath: chainedStatuslinePath(),
+  });
+
+  if (install.kind === "refused" || install.kind === "rolled-back") {
+    return (
+      `Jembatan statusline TIDAK dipasang, dan itu disengaja.\n\n` +
+      `Alasan: ${install.reason}\n\n` +
+      `Statusline Claude Code milikmu dibiarkan apa adanya. Kalau harus memilih, ` +
+      `/context yang mengalah -- bukan sebaliknya.`
+    );
+  }
+
+  const captured = readCapturedStatus(statusPath(botName));
+  if (captured === null) {
+    return (
+      `Belum ada data statusline.\n\n` +
+      `Jembatannya sudah terpasang, tapi Claude Code belum menggambar baris status sejak itu. ` +
+      `Pakai CC sebentar, lalu kirim /context lagi.`
+    );
+  }
+
+  // sessionName sengaja tidak dilewatkan: payload statusline sudah memuat
+  // session_name-nya sendiri, ditulis Claude Code. Sumber kedua hanya akan
+  // menambah kemungkinan keduanya berbeda.
+  return renderContext(captured, Date.now());
 }

@@ -35,6 +35,44 @@ export type InstallDeps = {
   writeFile?: (path: string, data: string) => void;
 };
 
+/**
+ * Perintah yang dipasang sebagai `statusLine.command`. Murni.
+ *
+ * Selalu forward slash: nilai ini masuk ke JSON, dan backslash Windows di
+ * dalam JSON menuntut escape ganda yang gampang salah -- Claude Code menerima
+ * forward slash di Windows tanpa keluhan.
+ *
+ * Bentuknya harus STABIL antar-pemanggilan: `resolveChain` membandingkannya
+ * apa adanya untuk tahu apakah bridge sudah terpasang, jadi perintah yang
+ * berubah-ubah akan membuat bridge dipasang di atas dirinya sendiri.
+ */
+export function buildBridgeCommand(pluginRoot: string): string {
+  const p = `${pluginRoot.replace(/\\/g, "/").replace(/\/+$/, "")}/bin/statusline-bridge.ts`;
+  return `bun run "${p}"`;
+}
+
+/**
+ * Akar folder plugin. Murni: kedua sumbernya dilewatkan pemanggil.
+ *
+ * `CLAUDE_PLUGIN_ROOT` diisi Claude Code saat menjalankan hook, tapi BELUM
+ * diukur apakah ia juga ada saat MCP server dijalankan -- jadi cadangannya
+ * bukan kemewahan. Cadangan itu menurunkan letak plugin dari URL modul engine
+ * sendiri: `<root>/src/engine/engine.ts` -> `<root>`.
+ *
+ * Sengaja memakai `import.meta.url` (standar) dan bukan `import.meta.dir`
+ * (khusus Bun, tidak punya tipe) -- pemeriksaan tsc menolak yang kedua.
+ */
+export function pluginRootFrom(envRoot: string | undefined, engineModuleUrl: string): string {
+  const fromEnv = envRoot?.trim();
+  if (fromEnv) return fromEnv;
+  // file:///C:/x/y/src/engine/engine.ts -> /C:/x/y/src/engine/ -> C:/x/y
+  const dir = decodeURIComponent(new URL(".", engineModuleUrl).pathname);
+  return dir
+    .replace(/^\/([A-Za-z]:)/, "$1")
+    .replace(/\/+$/, "")
+    .replace(/\/src\/engine$/, "");
+}
+
 export type InstallResult =
   | { kind: "installed"; chained: string | null }
   | { kind: "already-installed" }

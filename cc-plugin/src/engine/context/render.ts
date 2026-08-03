@@ -13,6 +13,12 @@
 
 export type StatusLinePayload = {
   session_id?: string;
+  /**
+   * Nama sesi, ditulis Claude Code sendiri. Terukur ada di payload nyata --
+   * jadi /context tidak membutuhkan registri nama sesi sama sekali. Registri
+   * itu kebutuhan /switch, dan cakupannya terpisah.
+   */
+  session_name?: string;
   cwd?: string;
   model?: { display_name?: string };
   context_window?: {
@@ -127,7 +133,10 @@ export function renderContext(
   ] as const) {
     if (!rl) continue;
     if (typeof rl.used_percentage !== "number" && typeof rl.resets_at !== "number") continue;
-    const lines = [judul];
+    // Anotasi string[] wajib: `judul` datang dari tuple `as const`, jadi tanpa
+    // ini array-nya di-infer sebagai literal union dan setiap push ditolak.
+    // bun test tidak memeriksa tipe, jadi yang menangkap ini tsc, bukan test.
+    const lines: string[] = [judul];
     if (typeof rl.used_percentage === "number") {
       lines.push(`${progressBar(rl.used_percentage)} ${Math.round(rl.used_percentage)}%`);
     }
@@ -142,7 +151,10 @@ export function renderContext(
   if (p.model?.display_name) meta.push(p.model.display_name);
   if (p.session_id) {
     const short = shortSession(p.session_id);
-    meta.push(opts.sessionName ? `Session: ${opts.sessionName} (${short})` : `Session: ${short}`);
+    // Pemanggil menang atas payload: kalau ia punya sumber yang lebih segar,
+    // itu yang dipakai. Payload jadi cadangan yang selalu ada.
+    const name = opts.sessionName ?? p.session_name;
+    meta.push(name ? `Session: ${name} (${short})` : `Session: ${short}`);
   }
   if (p.cwd) meta.push(`CWD: ${shortCwd(p.cwd)}`);
   if (typeof p.cost?.total_cost_usd === "number") {
