@@ -2,7 +2,14 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { handleSlash, handleConfirm } from "../../../src/engine/slash";
+import {
+  handleSlash,
+  handleConfirm,
+  parseSlashCallback,
+  confirmFits,
+  MAX_CONFIRM_COMMAND_BYTES,
+  SLASH_CALLBACK_GO,
+} from "../../../src/engine/slash";
 import { pendingDir } from "../../../src/engine/slash/pending";
 
 let proj: string;
@@ -71,5 +78,64 @@ describe("handleConfirm", () => {
     handleConfirm("/new x", deps());
     const isi = JSON.parse(readFileSync(join(pendingDir(proj), berkasPending()[0]!), "utf8"));
     expect(isi).toEqual({ command: "/new x" });
+  });
+});
+
+describe("pagar callback_data", () => {
+  // W-25: Telegram menolak callback_data di atas 64 byte dengan
+  // BUTTON_DATA_INVALID. Prefiks "slash:go:" memakan 9, sisanya 55.
+  test("command terlalu panjang untuk tombol ditolak, bukan dikirim dan gagal", () => {
+    const panjang = "/" + "x".repeat(80);
+    const r = handleSlash(panjang, deps());
+    expect(r.kind).toBe("error");
+    expect(berkasPending()).toEqual([]);
+  });
+
+  test("prefiks + command yang muat tetap di bawah batas 64 byte Telegram", () => {
+    const pas = "/" + "x".repeat(MAX_CONFIRM_COMMAND_BYTES - 1);
+    expect(confirmFits(pas)).toBe(true);
+    expect(Buffer.byteLength(SLASH_CALLBACK_GO + pas, "utf8")).toBeLessThanOrEqual(64);
+  });
+
+  // Diukur dalam BYTE, bukan karakter: satu emoji memakan empat byte, dan
+  // menghitung panjang string akan meloloskan command yang ditolak Telegram.
+  test("dihitung per byte, bukan per karakter", () => {
+    expect(confirmFits("/" + "😀".repeat(20))).toBe(false);
+  });
+});
+
+describe("parseSlashCallback", () => {
+  test("tombol Kirim membawa commandnya", () => {
+    expect(parseSlashCallback("slash:go:/compact")).toEqual({
+      kind: "go",
+      command: "/compact",
+    });
+  });
+
+  test("tombol Batal dikenali", () => {
+    expect(parseSlashCallback("slash:no")).toEqual({ kind: "cancel" });
+  });
+
+  // Tombol milik fitur lain tidak boleh ikut tercegat -- ia harus tetap sampai
+  // ke AI seperti sebelumnya.
+  test("callback lain bukan milik lapisan ini", () => {
+    expect(parseSlashCallback("confirm_yes")).toBeNull();
+    expect(parseSlashCallback(undefined)).toBeNull();
+  });
+});
+
+describe("urutan catat-lalu-cegat", () => {
+  // Aturan paling mengikat di spec §2.3. Diuji lewat urutan pemanggilan,
+  // bukan lewat db sungguhan: yang dijaga adalah urutannya.
+  test("payload tidak ditulis sebelum pencatatan dipanggil", () => {
+    const urutan: string[] = [];
+    const catat = () => urutan.push("catat");
+    const kirim = () => {
+      const r = handleSlash("/rename x", deps());
+      if (r.kind === "sent") urutan.push("kirim");
+    };
+    catat();
+    kirim();
+    expect(urutan).toEqual(["catat", "kirim"]);
   });
 });

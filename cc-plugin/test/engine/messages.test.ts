@@ -119,6 +119,70 @@ describe("deliverIncoming (the reply-target gate)", () => {
   });
 });
 
+// Lapisan slash Telegram butuh pesannya TERCATAT tapi TIDAK didorong ke AI:
+// perintahnya berangkat ke wrapper. Tanpa pemisahan ini, "/rename x" sampai ke
+// keduanya dan AI ikut menjawab perintah yang bukan ditujukan kepadanya.
+describe("deliverIncoming — pushToAi", () => {
+  test("pushToAi: false tidak mendorong ke sesi AI", async () => {
+    const deps = makeDeps();
+    const sink = deps.sink as CollectingSink;
+
+    await deliverIncoming(
+      normalizeMessage("bot-01", { chatId: 111, userId: 111 }, { text: "/rename sesi-x" }),
+      deps,
+      new Map(),
+      { pushToAi: false }
+    );
+
+    expect(sink.sent).toHaveLength(0);
+  });
+
+  // Meteran kedua, dan yang ini yang menjaga aturan spec §2.3: sink kosong saja
+  // tidak membuktikan apa pun -- ia sama-sama kosong kalau pesannya dibuang
+  // seluruhnya. Yang membedakan "dicegat" dari "hilang" adalah barisnya ADA di
+  // db. Sistem lama gagal persis di sini, dan biayanya audit yang membaca
+  // /switch sebagai 0x dipakai padahal 139x.
+  test("pushToAi: false TETAP mencatat barisnya ke conversations.db", async () => {
+    const deps = makeDeps();
+
+    await deliverIncoming(
+      normalizeMessage("bot-01", { chatId: 111, userId: 111 }, { text: "/rename sesi-x" }),
+      deps,
+      new Map(),
+      { pushToAi: false }
+    );
+
+    expect(searchMessages(deps.conversationsDb, "rename").length).toBe(1);
+  });
+
+  test("tanpa opsi, pesan biasa tetap didorong ke AI seperti sebelumnya", async () => {
+    const deps = makeDeps();
+    const sink = deps.sink as CollectingSink;
+
+    await deliverIncoming(
+      normalizeMessage("bot-01", { chatId: 111, userId: 111 }, { text: "halo bot" }),
+      deps,
+      new Map()
+    );
+
+    expect(sink.sent).toHaveLength(1);
+    expect(sink.sent[0]!.text).toBe("halo bot");
+  });
+
+  test("pesan yang ditolak allowlist tidak tercatat, apa pun nilai pushToAi", async () => {
+    const deps = makeDeps();
+
+    await deliverIncoming(
+      normalizeMessage("bot-01", { chatId: 999, userId: 999 }, { text: "/rename curian" }),
+      deps,
+      new Map(),
+      { pushToAi: false }
+    );
+
+    expect(searchMessages(deps.conversationsDb, "curian").length).toBe(0);
+  });
+});
+
 describe("normalizeMessage", () => {
   test("derives the same identity fields regardless of payload kind", () => {
     const ids = { chatId: 111, userId: 222, userName: "mirza", dateSeconds: 1_800_000_000 };
