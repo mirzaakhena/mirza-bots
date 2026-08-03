@@ -2,6 +2,7 @@ import type { Context, Filter, InlineKeyboard } from "grammy";
 import { InputFile } from "grammy";
 import type { Database } from "bun:sqlite";
 import { statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import {
   ensureStateDirs,
   configPath,
@@ -18,7 +19,20 @@ import { openFleetDb } from "./db/fleet-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
 import { safeName, MAX_DOCUMENT_BYTES } from "./telegram/media";
-import { startPolling, type NormalizedMessage, type PollerDeps } from "./telegram/poller";
+import {
+  startPolling,
+  type IncomingOptions,
+  type NormalizedMessage,
+  type PollerDeps,
+} from "./telegram/poller";
+import { classify } from "./slash/classify";
+import {
+  handleSlash,
+  handleConfirm,
+  parseSlashCallback,
+  SLASH_CALLBACK_GO,
+  SLASH_CALLBACK_CANCEL,
+} from "./slash";
 import {
   makeBot,
   fileUrl,
@@ -346,9 +360,13 @@ export function startEngine(cwd: string): EngineStart {
 
   // Indikator dinyalakan hanya untuk pesan yang LOLOS gerbang -- pesan yang
   // ditolak tidak boleh membuat bot tampak sedang menyiapkan jawaban.
-  const deliver = async (msg: NormalizedMessage) => {
-    const accepted = await deliverIncoming(msg, deps, lastChatByBot);
-    if (accepted) typing.start(msg.chatId);
+  //
+  // `pushToAi: false` (lapisan slash Telegram) juga mematikan indikatornya:
+  // tidak ada giliran AI yang sedang disiapkan, jadi "sedang mengetik" akan
+  // menjanjikan balasan yang tidak akan pernah datang.
+  const deliver = async (msg: NormalizedMessage, opts: IncomingOptions = {}) => {
+    const accepted = await deliverIncoming(msg, deps, lastChatByBot, opts);
+    if (accepted && opts.pushToAi !== false) typing.start(msg.chatId);
     return accepted;
   };
 
@@ -387,7 +405,14 @@ export function startEngine(cwd: string): EngineStart {
 
   bot.on("message:text", async (ctx) => {
     const quote = extractQuote(ctx.message);
-    await deliver(
+
+    // classify() lebih dulu, dan sengaja BUKAN handleSlash(): ia murni, tidak
+    // menulis apa pun, jadi memanggilnya di sini tidak mengonsumsi pesannya.
+    // Yang dibutuhkan cuma satu jawaban -- apakah pesan ini urusan wrapper --
+    // supaya `deliver` tahu bahwa isinya tidak boleh didorong ke AI.
+    const isSlash = classify(ctx.message.text).kind !== "not-slash";
+
+    const accepted = await deliver(
       normalizeMessage(
         botName,
         {
@@ -403,8 +428,38 @@ export function startEngine(cwd: string): EngineStart {
           quoteText: quote.text,
           quoteIsManual: quote.isManual,
         }
-      )
+      ),
+      { pushToAi: !isSlash }
     );
+
+    // Slash Telegram dicegat SESUDAH pesannya tercatat, tidak sebelum: sistem
+    // lama melakukan sebaliknya dan membuat sepuluh command tidak pernah muncul
+    // di database sama sekali (spec §2.3).
+    if (!accepted || !isSlash) return;
+
+    const outcome = handleSlash(ctx.message.text, {
+      projectDir: botConfig.home,
+      newId: () => randomUUID(),
+    });
+    if (outcome.kind === "passthrough") return;
+    if (outcome.kind === "error") {
+      await ctx.reply(outcome.message);
+      return;
+    }
+    if (outcome.kind === "sent") {
+      await ctx.reply(outcome.ack);
+      return;
+    }
+    await ctx.reply(outcome.prompt, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "✅ Kirim", callback_data: `${SLASH_CALLBACK_GO}${outcome.command}` },
+            { text: "❌ Batal", callback_data: SLASH_CALLBACK_CANCEL },
+          ],
+        ],
+      },
+    });
   });
 
   bot.on("message:photo", async (ctx) => {
@@ -504,7 +559,13 @@ export function startEngine(cwd: string): EngineStart {
       console.error(`cc-plugin: answerCallbackQuery failed for ${botName} (continuing): ${err}`);
     }
 
-    await deliver(
+    // Tap tombol konfirmasi slash adalah kendali lapisan ini, bukan pesan untuk
+    // AI -- tapi ia tetap DICATAT lebih dulu, aturan yang sama dengan pesan
+    // slash itu sendiri (spec §2.3). `null` berarti tombol milik fitur lain,
+    // dan itu berjalan persis seperti sebelumnya.
+    const slashTap = parseSlashCallback(ctx.callbackQuery.data);
+
+    const accepted = await deliver(
       normalizeMessage(
         botName,
         {
@@ -513,8 +574,21 @@ export function startEngine(cwd: string): EngineStart {
           userName: ctx.from.username,
         },
         { callbackData: ctx.callbackQuery.data }
-      )
+      ),
+      { pushToAi: slashTap === null }
     );
+
+    if (accepted && slashTap !== null) {
+      if (slashTap.kind === "go") {
+        const outcome = handleConfirm(slashTap.command, {
+          projectDir: botConfig.home,
+          newId: () => randomUUID(),
+        });
+        if (outcome.kind === "sent") await ctx.reply(outcome.ack);
+      } else {
+        await ctx.reply("❌ Dibatalkan.");
+      }
+    }
 
     // Only now, with the press safely stored and pushed, tidy the keyboard away
     // so the same prompt cannot be answered a second time. Last on purpose:

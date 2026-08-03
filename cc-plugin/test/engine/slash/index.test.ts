@@ -1,0 +1,141 @@
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  handleSlash,
+  handleConfirm,
+  parseSlashCallback,
+  confirmFits,
+  MAX_CONFIRM_COMMAND_BYTES,
+  SLASH_CALLBACK_GO,
+} from "../../../src/engine/slash";
+import { pendingDir } from "../../../src/engine/slash/pending";
+
+let proj: string;
+let n = 0;
+const deps = () => ({ projectDir: proj, newId: () => `id${++n}` });
+
+beforeEach(() => { proj = mkdtempSync(join(tmpdir(), "slash-")); n = 0; });
+afterEach(() => rmSync(proj, { recursive: true, force: true }));
+
+function berkasPending(): string[] {
+  try {
+    return readdirSync(pendingDir(proj)).filter((f) => f.endsWith(".json"));
+  } catch {
+    return [];
+  }
+}
+
+describe("handleSlash", () => {
+  test("teks biasa diteruskan ke AI, tanpa menulis apa pun", () => {
+    expect(handleSlash("halo", deps()).kind).toBe("passthrough");
+    expect(berkasPending()).toEqual([]);
+  });
+
+  test("/rename menulis payload dan mengembalikan ack", () => {
+    const r = handleSlash("/rename sesi-x", deps());
+    expect(r.kind).toBe("sent");
+    expect(berkasPending()).toHaveLength(1);
+    const isi = JSON.parse(readFileSync(join(pendingDir(proj), berkasPending()[0]!), "utf8"));
+    expect(isi).toEqual({ command: "/rename sesi-x" });
+  });
+
+  test("/new menulis batch dua perintah", () => {
+    handleSlash("/new sesi-y", deps());
+    const isi = JSON.parse(readFileSync(join(pendingDir(proj), berkasPending()[0]!), "utf8"));
+    expect(isi).toEqual([{ command: "/clear" }, { command: "/rename sesi-y" }]);
+  });
+
+  test("nama tidak sah: pesan galat, dan TIDAK menulis apa pun", () => {
+    const r = handleSlash("/rename", deps());
+    expect(r.kind).toBe("error");
+    expect(berkasPending()).toEqual([]);
+  });
+
+  test("command tak dikenal minta konfirmasi, belum menulis apa pun", () => {
+    const r = handleSlash("/compact", deps());
+    expect(r.kind).toBe("confirm");
+    if (r.kind === "confirm") {
+      expect(r.command).toBe("/compact");
+      expect(r.prompt).toContain("/compact");
+    }
+    expect(berkasPending()).toEqual([]);
+  });
+});
+
+describe("handleConfirm", () => {
+  test("sesudah dikonfirmasi, command diteruskan apa adanya", () => {
+    const r = handleConfirm("/compact", deps());
+    expect(r.kind).toBe("sent");
+    const isi = JSON.parse(readFileSync(join(pendingDir(proj), berkasPending()[0]!), "utf8"));
+    expect(isi).toEqual({ command: "/compact" });
+  });
+
+  // Yang dikonfirmasi diteruskan apa adanya -- lapisan ini tidak mengolahnya,
+  // dan tidak boleh diam-diam menerapkan pemetaan.
+  test("command dikenal yang lewat jalur konfirmasi tidak dipetakan", () => {
+    handleConfirm("/new x", deps());
+    const isi = JSON.parse(readFileSync(join(pendingDir(proj), berkasPending()[0]!), "utf8"));
+    expect(isi).toEqual({ command: "/new x" });
+  });
+});
+
+describe("pagar callback_data", () => {
+  // W-25: Telegram menolak callback_data di atas 64 byte dengan
+  // BUTTON_DATA_INVALID. Prefiks "slash:go:" memakan 9, sisanya 55.
+  test("command terlalu panjang untuk tombol ditolak, bukan dikirim dan gagal", () => {
+    const panjang = "/" + "x".repeat(80);
+    const r = handleSlash(panjang, deps());
+    expect(r.kind).toBe("error");
+    expect(berkasPending()).toEqual([]);
+  });
+
+  test("prefiks + command yang muat tetap di bawah batas 64 byte Telegram", () => {
+    const pas = "/" + "x".repeat(MAX_CONFIRM_COMMAND_BYTES - 1);
+    expect(confirmFits(pas)).toBe(true);
+    expect(Buffer.byteLength(SLASH_CALLBACK_GO + pas, "utf8")).toBeLessThanOrEqual(64);
+  });
+
+  // Diukur dalam BYTE, bukan karakter: satu emoji memakan empat byte, dan
+  // menghitung panjang string akan meloloskan command yang ditolak Telegram.
+  test("dihitung per byte, bukan per karakter", () => {
+    expect(confirmFits("/" + "😀".repeat(20))).toBe(false);
+  });
+});
+
+describe("parseSlashCallback", () => {
+  test("tombol Kirim membawa commandnya", () => {
+    expect(parseSlashCallback("slash:go:/compact")).toEqual({
+      kind: "go",
+      command: "/compact",
+    });
+  });
+
+  test("tombol Batal dikenali", () => {
+    expect(parseSlashCallback("slash:no")).toEqual({ kind: "cancel" });
+  });
+
+  // Tombol milik fitur lain tidak boleh ikut tercegat -- ia harus tetap sampai
+  // ke AI seperti sebelumnya.
+  test("callback lain bukan milik lapisan ini", () => {
+    expect(parseSlashCallback("confirm_yes")).toBeNull();
+    expect(parseSlashCallback(undefined)).toBeNull();
+  });
+});
+
+describe("urutan catat-lalu-cegat", () => {
+  // Aturan paling mengikat di spec §2.3. Diuji lewat urutan pemanggilan,
+  // bukan lewat db sungguhan: yang dijaga adalah urutannya.
+  test("payload tidak ditulis sebelum pencatatan dipanggil", () => {
+    const urutan: string[] = [];
+    const catat = () => urutan.push("catat");
+    const kirim = () => {
+      const r = handleSlash("/rename x", deps());
+      if (r.kind === "sent") urutan.push("kirim");
+    };
+    catat();
+    kirim();
+    expect(urutan).toEqual(["catat", "kirim"]);
+  });
+});

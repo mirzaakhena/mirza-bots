@@ -123,9 +123,22 @@ export function applyAlbumFailureNotice(
   return text !== undefined && text.length > 0 ? `${text}\n${notice}` : notice;
 }
 
+/**
+ * `pushToAi: false` mencatat pesannya seperti biasa tapi TIDAK mendorongnya ke
+ * sesi AI. Dipakai lapisan slash Telegram: perintahnya berangkat ke wrapper,
+ * bukan ke AI (spec lapisan slash §2.3 dan §3), dan tanpa ini teksnya sampai
+ * ke keduanya -- AI ikut menjawab "/rename x" yang bukan ditujukan kepadanya.
+ *
+ * Yang ditekan HANYA pendorongan. Pencatatan tetap terjadi tanpa syarat, dan
+ * itu justru inti aturannya: sistem lama mencegat sebelum mencatat, dan
+ * membuat audit membaca /switch sebagai 0x dipakai padahal 139x.
+ */
+export type IncomingOptions = { pushToAi?: boolean };
+
 export async function handleIncomingMessage(
   msg: NormalizedMessage,
-  deps: PollerDeps
+  deps: PollerDeps,
+  opts: IncomingOptions = {}
 ): Promise<boolean> {
   if (!isAllowed(deps.config, msg.chatId)) return false;
 
@@ -249,7 +262,10 @@ export async function handleIncomingMessage(
   // process that owns this bot's token, so there is always exactly one
   // destination -- and Telegram itself holds undelivered updates for 24 hours,
   // which is what bot_inbox was standing in for.
-  deps.sink.push(pushMsg);
+  // Ditekan hanya untuk pesan yang jadi urusan lapisan lain (slash Telegram).
+  // Barisnya sudah masuk db di atas, jadi "tidak didorong" tidak pernah berarti
+  // "tidak tercatat".
+  if (opts.pushToAi !== false) deps.sink.push(pushMsg);
 
   return true;
 }

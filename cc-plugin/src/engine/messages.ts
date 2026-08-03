@@ -5,6 +5,7 @@ import type { Config } from "./config";
 import { getMessagesAround, searchMessages } from "./db/conversations-schema";
 import {
   handleIncomingMessage,
+  type IncomingOptions,
   type NormalizedMessage,
   type PollerDeps,
 } from "./telegram/poller";
@@ -237,9 +238,10 @@ export function buildTappedMessageEdit(
 export async function deliverIncoming(
   msg: NormalizedMessage,
   deps: PollerDeps,
-  lastChatByBot: Map<string, string>
+  lastChatByBot: Map<string, string>,
+  opts: IncomingOptions = {}
 ): Promise<boolean> {
-  const accepted = await handleIncomingMessage(msg, deps);
+  const accepted = await handleIncomingMessage(msg, deps, opts);
   if (accepted) lastChatByBot.set(msg.bot, msg.chatId);
   return accepted;
 }
