@@ -176,8 +176,33 @@ sesi).
   kriteria, diperiksa dari `conversations.db` dan `session-hook.log` — bukan
   dari layar. Desainnya:
   `mirza-marketplace/docs/superpowers/specs/2026-08-03-lapisan-slash-telegram-design.md`.
-  **`/switch` dan `/context` belum ada** — keduanya butuh daftar sesi bernama
-  dan jembatan statusline, dan itu tahap 2.
+  **`/context` menyusul di tahap 2** (butir berikutnya). **`/switch` belum ada**
+  — ia butuh daftar sesi bernama, dan itu pekerjaan tersendiri.
+- **`/context` dijawab tanpa mengorbankan statusline user.** Payload statusline
+  di-**push** Claude Code ke command-nya lewat stdin dan tidak bisa ditarik
+  kapan pun — jadi satu-satunya cara memperolehnya adalah **menjadi** command
+  itu, menangkapnya, dan menyimpannya (`status/<bot>.json`). Karena Claude Code
+  hanya mengizinkan **satu** `statusLine`, meneruskan ke statusline pendahulu
+  bukan pilihan gaya melainkan satu-satunya jalan yang tidak menggusurnya.
+  **Sistem lama menggusurnya, dan masih menggusurnya di enam dari enam bot
+  harian:** installer-nya mencari statusline pendahulu di lapisan **project**
+  padahal punya user ada di **global**, lalu menulis `previousCommand ?? ''` —
+  string kosong — sehingga `if (chain)` tidak pernah benar. Tidak ada satu pun
+  langkah yang error; baris statusnya sekadar jadi kosong. Yang mematikan bukan
+  salah lapisannya, melainkan memperlakukan `null` sebagai *"memang tidak ada"*
+  padahal artinya *"aku tidak menemukannya"*. Empat pagar mencegah itu berulang:
+  **(1)** resolusi mengikuti presedens CC, project **lalu** global; **(2)** rantai
+  ditulis lalu **dibaca ulang**, tidak cocok berarti **rollback**; **(3)** kalau
+  installer tidak bisa memastikan apa yang terpasang, ia **menolak memasang** dan
+  `/context` melapor apa adanya — lebih baik `/context` mati daripada statusline
+  user mati; **(4)** tiap pagar punya *mutation check* yang membuktikan testnya
+  bisa merah. Di bridge, prioritas itu terbaca dari strukturnya: blok penangkap
+  dibungkus `try/catch` dan blok penerus berada **di luar** jangkauannya, jadi
+  gagal menangkap tidak pernah mematikan statusline. Bridge tidak mencetak apa
+  pun ke stdout sendiri. `/context` **tidak dikirim ke CC sama sekali** — ia
+  dijawab dari berkas tangkapan. Nama sesi diambil dari `session_name` di dalam
+  payload, ditulis CC sendiri, jadi fitur ini tidak menunggu daftar sesi bernama.
+  Desainnya: `mirza-marketplace/docs/superpowers/specs/2026-08-04-context-telegram-design.md`.
 - **Menu "/" didaftarkan ke Telegram.** `setMyCommands` dipanggil sekali saat
   engine boot, daftarnya lahir dari `KNOWN_COMMANDS` — sumber yang sama yang
   memutuskan apa yang dicegat, jadi menu dan perilaku tidak bisa berbeda
