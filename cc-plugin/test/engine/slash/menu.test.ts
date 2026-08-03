@@ -28,6 +28,12 @@ describe("buildCommandMenu", () => {
     }
   });
 
+  // Urutan menu = urutan KNOWN_COMMANDS, dan itu yang dilihat user di HP.
+  // Dikunci supaya penataan ulang yang tidak disengaja ketahuan di sini.
+  test("/context muncul PALING ATAS di menu", () => {
+    expect(buildCommandMenu()[0]?.command).toBe("context");
+  });
+
   test("mendaftarkan /rename, /new, /context -- dan hanya itu di tahap ini", () => {
     expect(buildCommandMenu().map((e) => e.command).sort()).toEqual([
       "context",

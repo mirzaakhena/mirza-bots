@@ -10,7 +10,11 @@
  * wrapper sama sekali -- dijawab dari data lokal (spec tahap 1 §4). /switch
  * masih menunggu daftar sesi bernama dan punya rencana sendiri.
  */
-export const KNOWN_COMMANDS = ["/rename", "/new", "/context"] as const;
+// URUTANNYA berarti: menu "/" di Telegram lahir dari daftar ini apa adanya,
+// jadi yang di depan muncul paling atas di HP user. /context ditaruh pertama
+// atas permintaan user -- ia yang paling sering dilihat sekilas, dan tidak
+// menuntut argumen apa pun.
+export const KNOWN_COMMANDS = ["/context", "/rename", "/new"] as const;
 
 export type Classified =
   | { kind: "known"; name: string; arg: string }
