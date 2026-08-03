@@ -116,6 +116,12 @@ sesi).
   `message_id` yang dikembalikan Telegram, dan disimpan **sesudah** kirim
   berhasil — id itu hanya ada di jawaban Telegram, dan baris tanpa id tidak bisa
   dikutip belakangan. Sebelum ini `read_history` menyajikan transkrip sepihak.
+- **Balasan panjang dipotong otomatis.** Di atas batas keras Telegram (4096
+  karakter setelah escaping), balasan dikirim sebagai beberapa pesan berurutan
+  tanpa penanda. Tombol menempel di pesan terakhir, kutipan di pesan pertama,
+  dan tiap pesan disimpan satu baris sehingga bisa dikutip belakangan. Pedoman
+  menulis: ±1000 karakter — pedoman, bukan gerbang; tidak ada yang ditolak
+  karena kepanjangan.
 - **Bot bisa mengutip.** Tool `reply` menerima `reply_to` berisi id pesan yang
   dikutip — pesan user maupun pesan bot sendiri. **AI tidak boleh pernah meminta
   id itu ke user** (U-3); kalau tidak punya, minta user meng-*quote*.
