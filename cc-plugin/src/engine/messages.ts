@@ -227,13 +227,23 @@ export function buildTappedMessageEdit(
  *
  * Exported for tests.
  */
+/**
+ * Mengembalikan apakah pesan ini diterima -- bukan sekadar efek samping.
+ *
+ * Pemanggilnya butuh membedakan "diterima" dari "ditolak allowlist" untuk
+ * memutuskan menyalakan indikator "typing...". `lastChatByBot` tidak bisa
+ * menjawab itu: peta ini MENYIMPAN chat sebelumnya saat sebuah pesan ditolak,
+ * jadi menebak lewat isinya akan membuat pesan dari orang asing memicu
+ * indikator ke user yang sah.
+ */
 export async function deliverIncoming(
   msg: NormalizedMessage,
   deps: PollerDeps,
   lastChatByBot: Map<string, string>
-): Promise<void> {
+): Promise<boolean> {
   const accepted = await handleIncomingMessage(msg, deps);
   if (accepted) lastChatByBot.set(msg.bot, msg.chatId);
+  return accepted;
 }
 
 /**
