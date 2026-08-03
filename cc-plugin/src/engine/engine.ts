@@ -18,6 +18,7 @@ import {
 import { installBridge, buildBridgeCommand, pluginRootFrom } from "./context/install";
 import { readCapturedStatus } from "./context/status-file";
 import { renderContext } from "./context/render";
+import { waitForCapture } from "./context/wait";
 import { loadConfig } from "./config";
 import { resolveBotByCwd } from "./identity";
 import { acquireBotLock, releaseBotLock } from "./lock";
@@ -459,7 +460,7 @@ export function startEngine(cwd: string): EngineStart {
       return;
     }
     if (outcome.kind === "local") {
-      await ctx.reply(renderLocalContext(botName, botConfig.home));
+      await replyLocalContext(ctx, botName, botConfig.home);
       return;
     }
     await ctx.reply(outcome.prompt, {
@@ -788,38 +789,80 @@ export function startEngine(cwd: string): EngineStart {
  * engine boot. Menyentuh settings.json user untuk fitur yang mungkin tidak
  * pernah dipanggil adalah biaya yang tidak perlu ditagihkan di muka.
  *
- * Kalau pemasangannya ditolak atau di-rollback, yang dilaporkan adalah
- * ALASANNYA, apa adanya. Itu inti syarat spec §1: statusline user menang, dan
- * /context harus mengatakan kenapa ia mengalah, bukan diam-diam gagal.
+ * Alurnya meniru sistem lama, dan alasannya terukur hidup 2026-08-04: pada
+ * pemasangan pertama, berkas tangkapan BELUM ADA -- Claude Code belum sempat
+ * menggambar baris status sekali pun. Menjawab "belum ada data" di detik itu
+ * benar secara harfiah tapi menyesatkan: yang perlu user lakukan hanya
+ * menunggu. Bedanya dengan sistem lama, yang ditunggu di sini adalah
+ * KEJADIANNYA (berkasnya muncul), bukan durasi yang ditebak.
+ *
+ * Kalau pemasangannya ditolak atau di-rollback, yang dilaporkan ALASANNYA, apa
+ * adanya. Itu inti syarat spec §1: statusline user menang, dan /context harus
+ * mengatakan kenapa ia mengalah, bukan diam-diam gagal.
  */
-function renderLocalContext(botName: string, projectDir: string): string {
+async function replyLocalContext(
+  ctx: { reply: (text: string) => Promise<unknown> },
+  botName: string,
+  projectDir: string
+): Promise<void> {
   const install = installBridge({
     projectDir,
     userSettingsPath: join(homedir(), ".claude", "settings.json"),
-    bridgeCommand: buildBridgeCommand(pluginRootFrom(process.env.CLAUDE_PLUGIN_ROOT, import.meta.url)),
+    bridgeCommand: buildBridgeCommand(
+      pluginRootFrom(process.env.CLAUDE_PLUGIN_ROOT, import.meta.url)
+    ),
     chainPath: chainedStatuslinePath(),
   });
 
   if (install.kind === "refused" || install.kind === "rolled-back") {
-    return (
-      `Jembatan statusline TIDAK dipasang, dan itu disengaja.\n\n` +
-      `Alasan: ${install.reason}\n\n` +
-      `Statusline Claude Code milikmu dibiarkan apa adanya. Kalau harus memilih, ` +
-      `/context yang mengalah -- bukan sebaliknya.`
+    await ctx.reply(
+      `Jembatan statusline TIDAK dipasang, dan itu disengaja.
+
+` +
+        `Alasan: ${install.reason}
+
+` +
+        `Statusline Claude Code milikmu dibiarkan apa adanya. Kalau harus memilih, ` +
+        `/context yang mengalah -- bukan sebaliknya.`
     );
+    return;
   }
 
-  const captured = readCapturedStatus(statusPath(botName));
-  if (captured === null) {
-    return (
-      `Belum ada data statusline.\n\n` +
-      `Jembatannya sudah terpasang, tapi Claude Code belum menggambar baris status sejak itu. ` +
-      `Pakai CC sebentar, lalu kirim /context lagi.`
+  const path = statusPath(botName);
+  const ready = readCapturedStatus(path);
+  if (ready !== null) {
+    await ctx.reply(renderContext(ready, Date.now()));
+    return;
+  }
+
+  // Sampai di sini berarti bridge-nya baru saja dipasang dan CC belum sempat
+  // menggambar baris status. Beri tahu dulu, baru tunggu -- diam belasan detik
+  // tidak bisa dibedakan user dari bot yang mati.
+  await ctx.reply(
+    install.kind === "installed"
+      ? `⏳ Jembatan statusline baru dipasang. Menunggu Claude Code menggambar baris status...`
+      : `⏳ Menunggu data statusline...`
+  );
+
+  const got = await waitForCapture(() => readCapturedStatus(path), {
+    attempts: 12,
+    delayMs: 1500,
+    sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  });
+
+  if (got === null) {
+    await ctx.reply(
+      `Masih belum ada data statusline sesudah menunggu.
+
+` +
+        `Jembatannya terpasang, tapi Claude Code belum menggambar baris status. ` +
+        `Pakai CC sebentar, lalu kirim /context lagi.`
     );
+    return;
   }
 
   // sessionName sengaja tidak dilewatkan: payload statusline sudah memuat
   // session_name-nya sendiri, ditulis Claude Code. Sumber kedua hanya akan
   // menambah kemungkinan keduanya berbeda.
-  return renderContext(captured, Date.now());
+  await ctx.reply(renderContext(got, Date.now()));
 }

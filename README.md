@@ -200,7 +200,11 @@ sesi).
   dibungkus `try/catch` dan blok penerus berada **di luar** jangkauannya, jadi
   gagal menangkap tidak pernah mematikan statusline. Bridge tidak mencetak apa
   pun ke stdout sendiri. `/context` **tidak dikirim ke CC sama sekali** — ia
-  dijawab dari berkas tangkapan. Nama sesi diambil dari `session_name` di dalam
+  dijawab dari berkas tangkapan. Pada pemasangan pertama berkas itu belum ada
+  (CC belum sempat menggambar baris status), jadi bot membalas "⏳ menunggu"
+  lalu **menunggu berkasnya muncul** — yang ditunggu kejadiannya, bukan durasi
+  yang ditebak. Menjawab "belum ada data" di detik pemasangan benar secara
+  harfiah tapi menyesatkan: yang perlu dilakukan user cuma menunggu. Nama sesi diambil dari `session_name` di dalam
   payload, ditulis CC sendiri, jadi fitur ini tidak menunggu daftar sesi bernama.
   Desainnya: `mirza-marketplace/docs/superpowers/specs/2026-08-04-context-telegram-design.md`.
 - **Menu "/" didaftarkan ke Telegram.** `setMyCommands` dipanggil sekali saat
