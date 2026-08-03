@@ -11,7 +11,7 @@ import {
 import { loadConfig } from "./config";
 import { resolveBotByCwd } from "./identity";
 import { acquireBotLock, releaseBotLock } from "./lock";
-import { openConversationsDb, insertMessage } from "./db/conversations-schema";
+import { openConversationsDb, insertMessage, encodeMetadata } from "./db/conversations-schema";
 import { openFleetDb } from "./db/fleet-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
@@ -104,9 +104,12 @@ export function storeOutgoing(
     bot: string;
     chatId: string;
     messageId?: string;
-    text: string;
+    text?: string;
     sessionId?: string;
     replyTo?: string;
+    /** Path berkas yang pesan ini bawa. Satu baris per berkas, jadi selalu berisi satu. */
+    attachments?: string[];
+    kind?: "photo" | "document";
   }
 ): void {
   insertMessage(db, {
@@ -118,6 +121,11 @@ export function storeOutgoing(
     text: msg.text,
     replyTo: msg.replyTo,
     sessionId: msg.sessionId,
+    attachments: msg.attachments ? JSON.stringify(msg.attachments) : undefined,
+    // encodeMetadata mengembalikan undefined kalau tidak ada isinya, sehingga
+    // kolomnya NULL alih-alih string "{}" -- yang akan memaksa setiap pembaca
+    // nanti memperlakukannya sebagai kasus khusus "ada tapi kosong".
+    metadata: encodeMetadata({ ...(msg.kind !== undefined ? { kind: msg.kind } : {}) }),
   });
 }
 
