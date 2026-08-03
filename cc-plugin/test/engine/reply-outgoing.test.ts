@@ -78,6 +78,71 @@ test("a non-numeric quote id is refused before anything is sent", () => {
   expect(message).toContain("never ask the user");
 });
 
+test("baris lampiran menyimpan path di kolom attachments dan kind di metadata", () => {
+  const db = openConversationsDb(":memory:");
+
+  storeOutgoing(db, {
+    bot: "bot-uji",
+    chatId: "111",
+    messageId: "700",
+    attachments: ["C:/x/a.png"],
+    kind: "photo",
+    sessionId: "sess-9",
+  });
+
+  const row = db
+    .query("SELECT source, message_id, text, attachments, metadata, session_id FROM messages")
+    .get() as any;
+  expect(row.source).toBe("assistant");
+  expect(row.message_id).toBe("700");
+  // Teksnya sudah jadi barisnya sendiri; baris berkas tidak menduplikasinya.
+  expect(row.text).toBeNull();
+  expect(JSON.parse(row.attachments)).toEqual(["C:/x/a.png"]);
+  expect(JSON.parse(row.metadata)).toEqual({ kind: "photo" });
+  expect(row.session_id).toBe("sess-9");
+});
+
+// Kutipan hanya di pesan pertama -- aturan yang sudah berlaku untuk chunking,
+// dan berkas bukan pesan pertama. 0 dari 110 kiriman historis pernah memakainya.
+test("baris lampiran tidak membawa kutipan", () => {
+  const db = openConversationsDb(":memory:");
+  storeOutgoing(db, {
+    bot: "bot-uji",
+    chatId: "111",
+    messageId: "703",
+    attachments: ["C:/x/a.png"],
+    kind: "photo",
+  });
+
+  const row = db.query("SELECT reply_to FROM messages").get() as any;
+  expect(row.reply_to).toBeNull();
+});
+
+test("dokumen tercatat dengan kind document", () => {
+  const db = openConversationsDb(":memory:");
+  storeOutgoing(db, {
+    bot: "bot-uji",
+    chatId: "111",
+    messageId: "701",
+    attachments: ["C:/x/a.pdf"],
+    kind: "document",
+  });
+
+  const row = db.query("SELECT metadata FROM messages").get() as any;
+  expect(JSON.parse(row.metadata)).toEqual({ kind: "document" });
+});
+
+// Kolom yang berisi string "{}" akan memaksa setiap pembaca nanti
+// memperlakukannya sebagai kasus khusus "ada tapi kosong".
+test("balasan teks biasa tidak menulis apa pun ke attachments maupun metadata", () => {
+  const db = openConversationsDb(":memory:");
+  storeOutgoing(db, { bot: "bot-uji", chatId: "111", messageId: "702", text: "halo" });
+
+  const row = db.query("SELECT attachments, metadata FROM messages").get() as any;
+  expect(row.attachments).toBeNull();
+  expect(row.metadata).toBeNull();
+});
+
 import { planSendOptionsFor } from "../../src/engine/engine";
 
 // Keyboard di potongan tengah menggantung di atas teks lanjutan.

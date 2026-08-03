@@ -1,5 +1,7 @@
 import type { Context, Filter, InlineKeyboard } from "grammy";
+import { InputFile } from "grammy";
 import type { Database } from "bun:sqlite";
+import { statSync } from "node:fs";
 import {
   ensureStateDirs,
   configPath,
@@ -11,7 +13,7 @@ import {
 import { loadConfig } from "./config";
 import { resolveBotByCwd } from "./identity";
 import { acquireBotLock, releaseBotLock } from "./lock";
-import { openConversationsDb, insertMessage } from "./db/conversations-schema";
+import { openConversationsDb, insertMessage, encodeMetadata } from "./db/conversations-schema";
 import { openFleetDb } from "./db/fleet-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
@@ -32,7 +34,8 @@ import {
 import type { MessageSink, PushMessage } from "./sink";
 import { readCurrentSessionId } from "./session-file";
 import type { ButtonRow, HistoryMessage } from "./types";
-import { planParts } from "./chunk";
+import { planParts, type OutboundPart } from "./chunk";
+import { planAttachments, type PlannedAttachment } from "./attach";
 import { createTypingKeepalive } from "./typing";
 
 /** Apa yang benar-benar terkirim -- dipakai server untuk memberi umpan balik ke AI. */
@@ -41,6 +44,8 @@ export interface ReplyResult {
   chars: number;
   /** Berapa pesan Telegram yang keluar. 1 untuk sebagian besar balasan. */
   parts: number;
+  /** Berapa berkas ikut terkirim. 0 untuk balasan teks biasa. */
+  files: number;
 }
 
 /**
@@ -55,7 +60,12 @@ export interface ReplyResult {
  */
 export type Engine = {
   bot: string;
-  reply(text: string, buttons?: ButtonRow[], replyTo?: string): Promise<ReplyResult>;
+  reply(
+    text: string,
+    buttons?: ButtonRow[],
+    replyTo?: string,
+    files?: string[]
+  ): Promise<ReplyResult>;
   history(opts: {
     messageId: string;
     before?: number;
@@ -104,9 +114,12 @@ export function storeOutgoing(
     bot: string;
     chatId: string;
     messageId?: string;
-    text: string;
+    text?: string;
     sessionId?: string;
     replyTo?: string;
+    /** Path berkas yang pesan ini bawa. Satu baris per berkas, jadi selalu berisi satu. */
+    attachments?: string[];
+    kind?: "photo" | "document";
   }
 ): void {
   insertMessage(db, {
@@ -118,6 +131,11 @@ export function storeOutgoing(
     text: msg.text,
     replyTo: msg.replyTo,
     sessionId: msg.sessionId,
+    attachments: msg.attachments ? JSON.stringify(msg.attachments) : undefined,
+    // encodeMetadata mengembalikan undefined kalau tidak ada isinya, sehingga
+    // kolomnya NULL alih-alih string "{}" -- yang akan memaksa setiap pembaca
+    // nanti memperlakukannya sebagai kasus khusus "ada tapi kosong".
+    metadata: encodeMetadata({ ...(msg.kind !== undefined ? { kind: msg.kind } : {}) }),
   });
 }
 
@@ -171,6 +189,103 @@ export function planSendOptionsFor(
   const isFirst = index === 0;
   const isLast = index === total - 1;
   return buildSendOptions(isLast ? replyMarkup : undefined, isFirst ? replyTo : undefined);
+}
+
+/**
+ * Bagian API Telegram yang dibutuhkan pengiriman berkas -- dua metode, bukan
+ * seluruh objek grammy, supaya test tidak perlu bot sungguhan.
+ */
+export type AttachmentApi = {
+  sendPhoto(chatId: string, file: unknown): Promise<{ message_id: number }>;
+  sendDocument(chatId: string, file: unknown): Promise<{ message_id: number }>;
+};
+
+/**
+ * Mengirim berkas satu per satu, berurutan.
+ *
+ * `onSent` dipanggil sesudah TIAP kiriman sukses, bukan sekali di akhir: kalau
+ * berkas ketiga meledak, dua yang pertama sudah ada di HP user dan barisnya
+ * harus tetap tercatat.
+ *
+ * `toInput` menyuntikkan pembungkus berkas grammy (`InputFile`) supaya seluruh
+ * urutan kirim di sini bisa diuji tanpa menyentuh filesystem maupun jaringan.
+ */
+export async function sendAttachments(
+  api: AttachmentApi,
+  chatId: string,
+  planned: PlannedAttachment[],
+  toInput: (path: string) => unknown,
+  onSent: (a: PlannedAttachment, messageId: string) => void
+): Promise<number> {
+  let sent = 0;
+  for (const a of planned) {
+    let msg;
+    try {
+      const input = toInput(a.path);
+      msg =
+        a.kind === "photo"
+          ? await api.sendPhoto(chatId, input)
+          : await api.sendDocument(chatId, input);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      // "text already delivered" ada supaya pemanggilnya tahu mengirim ulang
+      // seluruh balasan akan menggandakan teksnya.
+      throw new Error(
+        `reply failed after ${sent} of ${planned.length} attachment(s) sent (text already delivered): ${reason}`
+      );
+    }
+    sent++;
+    onSent(a, String(msg.message_id));
+  }
+  return sent;
+}
+
+/**
+ * Menolak `buttons` dan `files` dalam satu panggilan.
+ *
+ * Bukan batasan teknis: berkas dikirim sesudah teks, jadi keyboardnya menempel
+ * pada pesan yang sekarang berada di ATAS berkas-berkasnya. User harus menggulir
+ * balik ke atas untuk menekan tombol yang seharusnya jadi langkah berikutnya.
+ */
+export function assertNoButtonsWithFiles(
+  buttons: ButtonRow[] | undefined,
+  files: string[] | undefined
+): void {
+  if (buttons !== undefined && buttons.length > 0 && files !== undefined && files.length > 0) {
+    throw new Error(
+      "buttons and files cannot be combined in one reply: send the files first, then the buttons in a separate reply call"
+    );
+  }
+}
+
+/**
+ * SEMUA yang harus terjadi sebelum satu byte pun berangkat ke Telegram.
+ *
+ * Dikumpulkan jadi satu fungsi dengan sengaja. Kontrak terpenting fitur ini --
+ * *path yang salah ketik tidak boleh meninggalkan teks yang sudah mendarat* --
+ * adalah soal URUTAN, dan urutan yang dijaga oleh tiga baris berjejer di dalam
+ * `reply` hanya bertahan selama orang berikutnya yang menyunting fungsi itu
+ * mengingat kenapa. Satu panggilan di atas loop pengiriman menjadikannya
+ * struktur, bukan ingatan.
+ *
+ * `sizeOf` disuntik supaya seluruh pagarnya bisa diuji tanpa filesystem.
+ */
+export function prepareReply(
+  text: string,
+  buttons: ButtonRow[] | undefined,
+  files: string[] | undefined,
+  sizeOf: (path: string) => number
+): { parts: OutboundPart[]; planned: PlannedAttachment[] } {
+  // Membaca teks AI sebelum escaping MarkdownV2 dan sebelum pemotongan --
+  // alasan lengkapnya di komentar findMissingButtonNarration.
+  const unnarrated = findMissingButtonNarration(text, buttons);
+  if (unnarrated) throw new Error(unnarrated);
+
+  assertNoButtonsWithFiles(buttons, files);
+
+  const planned = files !== undefined && files.length > 0 ? planAttachments(files, sizeOf) : [];
+
+  return { parts: planParts(text), planned };
 }
 
 export function startEngine(cwd: string): EngineStart {
@@ -440,7 +555,12 @@ export function startEngine(cwd: string): EngineStart {
     engine: {
       bot: botName,
 
-      async reply(text: string, buttons?: ButtonRow[], replyTo?: string): Promise<ReplyResult> {
+      async reply(
+        text: string,
+        buttons?: ButtonRow[],
+        replyTo?: string,
+        files?: string[]
+      ): Promise<ReplyResult> {
         const chatId = lastChatByBot.get(botName);
         if (!chatId) {
           throw new Error(
@@ -453,19 +573,13 @@ export function startEngine(cwd: string): EngineStart {
         // apa pun.
         typing.stop(chatId);
 
-        // Reads the AI's own text, deliberately BEFORE the MarkdownV2 escaping:
-        // the numbered-list legend it looks for is written by the AI, and after
-        // escaping every "1." has become "1\." -- the rule would stop matching
-        // the very thing it exists to check.
-        //
-        // Also deliberately before CHUNKING: the legend and the buttons can land
-        // in different parts, and checking per-part would reject a perfectly
-        // narrated reply just because its list fell on the other side of a cut.
-        const unnarrated = findMissingButtonNarration(text, buttons);
-        if (unnarrated) throw new Error(unnarrated);
+        // Satu panggilan, di atas segalanya: pagar narasi tombol, larangan
+        // buttons+files, validasi berkas, dan pemotongan teks. Kalau ada yang
+        // salah, tidak ada satu pun pesan yang terlanjur berangkat -- itulah
+        // kenapa keempatnya duduk di dalam SATU fungsi, bukan berjejer di sini.
+        const { parts, planned } = prepareReply(text, buttons, files, (p) => statSync(p).size);
 
         const replyMarkup = buttons ? buildInlineKeyboard(buttons) : undefined;
-        const parts = planParts(text);
 
         let sentCount = 0;
         for (let i = 0; i < parts.length; i++) {
@@ -512,7 +626,31 @@ export function startEngine(cwd: string): EngineStart {
           }
         }
 
-        return { chars: text.length, parts: parts.length };
+        const filesSent = await sendAttachments(
+          bot.api as unknown as AttachmentApi,
+          chatId,
+          planned,
+          (p) => new InputFile(p),
+          (a, messageId) => {
+            // Sama seperti baris teks: gagal menyimpan TIDAK fatal. Berkasnya
+            // sudah ada di HP user, dan melempar di sini akan membuat AI
+            // mengira pengirimannya gagal lalu mengulanginya.
+            try {
+              storeOutgoing(conversationsDb, {
+                bot: botName,
+                chatId,
+                messageId,
+                attachments: [a.path],
+                kind: a.kind,
+                sessionId: sink.sessionId(),
+              });
+            } catch (err) {
+              console.error(`cc-plugin: attachment sent but not stored: ${err}`);
+            }
+          }
+        );
+
+        return { chars: text.length, parts: parts.length, files: filesSent };
       },
 
       async history(opts): Promise<HistoryMessage[]> {
