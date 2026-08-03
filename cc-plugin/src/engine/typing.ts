@@ -57,6 +57,12 @@ export function createTypingKeepalive(deps: TypingDeps): TypingKeepalive {
    * gagal karena 429, jaringan, atau user memblokir bot, dan tidak satu pun
    * dari itu boleh menjadi alasan sebuah giliran gagal. Konsekuensi yang
    * diterima sadar: ping yang gagal tidak meninggalkan jejak.
+   *
+   * Ada dua bentuk kegagalan, dan keduanya diuji: `send` yang throw secara
+   * sinkron (try/catch di bawah), dan `send` yang mengembalikan promise yang
+   * reject (`.catch()` di bawah). Yang kedua dipasang SEGERA, pada tick yang
+   * sama saat promise itu dibuat -- kalau dipasang belakangan, rejection-nya
+   * sempat lolos jadi unhandled rejection sebelum sempat ditangkap.
    */
   const ping = (chatId: string): void => {
     try {

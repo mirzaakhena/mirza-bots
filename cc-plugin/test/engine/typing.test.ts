@@ -69,6 +69,10 @@ test("stop menghentikan ping, dan tidak ada yang menyusul sesudahnya", () => {
   k.start("111");
   clock.advance(TYPING_PING_INTERVAL_MS);
   const before = sent.length;
+  // Sebelum stop, ping harus benar-benar sudah berulang -- kalau tidak, test
+  // ini lolos juga untuk stub yang cuma ping sekali dan tak pernah mendaftar
+  // timer sama sekali.
+  expect(before).toBeGreaterThan(1);
   k.stop("111");
   clock.advance(TYPING_PING_INTERVAL_MS * 5);
   expect(sent.length).toBe(before);
@@ -111,6 +115,11 @@ test("berhenti sendiri setelah batas waktu, supaya indikator tidak nyangkut", ()
   k.start("111");
   clock.advance(TYPING_MAX_MS + TYPING_PING_INTERVAL_MS * 2);
   const after = sent.length;
+  // Sebelum berhenti sendiri, ping harus sudah terkumpul kira-kira sebanyak
+  // TYPING_MAX_MS / TYPING_PING_INTERVAL_MS kali -- bukan cuma 1 -- supaya
+  // test ini tidak lolos untuk stub yang ping sekali lalu diam tanpa pernah
+  // benar-benar mendaftar timer berulang.
+  expect(after).toBe(TYPING_MAX_MS / TYPING_PING_INTERVAL_MS);
   clock.advance(TYPING_PING_INTERVAL_MS * 3);
   expect(sent.length).toBe(after);
   expect(clock.live()).toBe(0);
@@ -146,6 +155,48 @@ test("send yang melempar tidak menghentikan keepalive dan tidak merambat keluar"
   expect(() => k.start("111")).not.toThrow();
   clock.advance(TYPING_PING_INTERVAL_MS * 2);
   expect(calls).toBe(3);
+});
+
+// `send` bisa gagal dua cara berbeda: throw sinkron (di atas), atau promise
+// yang reject (di sini). `ping()` menjaga keduanya lewat `.catch(() => {})`,
+// tapi cuma test di atas yang mengunci jalur sinkron. Kalau `.catch()` itu
+// dihapus di refactor nanti, semua test lain tetap hijau sementara proses
+// mulai memuntahkan unhandled rejection -- test ini ada supaya perubahan itu
+// gagal secara eksplisit, bukan diam-diam lolos.
+test("send yang reject (async) tidak menghentikan keepalive dan tidak jadi unhandled rejection", async () => {
+  const clock = fakeClock();
+  let calls = 0;
+  const unhandled: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+
+  try {
+    const k = createTypingKeepalive({
+      send: () => {
+        calls++;
+        return Promise.reject(new Error("429 boom"));
+      },
+      ...clock,
+    });
+
+    k.start("111");
+    clock.advance(TYPING_PING_INTERVAL_MS * 2);
+
+    // Beri kesempatan event loop sungguhan memproses microtask/tick queue,
+    // supaya 'unhandledRejection' -- kalau memang akan terjadi -- sempat
+    // terdeteksi sebelum kita memeriksa perekamnya. Ini menunggu giliran
+    // event loop, bukan waktu keepalive; waktu keepalive tetap didorong
+    // penuh oleh jam palsu di atas.
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await new Promise(resolve => setTimeout(resolve, 0));
+
+    expect(calls).toBe(3); // satu segera + dua tick
+    expect(unhandled).toEqual([]);
+  } finally {
+    process.off("unhandledRejection", onUnhandledRejection);
+  }
 });
 
 test("stopAll mematikan semuanya sekaligus", () => {
