@@ -77,3 +77,26 @@ test("a non-numeric quote id is refused before anything is sent", () => {
   expect(message).toContain("reply_to");
   expect(message).toContain("never ask the user");
 });
+
+import { planSendOptionsFor } from "../../src/engine/engine";
+
+// Keyboard di potongan tengah menggantung di atas teks lanjutan.
+test("tombol hanya menempel di potongan terakhir", () => {
+  const kb = { inline_keyboard: [] } as any;
+  expect(planSendOptionsFor(0, 3, kb, undefined)?.reply_markup).toBeUndefined();
+  expect(planSendOptionsFor(1, 3, kb, undefined)?.reply_markup).toBeUndefined();
+  expect(planSendOptionsFor(2, 3, kb, undefined)?.reply_markup).toBeDefined();
+});
+
+// Yang dijawab adalah balasannya secara keseluruhan, bukan potongan ke-3.
+test("kutipan hanya menempel di potongan pertama", () => {
+  expect(planSendOptionsFor(0, 3, undefined, "89")?.reply_parameters).toEqual({ message_id: 89 });
+  expect(planSendOptionsFor(1, 3, undefined, "89")).toBeUndefined();
+  expect(planSendOptionsFor(2, 3, undefined, "89")).toBeUndefined();
+});
+
+test("satu potongan membawa keduanya sekaligus", () => {
+  const opts = planSendOptionsFor(0, 1, { inline_keyboard: [] } as any, "89");
+  expect(opts?.reply_markup).toBeDefined();
+  expect(opts?.reply_parameters).toEqual({ message_id: 89 });
+});

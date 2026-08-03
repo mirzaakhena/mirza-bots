@@ -33,6 +33,7 @@ import {
 import type { MessageSink, PushMessage } from "./sink";
 import { readCurrentSessionId } from "./session-file";
 import type { ButtonRow, HistoryMessage } from "./types";
+import { planParts } from "./chunk";
 
 /**
  * Everything cc-plugin needs from the Telegram side, in the shape its MCP tools
@@ -42,9 +43,17 @@ import type { ButtonRow, HistoryMessage } from "./types";
  * removed, not the contract, and server.ts should not have to know which one it
  * is talking to.
  */
+/** Apa yang benar-benar terkirim -- dipakai server untuk memberi umpan balik ke AI. */
+export interface ReplyResult {
+  /** Panjang CommonMark yang ditulis AI, bukan panjang setelah escaping. */
+  chars: number;
+  /** Berapa pesan Telegram yang keluar. 1 untuk sebagian besar balasan. */
+  parts: number;
+}
+
 export type Engine = {
   bot: string;
-  reply(text: string, buttons?: ButtonRow[], replyTo?: string): Promise<void>;
+  reply(text: string, buttons?: ButtonRow[], replyTo?: string): Promise<ReplyResult>;
   history(opts: {
     messageId: string;
     before?: number;
@@ -138,6 +147,28 @@ export function buildSendOptions(
     opts.reply_parameters = { message_id: id };
   }
   return Object.keys(opts).length > 0 ? opts : undefined;
+}
+
+/**
+ * Opsi kirim untuk potongan ke-`index` dari `total`.
+ *
+ * Aturannya dua, dan keduanya punya alasan yang terlihat di layar user:
+ * tombol hanya di potongan TERAKHIR (di tengah, keyboard menggantung di atas
+ * teks lanjutan), kutipan hanya di potongan PERTAMA (yang dijawab adalah
+ * balasannya secara keseluruhan).
+ *
+ * Dipisah jadi fungsi sendiri supaya kedua aturan itu bisa diuji tanpa
+ * menyentuh jaringan.
+ */
+export function planSendOptionsFor(
+  index: number,
+  total: number,
+  replyMarkup: InlineKeyboard | undefined,
+  replyTo: string | undefined
+): { reply_markup?: InlineKeyboard; reply_parameters?: { message_id: number } } | undefined {
+  const isFirst = index === 0;
+  const isLast = index === total - 1;
+  return buildSendOptions(isLast ? replyMarkup : undefined, isFirst ? replyTo : undefined);
 }
 
 export function startEngine(cwd: string): EngineStart {
@@ -393,7 +424,7 @@ export function startEngine(cwd: string): EngineStart {
     engine: {
       bot: botName,
 
-      async reply(text: string, buttons?: ButtonRow[], replyTo?: string): Promise<void> {
+      async reply(text: string, buttons?: ButtonRow[], replyTo?: string): Promise<ReplyResult> {
         const chatId = lastChatByBot.get(botName);
         if (!chatId) {
           throw new Error(
@@ -404,35 +435,62 @@ export function startEngine(cwd: string): EngineStart {
         // the numbered-list legend it looks for is written by the AI, and after
         // escaping every "1." has become "1\." -- the rule would stop matching
         // the very thing it exists to check.
+        //
+        // Also deliberately before CHUNKING: the legend and the buttons can land
+        // in different parts, and checking per-part would reject a perfectly
+        // narrated reply just because its list fell on the other side of a cut.
         const unnarrated = findMissingButtonNarration(text, buttons);
         if (unnarrated) throw new Error(unnarrated);
 
         const replyMarkup = buttons ? buildInlineKeyboard(buttons) : undefined;
-        const options = buildSendOptions(replyMarkup, replyTo);
+        const parts = planParts(text);
 
-        // Telegram rejects sends for plenty of reasons outside our control (429,
-        // blocked by the user, text over 4096 chars). Letting it reject means the
-        // tool call fails loudly instead of reporting a send that never happened.
-        const sent = await bot.api.sendMessage(chatId, commonMarkToMarkdownV2(text), {
-          ...(options ?? {}),
-          parse_mode: "MarkdownV2",
-        });
+        let sentCount = 0;
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i]!;
+          const options = planSendOptionsFor(i, parts.length, replyMarkup, replyTo);
 
-        // Never fatal. The message is already on the user's phone; throwing here
-        // would make the AI believe the send failed and send the whole thing
-        // again.
-        try {
-          storeOutgoing(conversationsDb, {
-            bot: botName,
-            chatId,
-            messageId: String(sent.message_id),
-            text,
-            sessionId: sink.sessionId(),
-            replyTo,
-          });
-        } catch (err) {
-          console.error(`cc-plugin: reply sent but not stored: ${err}`);
+          let sent;
+          try {
+            sent = await bot.api.sendMessage(chatId, part.wire, {
+              ...(options ?? {}),
+              // Absent, not false: a part that blew up under escaping is sent as
+              // plain text, and passing parse_mode would resurrect the 400 this
+              // fallback exists to avoid.
+              ...(part.mv2 ? { parse_mode: "MarkdownV2" as const } : {}),
+            });
+          } catch (err) {
+            // The parts already delivered CANNOT be recalled, so the error has to
+            // carry that number. Without it the next move is to resend the whole
+            // reply, and the user receives the first parts twice.
+            const reason = err instanceof Error ? err.message : String(err);
+            throw new Error(
+              `reply failed after ${sentCount} of ${parts.length} parts sent: ${reason}`
+            );
+          }
+          sentCount++;
+
+          // Never fatal. The message is already on the user's phone; throwing here
+          // would make the AI believe the send failed and send the whole thing
+          // again.
+          try {
+            storeOutgoing(conversationsDb, {
+              bot: botName,
+              chatId,
+              messageId: String(sent.message_id),
+              // The raw CommonMark of THIS part -- history must read back as what
+              // the AI wrote, never as the escaped wire form.
+              text: part.raw,
+              sessionId: sink.sessionId(),
+              // Only the first part carries the quote, so only its row records one.
+              replyTo: i === 0 ? replyTo : undefined,
+            });
+          } catch (err) {
+            console.error(`cc-plugin: reply part ${i + 1} sent but not stored: ${err}`);
+          }
         }
+
+        return { chars: text.length, parts: parts.length };
       },
 
       async history(opts): Promise<HistoryMessage[]> {
