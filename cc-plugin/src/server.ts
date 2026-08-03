@@ -47,11 +47,16 @@ export const REPLY_LENGTH_GUIDELINE = 1000;
  * bisa dipelajari -- ini yang menutup jarak antara aturan yang ditulis dan
  * aturan yang terasa. Hanya AI yang melihat baris ini; user tidak.
  */
-export function formatSendResult(result: { chars: number; parts: number }): string {
+export function formatSendResult(result: {
+  chars: number;
+  parts: number;
+  files: number;
+}): string {
   const parts = result.parts > 1 ? ` in ${result.parts} parts` : "";
   const over =
     result.chars > REPLY_LENGTH_GUIDELINE ? `, over the ${REPLY_LENGTH_GUIDELINE} guideline` : "";
-  return `sent (${result.chars} chars${parts}${over})`;
+  const files = result.files > 0 ? `, ${result.files} file${result.files > 1 ? "s" : ""}` : "";
+  return `sent (${result.chars} chars${parts}${over}${files})`;
 }
 
 // Lives in the MCP server's `instructions`, which Claude Code holds for the
@@ -95,6 +100,7 @@ export function buildServer(backend: ServerBackend): McpServer {
         "Optionally attach inline keyboard buttons as rows of {text, data} -- pressing a button delivers `data` back as the user's next message. " +
         "Pass `reply_to` with a Telegram message id to quote that message, e.g. when answering something said a while ago and the thread has moved on. " +
         "NEVER ask the user for a message id. They never see one: ids are an internal Telegram detail, not something a person can read off their screen. If you do not have an id, ask them to quote the message instead -- quoting delivers the id to you automatically. " +
+        "Attach files with `files`: an array of ABSOLUTE paths. Images (.jpg .jpeg .png .gif .webp) arrive as photos with an inline preview; anything else arrives as a document. Each file is its own Telegram message, sent after the text. `files` cannot be combined with `buttons` -- send the files first, then the buttons in a separate call. " +
         `Keep it short -- aim for about ${REPLY_LENGTH_GUIDELINE} characters. Long replies are split into several Telegram messages automatically, but that is a safety net, not a target: if the answer needs more room, send several focused \`reply\` calls that each stand on their own, rather than one long block.`,
       inputSchema: {
         text: z.string().min(1),
@@ -102,11 +108,12 @@ export function buildServer(backend: ServerBackend): McpServer {
           .array(z.array(z.object({ text: z.string().min(1), data: z.string().min(1) })))
           .optional(),
         reply_to: z.string().min(1).optional(),
+        files: z.array(z.string().min(1)).optional(),
       },
     },
-    async ({ text, buttons, reply_to }) => {
+    async ({ text, buttons, reply_to, files }) => {
       if (isUnavailable(backend)) return unavailableAnswer(backend);
-      const result = await backend.reply(text, buttons, reply_to);
+      const result = await backend.reply(text, buttons, reply_to, files);
       return { content: [{ type: "text", text: formatSendResult(result) }] };
     }
   );

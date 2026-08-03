@@ -384,20 +384,35 @@ describe("cc-plugin MCP server when the engine could not start", () => {
 import { formatSendResult, REPLY_LENGTH_GUIDELINE, SERVER_INSTRUCTIONS } from "../src/server";
 
 test("balasan pendek dilaporkan apa adanya, tanpa teguran", () => {
-  expect(formatSendResult({ chars: 642, parts: 1 })).toBe("sent (642 chars)");
+  expect(formatSendResult({ chars: 642, parts: 1, files: 0 })).toBe("sent (642 chars)");
+});
+
+test("hasil kirim menyebut jumlah berkas, supaya aturannya punya umpan balik", () => {
+  expect(formatSendResult({ chars: 636, parts: 1, files: 2 })).toBe("sent (636 chars, 2 files)");
+});
+
+test("satu berkas ditulis tunggal", () => {
+  expect(formatSendResult({ chars: 10, parts: 1, files: 1 })).toBe("sent (10 chars, 1 file)");
+});
+
+// Balasan teks biasa adalah mayoritas mutlak -- 110 dari 8.010 baris keluar yang
+// pernah membawa berkas. Barisnya tidak boleh jadi lebih berisik hanya karena
+// fitur ini ada.
+test("balasan tanpa berkas tidak menyebut berkas sama sekali", () => {
+  expect(formatSendResult({ chars: 10, parts: 1, files: 0 })).not.toContain("file");
 });
 
 // Aturan tanpa umpan balik akan luntur. Proyek ini sudah membayarnya sekali:
 // parameter `format` di sistem lama yang seharusnya diingat AI, sampai user
 // melihat **tebal** mendarat mentah di HP-nya.
 test("balasan yang lewat pedoman menyebutkan itu -- ke AI, bukan ke user", () => {
-  expect(formatSendResult({ chars: 1240, parts: 1 })).toBe(
+  expect(formatSendResult({ chars: 1240, parts: 1, files: 0 })).toBe(
     "sent (1240 chars, over the 1000 guideline)"
   );
 });
 
 test("balasan berpotongan menyebut jumlah pesannya", () => {
-  expect(formatSendResult({ chars: 5100, parts: 3 })).toBe(
+  expect(formatSendResult({ chars: 5100, parts: 3, files: 0 })).toBe(
     "sent (5100 chars in 3 parts, over the 1000 guideline)"
   );
 });
