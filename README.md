@@ -158,6 +158,32 @@ sesi).
 - **Identitas sesi dibaca, bukan dipotret.** Hook `SessionStart` menulis id sesi
   terbaru ke `sessions/<bot>.id`; engine membacanya tiap kali push. Tanpa ini,
   `/clear` membuat pesan berikutnya distempel id sesi lama — terukur 2026-08-02.
+- **Slash Telegram dicegat SESUDAH dicatat, tidak sebelum.** `/rename <nama>`
+  dan `/new <nama>` dari Telegram tidak lagi diteruskan ke AI: keduanya diolah
+  jadi payload dan ditulis ke `pending/` milik `cc-wrapper` (`/new` =
+  `[/clear, /rename <nama>]`, urutannya bagian dari kontrak). Slash yang **tidak**
+  dikenal tidak ditolak — ia dapat tombol **Kirim/Batal** lebih dulu, karena
+  sebagian slash CC interaktif dan injeksi yang membukanya lalu berhenti
+  meninggalkan TUI menggantung. **Urutan catat-lalu-cegat itu inti aturannya:**
+  sistem lama mencegat sebelum mencatat, dan biayanya nyata — audit membaca
+  `/switch` sebagai 0× dipakai padahal 139×. Karena `handleIncomingMessage`
+  mencatat **dan** mendorong ke AI dalam satu fungsi, jalur `deliver` punya opsi
+  `pushToAi`: yang ditekan hanya pendorongannya, pencatatan tetap tanpa syarat.
+  Indikator "typing…" ikut padam untuk slash — tidak ada giliran AI yang
+  disiapkan. Batas `callback_data` dijaga **55 byte** (prefiks `slash:go:`
+  memakan 9 dari 64 yang Telegram izinkan), dihitung per byte dan bukan per
+  karakter. Terverifikasi hidup 2026-08-04 pada `bot-uji`, enam dari enam
+  kriteria, diperiksa dari `conversations.db` dan `session-hook.log` — bukan
+  dari layar. Desainnya:
+  `mirza-marketplace/docs/superpowers/specs/2026-08-03-lapisan-slash-telegram-design.md`.
+  **`/switch` dan `/context` belum ada** — keduanya butuh daftar sesi bernama
+  dan jembatan statusline, dan itu tahap 2.
+- **Menu "/" didaftarkan ke Telegram.** `setMyCommands` dipanggil sekali saat
+  engine boot, daftarnya lahir dari `KNOWN_COMMANDS` — sumber yang sama yang
+  memutuskan apa yang dicegat, jadi menu dan perilaku tidak bisa berbeda
+  pendapat. Sengaja hanya memuat yang benar-benar bekerja: menu adalah papan
+  nama, bukan dapur. Panggilannya tidak fatal — bot yang menolak melayani pesan
+  karena gagal memperbarui menu menukar yang penting dengan yang tidak.
 - **Belum ditangani, disengaja:** voice note, video, video_note, dan sticker.
   Pesan jenis itu diabaikan diam-diam — kalau suatu hari muncul keluhan "kok
   bot-nya diam?", ini kandidat pertama yang diperiksa, bukan misteri baru.
@@ -241,7 +267,7 @@ Contoh keluaran:
   "locks": [{ "bot": "bot-uji", "pid": 41234, "alive": true }],
   "fleetTables": ["sessions", "handoffs", "injections", "bot_inbox", "incidents"],
   "conversationsReady": true,
-  "version": "0.8.0"
+  "version": "0.9.0"
 }
 ```
 
