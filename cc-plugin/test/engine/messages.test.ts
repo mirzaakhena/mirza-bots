@@ -460,16 +460,23 @@ describe("history and search (K-3: default to this session's own bot)", () => {
     expect(messages.some((m) => m.text.includes("bot-02"))).toBe(false);
   });
 
-  test("history crosses to another bot only when the bot parameter is given explicitly", () => {
+  // Dulu ada test kebalikannya: "menyeberang ke bot lain HANYA kalau parameter
+  // bot disebut" (K-3). Parameternya dibuang 2026-08-04, jadi yang dikunci
+  // sekarang justru KETIADAAN jalur itu -- menyeberang tidak mungkin, bukan
+  // sekadar tidak default. Sebuah argumen tambahan sengaja diselipkan lewat
+  // `as never` supaya test ini tetap membuktikan sesuatu andai seseorang
+  // menghidupkan parameternya lagi tanpa membaca komentar ini.
+  test("tidak ada jalan menyeberang ke bot lain, bahkan bila argumennya diselundupkan", () => {
     const res = handleHistoryRequest(
-      { messageId: "100", bot: "bot-02" },
+      { messageId: "100", bot: "bot-02" } as never,
       "bot-01",
       twoBots,
       seeded()
     );
 
     const messages = (res as { ok: true; messages: any[] }).messages;
-    expect(messages.every((m) => m.bot === "bot-02")).toBe(true);
+    expect(messages.length).toBeGreaterThan(0);
+    expect(messages.every((m) => m.bot === "bot-01")).toBe(true);
   });
 
   test("search defaults to the calling bot and never leaks another bot's messages", () => {
@@ -482,10 +489,15 @@ describe("history and search (K-3: default to this session's own bot)", () => {
   });
 
 
-  test("naming a bot that is not in the config is rejected rather than silently returning nothing", () => {
-    expect(
-      handleSearchRequest({ query: "backup", bot: "bot-99" }, "bot-01", twoBots, seeded())
-    ).toEqual({ ok: false, error: "unknown_bot" });
+  test("bot pemanggil yang tidak ada di config ditolak, bukan dijawab kosong", () => {
+    // "Tidak ada di config" sekarang hanya bisa terjadi pada bot pemanggilnya
+    // sendiri -- mis. config disunting sementara sesinya hidup. Dijawab error
+    // supaya AI bisa membedakan "tidak ada botnya" dari "tidak ada yang cocok";
+    // jawaban kosong membuat keduanya terlihat sama.
+    expect(handleSearchRequest({ query: "backup" }, "bot-99", twoBots, seeded())).toEqual({
+      ok: false,
+      error: "unknown_bot",
+    });
   });
 
   test("a malformed FTS query is answered with an error instead of throwing out of the handler", () => {
