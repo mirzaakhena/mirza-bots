@@ -29,9 +29,10 @@ export type HistoryMessage = {
 export type LockStatus = { bot: string; pid: number | null; alive: boolean };
 
 export type DoctorReport = {
-  botCount: number;
-  /** One entry per configured bot, held or not -- see doctor.ts for why. */
-  locks: LockStatus[];
+  /** Nama bot yang dilayani folder ini. Armada tidak lagi punya wakil tunggal. */
+  bot: string;
+  /** Siapa memegang token bot INI, kalau ada -- see doctor.ts for why. */
+  lock: LockStatus;
   conversationsReady: boolean;
   version: string;
 };

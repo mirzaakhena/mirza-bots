@@ -1,62 +1,58 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
-import { botCount } from "./config";
-import type { Config } from "./config";
-import { lockPath } from "./paths";
+import { botNameFrom, botPidPathIn } from "./paths";
 import type { DoctorReport, LockStatus } from "./types";
 
 /**
- * Who currently holds each bot's Telegram token.
+ * Siapa memegang token bot INI.
  *
- * This replaces the report's old `socketPath` field. "Is the daemon's socket
- * there?" is no longer a question anyone can ask; "which bots are actually being
- * served, and by which process?" is the thing that can now go wrong -- and it is
- * the reason the lock files were centralised under the fleet root instead of
- * left in each bot's folder.
+ * Dulu fungsi ini memetakan seluruh `config.bots`, dan itu memang alasan berkas
+ * lock dikumpulkan di satu folder: "siapa melayani apa" jadi satu kali listing
+ * alih-alih menyusuri enam folder. Sesudah state per-folder, pertanyaan itu
+ * tidak hilang -- ia berpindah keluar dari kode, ke `ls workspace/-/bot.pid`,
+ * yang bisa dijawab siapa pun tanpa menjalankan apa pun.
  *
- * Every configured bot appears, held or not. Omitting the unheld ones would make
- * "nobody is serving bot-03" look identical to "everything is fine".
+ * Yang tersisa di sini adalah pertanyaan yang memang milik proses ini: apakah
+ * ADA yang memegang tokenku, dan apakah ia masih hidup.
  */
-function readLocks(config: Config): LockStatus[] {
-  return Object.keys(config.bots).map((bot) => {
-    let pid: number | null = null;
+function readLock(botHome: string): LockStatus {
+  const bot = botNameFrom(botHome);
+  let pid: number | null = null;
+  try {
+    const parsed = parseInt(readFileSync(botPidPathIn(botHome), "utf8").trim(), 10);
+    if (Number.isInteger(parsed)) pid = parsed;
+  } catch {
+    // No lock file: nobody has claimed this bot's token.
+  }
+
+  let alive = false;
+  if (pid !== null) {
     try {
-      const parsed = parseInt(readFileSync(lockPath(bot), "utf8").trim(), 10);
-      if (Number.isInteger(parsed)) pid = parsed;
+      // Signal 0 checks existence without delivering anything.
+      process.kill(pid, 0);
+      alive = true;
     } catch {
-      // No lock file: nobody has claimed this bot's token in this fleet.
+      // Stale number left by a session that died without releasing. Reported
+      // as not alive rather than dropped -- a stale lock is a real finding.
     }
+  }
 
-    let alive = false;
-    if (pid !== null) {
-      try {
-        // Signal 0 checks existence without delivering anything.
-        process.kill(pid, 0);
-        alive = true;
-      } catch {
-        // Stale number left by a session that died without releasing. Reported
-        // as not alive rather than dropped -- a stale lock is a real finding.
-      }
-    }
-
-    return { bot, pid, alive };
-  });
+  return { bot, pid, alive };
 }
 
 export function buildDoctorReport(
-  config: Config,
+  botHome: string,
   conversationsDb: Database,
   version: string
 ): DoctorReport {
   const convTableRows = conversationsDb
     .query("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
     .all();
-  const conversationsReady = convTableRows.length === 1;
 
   return {
-    botCount: botCount(config),
-    locks: readLocks(config),
-    conversationsReady,
+    bot: botNameFrom(botHome),
+    lock: readLock(botHome),
+    conversationsReady: convTableRows.length === 1,
     version,
   };
 }

@@ -1,70 +1,79 @@
-import { afterEach, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { startEngine } from "../../src/engine/engine";
+import {
+  configPathIn,
+  botPidPathIn,
+  dataDirIn,
+  inboxDirIn,
+  logsDirIn,
+} from "../../src/engine/paths";
 
-afterEach(() => {
-  delete process.env.MIRZA_BOTS_HOME;
-});
-
-function fleetHome(bots: Record<string, { home: string; token: string }>): string {
-  const root = mkdtempSync(join(tmpdir(), "engine-"));
-  mkdirSync(join(root, "inbox"), { recursive: true });
-  // "utf8", never a BOM: PowerShell's Set-Content adds one by default and fleetd
-  // died on it three separate times (SCAR-026).
-  writeFileSync(join(root, "config.json"), JSON.stringify({ allowFrom: ["1"], bots }), "utf8");
-  return root;
+/**
+ * Sebuah folder bot: sebuah folder, dan config.json di dalamnya. Itu saja
+ * syaratnya sekarang -- tidak ada state root, tidak ada pendaftaran.
+ */
+function botFolder(name: string, config?: unknown): string {
+  const home = join(mkdtempSync(join(tmpdir(), "engine-")), name);
+  mkdirSync(home, { recursive: true });
+  if (config !== undefined) {
+    // "utf8", never a BOM: PowerShell's Set-Content adds one by default and the
+    // engine died on it three separate times (SCAR-026).
+    writeFileSync(configPathIn(home), JSON.stringify(config), "utf8");
+  }
+  return home;
 }
 
 // W-16, stated as a test: startup failure must produce a sentence, not a
 // vanished process. Every branch below returns rather than throws.
-test("refuses to start for a cwd that is no bot's home, and names the registered bots", () => {
-  const root = fleetHome({ "bot-01": { home: "C:\\elsewhere", token: "t" } });
-  process.env.MIRZA_BOTS_HOME = root;
-
-  const res = startEngine("C:\\not-a-bot");
+test("folder tanpa config.json ditolak dengan kalimat yang mengajari", () => {
+  const res = startEngine(botFolder("bukan-bot"));
 
   expect(res.ok).toBe(false);
   if (res.ok) throw new Error("expected failure");
-  expect(res.message).toContain("bot-01");
   expect(res.message).toContain("config.json");
+  expect(res.message).toContain("token");
 });
 
 test("a broken config produces a readable reason instead of a throw", () => {
-  const root = mkdtempSync(join(tmpdir(), "engine-"));
-  writeFileSync(join(root, "config.json"), "{ this is not json", "utf8");
-  process.env.MIRZA_BOTS_HOME = root;
+  const home = botFolder("bot-rusak");
+  writeFileSync(configPathIn(home), "{ this is not json", "utf8");
 
-  const res = startEngine("C:\\anything");
-
-  expect(res.ok).toBe(false);
-  if (res.ok) throw new Error("expected failure");
-  expect(res.message.toLowerCase()).toContain("config");
-});
-
-test("a missing config produces a readable reason too", () => {
-  process.env.MIRZA_BOTS_HOME = join(mkdtempSync(join(tmpdir(), "engine-")), "nothing-here");
-
-  const res = startEngine("C:\\anything");
+  const res = startEngine(home);
 
   expect(res.ok).toBe(false);
   if (res.ok) throw new Error("expected failure");
   expect(res.message.toLowerCase()).toContain("config");
 });
 
-test("a resolved bot claims the token lock under the fleet state root", () => {
-  const home = mkdtempSync(join(tmpdir(), "bot-home-"));
-  const root = fleetHome({ "bot-uji": { home, token: "123:fake" } });
-  process.env.MIRZA_BOTS_HOME = root;
+// Config lama membawa token bot LAIN. Menerimanya diam-diam akan membuat folder
+// ini melayani token yang bukan miliknya, dan gejalanya baru muncul saat dua
+// sesi berebut token yang sama (insiden 2026-08-04).
+test("config bentuk lama (daftar bots) ditolak, bukan diabaikan", () => {
+  const home = botFolder("bot-lama", {
+    allowFrom: ["1"],
+    bots: { "bot-01": { home: "C:\\elsewhere", token: "t" } },
+  });
 
-  const res = startEngine(home, "sess-1");
+  const res = startEngine(home);
+
+  expect(res.ok).toBe(false);
+  if (res.ok) throw new Error("expected failure");
+  expect(res.message.toLowerCase()).toContain("config");
+});
+
+test("nama bot adalah nama folder, dan lock-nya bot.pid di dalam folder itu", () => {
+  const home = botFolder("bot-uji", { token: "123:fake", allowFrom: ["1"] });
+
+  const res = startEngine(home);
 
   expect(res.ok).toBe(true);
   if (!res.ok) throw new Error(res.message);
   expect(res.engine.bot).toBe("bot-uji");
 
-  const lock = join(root, "locks", "bot-uji.pid");
+  const lock = botPidPathIn(home);
   expect(existsSync(lock)).toBe(true);
   expect(readFileSync(lock, "utf8")).toBe(String(process.pid));
 
@@ -73,12 +82,41 @@ test("a resolved bot claims the token lock under the fleet state root", () => {
   expect(existsSync(lock)).toBe(false);
 });
 
+test("folder bot menyiapkan data/, inbox/, dan logs/ miliknya sendiri", () => {
+  const home = botFolder("bot-siap", { token: "123:fake", allowFrom: ["1"] });
+
+  const res = startEngine(home);
+  if (!res.ok) throw new Error(res.message);
+
+  expect(existsSync(dataDirIn(home))).toBe(true);
+  expect(existsSync(inboxDirIn(home))).toBe(true);
+  expect(existsSync(logsDirIn(home))).toBe(true);
+
+  res.engine.close();
+});
+
+// Pagar terhadap kembalinya state terpusat lewat pintu belakang. Membaca, tidak
+// pernah menulis: ~/.claude/mirza-bots masih milik sistem produksi selama
+// migrasi belum dijalankan.
+test("tidak membuat apa pun di dalam ~/.claude/mirza-bots", () => {
+  const stateRootLama = join(homedir(), ".claude", "mirza-bots");
+  const sebelum = existsSync(stateRootLama);
+
+  const home = botFolder("bot-bersih", { token: "123:fake", allowFrom: [] });
+  const res = startEngine(home);
+  if (!res.ok) throw new Error(res.message);
+  res.engine.close();
+
+  // Kalau foldernya memang sudah ada dari sistem lama, yang dibuktikan adalah
+  // engine tidak MEMBUATNYA -- bukan bahwa ia tidak ada.
+  expect(existsSync(stateRootLama)).toBe(sebelum);
+});
+
 // Polling starts before the MCP server finishes connecting. Dropping messages in
 // that window would look exactly like the bot ignoring the first thing you said
 // after opening a session.
 test("messages arriving before onPush registers are held, then delivered in order", () => {
-  const home = mkdtempSync(join(tmpdir(), "bot-home-"));
-  process.env.MIRZA_BOTS_HOME = fleetHome({ "bot-uji": { home, token: "123:fake" } });
+  const home = botFolder("bot-uji", { token: "123:fake", allowFrom: ["1"] });
 
   const res = startEngine(home);
   if (!res.ok) throw new Error(res.message);
@@ -91,8 +129,7 @@ test("messages arriving before onPush registers are held, then delivered in orde
 });
 
 test("reply before any message has arrived explains itself instead of guessing a chat", async () => {
-  const home = mkdtempSync(join(tmpdir(), "bot-home-"));
-  process.env.MIRZA_BOTS_HOME = fleetHome({ "bot-uji": { home, token: "123:fake" } });
+  const home = botFolder("bot-uji", { token: "123:fake", allowFrom: ["1"] });
 
   const res = startEngine(home);
   if (!res.ok) throw new Error(res.message);

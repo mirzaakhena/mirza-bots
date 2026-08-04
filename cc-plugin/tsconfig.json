@@ -1,0 +1,26 @@
+{
+  // Ada supaya `bunx tsc --noEmit` bisa dijalankan tanpa mengarang ulang
+  // flag-nya tiap sesi. `bun test` TIDAK memeriksa tipe: pada 2026-08-04
+  // sebuah array literal-union yang menolak `push` lolos dari 377 test hijau
+  // dan hanya tertangkap pemeriksaan tsc ad-hoc. Disalin dari cc-wrapper,
+  // yang sudah punya berkas ini sejak fondasinya.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ESNext"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+
+    "strict": true,
+    "skipLibCheck": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+
+    "types": ["bun"]
+  },
+  "include": ["src", "test", "bin", "hooks", "scripts"]
+}

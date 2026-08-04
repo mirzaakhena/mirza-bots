@@ -166,12 +166,15 @@ describe("session_id column", () => {
 describe("history queries", () => {
   function seed() {
     const db = openConversationsDb(":memory:");
+    // Nama bot yang berbeda di SATU berkas bukan skenario buatan: sesudah state
+    // per-folder, memindahkan bot = rename folder, dan kolom `bot` menyimpan
+    // nama saat baris ditulis. Berkas ini tetap milik satu bot.
     const rows: Array<[string, string, string]> = [
-      ["bot-01", "100", "pesan pertama"],
-      ["bot-01", "101", "pesan kedua tentang backup"],
-      ["bot-01", "102", "pesan ketiga"],
-      ["bot-01", "103", "pesan keempat"],
-      ["bot-02", "200", "rahasia bot lain tentang backup"],
+      ["nama-lama", "100", "pesan pertama"],
+      ["nama-lama", "101", "pesan kedua tentang backup"],
+      ["nama-baru", "102", "pesan ketiga"],
+      ["nama-baru", "103", "pesan keempat"],
+      ["nama-baru", "200", "pesan kelima tentang backup"],
     ];
     for (const [bot, messageId, text] of rows) {
       insertMessage(db, { ts: "2026-07-31T00:00:00Z", bot, chatId: "111", source: "user", messageId, text });
@@ -180,7 +183,7 @@ describe("history queries", () => {
   }
 
   test("returns the anchor message and the ones after it", () => {
-    const found = getMessagesAround(seed(), { bot: "bot-01", messageId: "101", before: 0, after: 2 });
+    const found = getMessagesAround(seed(), { messageId: "101", before: 0, after: 2 });
 
     // "trace a few messages after the one I quoted" -- the exact request spec §9.2
     // uses as the proof that message_id is useful rather than merely stored.
@@ -188,7 +191,7 @@ describe("history queries", () => {
   });
 
   test("includes preceding messages when before is greater than zero, in chronological order", () => {
-    const found = getMessagesAround(seed(), { bot: "bot-01", messageId: "102", before: 2, after: 1 });
+    const found = getMessagesAround(seed(), { messageId: "102", before: 2, after: 1 });
 
     expect(found.map((m) => m.messageId)).toEqual(["100", "101", "102", "103"]);
   });
@@ -196,23 +199,25 @@ describe("history queries", () => {
   test("an unknown message id returns nothing rather than the newest messages", () => {
     // Silently falling back to "here is some history" would let the AI answer a
     // question about a message that was never found, with confident wrong data.
-    expect(getMessagesAround(seed(), { bot: "bot-01", messageId: "999", before: 5, after: 5 })).toEqual([]);
+    expect(getMessagesAround(seed(), { messageId: "999", before: 5, after: 5 })).toEqual([]);
   });
 
-  test("never returns another bot's messages, even when their ids are adjacent", () => {
-    const found = getMessagesAround(seed(), { bot: "bot-01", messageId: "103", before: 0, after: 5 });
+  // Dulu test ini berbunyi "never returns another bot's messages". Asumsinya --
+  // satu database memuat banyak bot -- hilang bersama keputusan per-folder.
+  // Yang dijaga sekarang kebalikannya, dan bahayanya nyata: penyaring `bot`
+  // yang tertinggal akan membuang riwayat DIAM-DIAM begitu foldernya di-rename.
+  test("baris bernama bot lama tetap terbaca sesudah rename", () => {
+    const found = getMessagesAround(seed(), { messageId: "103", before: 5, after: 0 });
 
-    expect(found.every((m) => m.bot === "bot-01")).toBe(true);
+    expect(found.map((m) => m.messageId)).toEqual(["100", "101", "102", "103"]);
+    expect(found.some((m) => m.bot === "nama-lama")).toBe(true);
   });
 
-  test("searchMessages filters by bot and honours limit", () => {
+  test("searchMessages honours limit dan tidak menyaring per bot", () => {
     const db = seed();
 
-    expect(searchMessages(db, "backup").length).toBe(2); // both bots, unfiltered
-    const mine = searchMessages(db, "backup", { bot: "bot-01" });
-    expect(mine.length).toBe(1);
-    expect(mine[0]?.bot).toBe("bot-01");
-    expect(searchMessages(db, "pesan", { bot: "bot-01", limit: 2 }).length).toBe(2);
+    expect(searchMessages(db, "backup").length).toBe(2);
+    expect(searchMessages(db, "pesan", { limit: 2 }).length).toBe(2);
   });
 
   test("a malformed FTS query throws rather than corrupting results, so callers can catch it", () => {

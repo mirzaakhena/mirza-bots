@@ -23,7 +23,7 @@ describe("cc-plugin MCP server", () => {
     const client = fakeEngine({
       reply: async (text: string) => {
         replied.push(text);
-        return { chars: text.length, parts: 1 };
+        return { chars: text.length, parts: 1, files: 0 };
       },
     });
     const server = buildServer(client);
@@ -46,7 +46,7 @@ describe("cc-plugin MCP server", () => {
     const client = fakeEngine({
       reply: async (text: string, buttons?: any) => {
         calls.push({ text, buttons });
-        return { chars: text.length, parts: 1 };
+        return { chars: text.length, parts: 1, files: 0 };
       },
     });
     const server = buildServer(client);

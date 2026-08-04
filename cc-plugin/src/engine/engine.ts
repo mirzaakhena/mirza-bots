@@ -1,25 +1,25 @@
 import type { Context, Filter, InlineKeyboard } from "grammy";
 import { InputFile } from "grammy";
 import type { Database } from "bun:sqlite";
-import { statSync } from "node:fs";
+import { statSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  ensureStateDirs,
-  configPath,
-  conversationsDbPath,
-  stateRoot,
-  lockPath,
-  statusPath,
-  chainedStatuslinePath,
+  ensureBotDirs,
+  configPathIn,
+  conversationsDbPathIn,
+  dataDirIn,
+  botPidPathIn,
+  statusPathIn,
+  chainedStatuslinePathIn,
 } from "./paths";
 import { installBridge, buildBridgeCommand, pluginRootFrom } from "./context/install";
 import { readCapturedStatus } from "./context/status-file";
 import { renderContext } from "./context/render";
 import { waitForCapture } from "./context/wait";
 import { loadConfig } from "./config";
-import { resolveBotByCwd } from "./identity";
+import { identifyBot } from "./identity";
 import { acquireBotLock, releaseBotLock } from "./lock";
 import { openConversationsDb, insertMessage, encodeMetadata } from "./db/conversations-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
@@ -87,13 +87,8 @@ export type Engine = {
     replyTo?: string,
     files?: string[]
   ): Promise<ReplyResult>;
-  history(opts: {
-    messageId: string;
-    before?: number;
-    after?: number;
-    bot?: string;
-  }): Promise<HistoryMessage[]>;
-  search(opts: { query: string; limit?: number; bot?: string }): Promise<HistoryMessage[]>;
+  history(opts: { messageId: string; before?: number; after?: number }): Promise<HistoryMessage[]>;
+  search(opts: { query: string; limit?: number }): Promise<HistoryMessage[]>;
   onPush(handler: (msg: PushMessage) => void): void;
   close(): void;
 };
@@ -105,9 +100,10 @@ export type EngineStart = { ok: true; engine: Engine } | { ok: false; message: s
  *
  * Two things differ from the daemon this replaces:
  *
- *  - it polls exactly ONE bot -- the one whose home is this session's cwd --
- *    rather than iterating every entry in config.bots. The fleet is still one
- *    config and one database; what is no longer shared is the process.
+ *  - it polls exactly ONE bot: the folder it was handed. Tidak ada lagi
+ *    `config.bots` untuk diiterasi, dan tidak ada lagi config maupun database
+ *    bersama -- folder itu SENDIRI yang memuat token, riwayat, lock, dan
+ *    statusnya. "Bot mana aku?" dijawab nama folder, bukan pencocokan path.
  *
  *  - every failure comes back as a sentence, never thrown. A thrown startup
  *    error is precisely what made cc-plugin vanish without a word (W-16), and a
@@ -309,21 +305,23 @@ export function prepareReply(
   return { parts: planParts(text), planned };
 }
 
-export function startEngine(cwd: string): EngineStart {
-  let config;
-  try {
-    ensureStateDirs();
-    config = loadConfig(configPath());
-  } catch (err) {
-    return { ok: false, message: `Cannot read the fleet config: ${(err as Error).message}` };
-  }
-
-  const identity = resolveBotByCwd(config, cwd);
+export function startEngine(botHome: string): EngineStart {
+  // Identitas DULU, config belakangan. Folder yang bukan bot harus dijawab
+  // "ini bukan folder bot", bukan "config tidak bisa dibaca" -- yang kedua
+  // terdengar seperti kerusakan padahal keadaannya sah.
+  const identity = identifyBot(botHome, existsSync(configPathIn(botHome)));
   if (!identity.ok) return { ok: false, message: identity.message };
   const botName = identity.bot;
-  const botConfig = config.bots[botName]!;
 
-  const takeover = acquireBotLock(lockPath(botName), process.pid);
+  let config;
+  try {
+    ensureBotDirs(botHome);
+    config = loadConfig(configPathIn(botHome));
+  } catch (err) {
+    return { ok: false, message: `Cannot read this bot's config: ${(err as Error).message}` };
+  }
+
+  const takeover = acquireBotLock(botPidPathIn(botHome), process.pid);
   if (takeover.previousPid !== null) {
     // Said out loud on purpose: from the older session's side this looks like
     // Telegram going quiet for no reason, and that silence is indistinguishable
@@ -334,7 +332,7 @@ export function startEngine(cwd: string): EngineStart {
     );
   }
 
-  const conversationsDb = openConversationsDb(conversationsDbPath());
+  const conversationsDb = openConversationsDb(conversationsDbPathIn(botHome));
 
   // Held until onPush registers a handler rather than dropped: polling starts
   // before the MCP server finishes connecting, and losing that window would look
@@ -345,19 +343,24 @@ export function startEngine(cwd: string): EngineStart {
     push: (msg) => (handler ? handler(msg) : buffered.push(msg)),
     // Read per push, never captured: /clear replaces the session without
     // restarting this process. See session-file.ts for the measurement.
-    sessionId: () => readCurrentSessionId(botName),
+    sessionId: () => readCurrentSessionId(botHome),
   };
 
-  const bot = makeBot(botConfig.token);
+  const bot = makeBot(config.token);
 
   // Indikator "typing...". Pakai `bot.api` langsung, bukan lewat helper kirim
   // apa pun: ini bukan pesan, tidak disimpan ke riwayat, dan tidak boleh ikut
   // jalur mana pun yang punya efek samping.
   const typing = createTypingKeepalive({
-    send: chatId => bot.api.sendChatAction(chatId, "typing"),
+    // `await`, bukan mengembalikan langsung: sendChatAction menjawab
+    // Promise<true>, dan kontrak `send` adalah Promise<void>. bun test tidak
+    // memeriksa tipe, jadi ketidakcocokan ini hidup tenang sampai tsc dipasang.
+    send: async chatId => {
+      await bot.api.sendChatAction(chatId, "typing");
+    },
   });
 
-  const deps: PollerDeps = { config, conversationsDb, sink, inboxRoot: stateRoot() };
+  const deps: PollerDeps = { config, conversationsDb, sink, dataDir: dataDirIn(botHome) };
 
   // Tracks the chat `reply` answers. Written ONLY by deliverIncoming, strictly
   // after the allowlist gate accepted the message -- writing it before the gate
@@ -444,7 +447,7 @@ export function startEngine(cwd: string): EngineStart {
     if (!accepted || !isSlash) return;
 
     const outcome = handleSlash(ctx.message.text, {
-      projectDir: botConfig.home,
+      projectDir: botHome,
       newId: () => randomUUID(),
     });
     if (outcome.kind === "passthrough") return;
@@ -457,7 +460,7 @@ export function startEngine(cwd: string): EngineStart {
       return;
     }
     if (outcome.kind === "local") {
-      await replyLocalContext(ctx, botName, botConfig.home);
+      await replyLocalContext(ctx, botHome);
       return;
     }
     await ctx.reply(outcome.prompt, {
@@ -477,7 +480,7 @@ export function startEngine(cwd: string): EngineStart {
     // (grammy picks photo[photo.length - 1] internally) -- no manual selection needed.
     const file = await ctx.getFile();
     if (!file.file_path) return;
-    const url = fileUrl(botConfig.token, file.file_path);
+    const url = fileUrl(config.token, file.file_path);
 
     const mediaGroupId = ctx.message.media_group_id;
     if (mediaGroupId) {
@@ -548,7 +551,7 @@ export function startEngine(cwd: string): EngineStart {
       normalizeMessage(botName, ids, {
         ...common,
         documents: [
-          { url: fileUrl(botConfig.token, file.file_path), fileName, sizeBytes: doc.file_size },
+          { url: fileUrl(config.token, file.file_path), fileName, sizeBytes: doc.file_size },
         ],
       })
     );
@@ -591,7 +594,7 @@ export function startEngine(cwd: string): EngineStart {
     if (accepted && slashTap !== null) {
       if (slashTap.kind === "go") {
         const outcome = handleConfirm(slashTap.command, {
-          projectDir: botConfig.home,
+          projectDir: botHome,
           newId: () => randomUUID(),
         });
         if (outcome.kind === "sent") await ctx.reply(outcome.ack);
@@ -750,7 +753,7 @@ export function startEngine(cwd: string): EngineStart {
       },
 
       async history(opts): Promise<HistoryMessage[]> {
-        const res = handleHistoryRequest(opts, botName, config, conversationsDb);
+        const res = handleHistoryRequest(opts, conversationsDb);
         // Thrown, not returned as {ok:false}: the caller awaits a value now
         // instead of reading one line off a socket, and "the query was refused"
         // must not arrive looking like "nothing matched".
@@ -759,7 +762,7 @@ export function startEngine(cwd: string): EngineStart {
       },
 
       async search(opts): Promise<HistoryMessage[]> {
-        const res = handleSearchRequest(opts, botName, config, conversationsDb);
+        const res = handleSearchRequest(opts, conversationsDb);
         if (!res.ok) throw new Error(res.error);
         return res.messages;
       },
@@ -771,7 +774,7 @@ export function startEngine(cwd: string): EngineStart {
 
       close(): void {
         typing.stopAll();
-        releaseBotLock(lockPath(botName), process.pid);
+        releaseBotLock(botPidPathIn(botHome), process.pid);
         conversationsDb.close();
       },
     },
@@ -798,16 +801,18 @@ export function startEngine(cwd: string): EngineStart {
  */
 async function replyLocalContext(
   ctx: { reply: (text: string) => Promise<unknown> },
-  botName: string,
-  projectDir: string
+  botHome: string
 ): Promise<void> {
   const install = installBridge({
-    projectDir,
+    // Folder bot ADALAH project dir-nya. Dulu keduanya dilewatkan terpisah
+    // (botName untuk berkas tangkapan, home untuk settings), dan dua sumber
+    // untuk satu fakta selalu bisa berbeda pendapat.
+    projectDir: botHome,
     userSettingsPath: join(homedir(), ".claude", "settings.json"),
     bridgeCommand: buildBridgeCommand(
       pluginRootFrom(process.env.CLAUDE_PLUGIN_ROOT, import.meta.url)
     ),
-    chainPath: chainedStatuslinePath(),
+    chainPath: chainedStatuslinePathIn(botHome),
   });
 
   if (install.kind === "refused" || install.kind === "rolled-back") {
@@ -824,7 +829,7 @@ async function replyLocalContext(
     return;
   }
 
-  const path = statusPath(botName);
+  const path = statusPathIn(botHome);
   const ready = readCapturedStatus(path);
   if (ready !== null) {
     await ctx.reply(renderContext(ready, Date.now()));

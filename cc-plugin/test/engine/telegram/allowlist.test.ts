@@ -3,8 +3,8 @@ import { isAllowed } from "../../../src/engine/telegram/allowlist";
 import type { Config } from "../../../src/engine/config";
 
 const config: Config = {
+  token: "t",
   allowFrom: ["111", "222"],
-  bots: { "bot-01": { home: "/tmp/bot-01", token: "t" } },
 };
 
 describe("allowlist", () => {

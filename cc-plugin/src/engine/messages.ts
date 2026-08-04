@@ -1,7 +1,6 @@
 import { Bot, InlineKeyboard } from "grammy";
 import type { MessageEntity } from "grammy/types";
 import type { Database } from "bun:sqlite";
-import type { Config } from "./config";
 import { getMessagesAround, searchMessages } from "./db/conversations-schema";
 import {
   handleIncomingMessage,
@@ -69,40 +68,26 @@ export function normalizeMessage(
 }
 
 /**
- * Memastikan bot pemanggil memang terdaftar.
+ * Riwayat sekarang selalu milik bot pemanggilnya, tanpa perlu diperiksa.
  *
- * Dulu fungsi ini juga menerima nama bot LAIN: K-3 membolehkan "mengintip"
- * percakapan bot tetangga lewat parameter `bot` yang eksplisit. Parameter itu
- * dibuang 2026-08-04 atas keputusan user, bersama keputusan bahwa tiap bot
- * memegang `conversations.db`-nya sendiri di foldernya sendiri — sesudah itu
- * "bot lain" tidak ada di berkas ini, jadi parameternya menjanjikan sesuatu
- * yang tidak bisa ia berikan.
+ * Dulu di sini ada `resolveOwnBot`, yang memastikan bot pemanggil terdaftar di
+ * `config.bots`, dan sebelumnya lagi ada parameter `bot` untuk "mengintip"
+ * percakapan tetangga (K-3). Keduanya berdiri di atas satu database bersama.
+ * Sesudah state per-folder, `db` yang dilewatkan ADALAH berkas milik bot ini —
+ * "bot lain" tidak punya tempat di dalamnya, jadi tidak ada yang perlu
+ * ditolak, dan penolakan yang tidak menolak apa pun cuma jalur mati.
  *
- * Diukur sebelum dibuang: seluruh riwayat sistem baru memuat 136 baris milik
- * satu bot dan 1 baris nyasar dari percobaan awal — lintas-bot belum pernah
- * benar-benar terjadi.
+ * Diukur sebelum parameter `bot` dibuang (2026-08-04): seluruh riwayat sistem
+ * baru memuat 136 baris milik satu bot dan 1 baris nyasar dari percobaan awal —
+ * lintas-bot belum pernah benar-benar terjadi.
  */
-function resolveOwnBot(
-  ownBot: string,
-  config: Config
-): { ok: true; bot: string } | { ok: false; error: string } {
-  if (!(ownBot in config.bots)) return { ok: false, error: "unknown_bot" };
-  return { ok: true, bot: ownBot };
-}
-
 export function handleHistoryRequest(
   req: { messageId: string; before?: number; after?: number },
-  ownBot: string,
-  config: Config,
   db: Database
 ): MessagesResult {
-  const target = resolveOwnBot(ownBot, config);
-  if (!target.ok) return target;
-
   return {
     ok: true,
     messages: getMessagesAround(db, {
-      bot: target.bot,
       messageId: req.messageId,
       before: req.before ?? 0,
       // Defaults to looking forward: the motivating request is "trace a few
@@ -114,15 +99,10 @@ export function handleHistoryRequest(
 
 export function handleSearchRequest(
   req: { query: string; limit?: number },
-  ownBot: string,
-  config: Config,
   db: Database
 ): MessagesResult {
-  const target = resolveOwnBot(ownBot, config);
-  if (!target.ok) return target;
-
   try {
-    return { ok: true, messages: searchMessages(db, req.query, { bot: target.bot, limit: req.limit ?? 20 }) };
+    return { ok: true, messages: searchMessages(db, req.query, { limit: req.limit ?? 20 }) };
   } catch (err) {
     // FTS5 rejects plenty of ordinary-looking input (an unbalanced quote, a
     // trailing AND). The AI writes these queries, so name the problem in a way

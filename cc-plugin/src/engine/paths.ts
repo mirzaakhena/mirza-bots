@@ -1,74 +1,110 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 
-export function stateRoot(): string {
-  return process.env.MIRZA_BOTS_HOME ?? join(homedir(), ".claude", "mirza-bots");
+/**
+ * Folder bot yang sedang dilayani proses ini.
+ *
+ * Murni: env dilewatkan pemanggil, bukan dibaca di sini. Itu yang membuat
+ * seluruh modul ini bisa diuji tanpa menyentuh process.env sama sekali --
+ * pengganti MIRZA_BOTS_HOME yang lama, yang harus di-`delete` di afterEach dan
+ * bocor antar-berkas test kalau lupa.
+ *
+ * MIRZA_BOTS_HOME sendiri hilang tanpa pengganti: ia ada untuk memindahkan
+ * STATE ROOT, dan tidak ada lagi state root untuk dipindahkan.
+ */
+export function resolveBotHome(
+  // Record, bukan objek satu-field: `process.env` bertipe ProcessEnv, dan tsc
+  // menolak melewatkannya ke bentuk yang lebih sempit ("no properties in
+  // common"). Ini persis kelas error yang `bun test` tidak bisa lihat.
+  env: Record<string, string | undefined>,
+  cwd: string
+): string {
+  const fromEnv = env.CLAUDE_PROJECT_DIR?.trim();
+  return fromEnv ? fromEnv : cwd;
 }
 
-export function configPath(): string {
-  return join(stateRoot(), "config.json");
+/**
+ * Nama bot = nama folder. Bukan singkatan, bukan pemetaan.
+ *
+ * Konsekuensi langsung dari "alamat bot lain = folder tetangga": kalau nama bot
+ * bukan nama foldernya, `../<nama-bot>/inbox/` butuh terjemahan, terjemahan
+ * butuh daftar, dan daftar itu persis yang keputusan ini buang.
+ *
+ * Efek samping yang diinginkan: memindahkan bot = rename folder. Migrasi
+ * `bot-uji` -> `mirza_01_bot` pada 2026-08-04 menyentuh lima tempat plus dua
+ * database; itu yang membuat keputusan state terpusat dibalik.
+ */
+export function botNameFrom(botHome: string): string {
+  const normalized = botHome.split("\\").join("/").replace(/\/+$/, "");
+  return normalized.slice(normalized.lastIndexOf("/") + 1);
 }
 
-export function conversationsDbPath(): string {
-  return join(stateRoot(), "conversations.db");
+export function configPathIn(botHome: string): string {
+  return join(botHome, "config.json");
 }
 
-export function inboxDir(bot: string): string {
-  return join(stateRoot(), "inbox", bot);
+export function conversationsDbPathIn(botHome: string): string {
+  return join(botHome, "conversations.db");
 }
 
-export function logsDir(): string {
-  return join(stateRoot(), "logs");
+/**
+ * Ditulis hook SessionStart, dibaca engine tiap push. Dulu `sessions/<bot>.id`.
+ *
+ * Terpisah dari lock dengan sengaja: lock menjawab "PROSES mana yang memegang
+ * token ini", berkas ini menjawab "SESI mana yang sedang ditampilkan jendela
+ * proses itu" -- dan yang kedua berubah tanpa yang pertama bergeser sama sekali.
+ */
+export function sessionIdPathIn(botHome: string): string {
+  return join(botHome, "session.id");
 }
 
-// Centralised on purpose. The old system kept each bot's pid file inside that
-// bot's own folder, which is the scattered-state pattern this rewrite exists to
-// undo: with them gathered here, "who currently holds which token" is one
-// directory listing rather than six.
-export function locksDir(): string {
-  return join(stateRoot(), "locks");
+/** Ditulis bridge statusline, dibaca engine saat menjawab /context. Dulu `status/<bot>.json`. */
+export function statusPathIn(botHome: string): string {
+  return join(botHome, "status.json");
 }
 
-export function lockPath(bot: string): string {
-  return join(locksDir(), `${bot}.pid`);
+/**
+ * Statusline pendahulu yang WAJIB dipanggil bridge sesudah menangkap.
+ *
+ * Ikut pindah ke folder bot karena ia state, dan keputusannya berbunyi "seluruh
+ * state pindah ke folder masing-masing bot, tidak ada yang bersama". Ia juga
+ * sudah berpasangan satu-satu dengan status.json.
+ */
+export function chainedStatuslinePathIn(botHome: string): string {
+  return join(botHome, "chained-statusline");
 }
 
-// Written by the SessionStart hook, read by the engine on every push. Separate
-// from the lock on purpose: the lock answers "which PROCESS owns this token",
-// this answers "which SESSION that process's window is on" -- and the second
-// changes without the first moving at all.
-export function sessionsDir(): string {
-  return join(stateRoot(), "sessions");
+/** Pemegang token Telegram bot ini. Dulu `locks/<bot>.pid`. */
+export function botPidPathIn(botHome: string): string {
+  return join(botHome, "bot.pid");
 }
 
-export function currentSessionPath(bot: string): string {
-  return join(sessionsDir(), `${bot}.id`);
+/**
+ * Berkas & gambar yang dikirim user. Dulu bernama `inbox/`, dan itu salah nama
+ * sejak awal -- tidak ada yang "masuk kotak surat" di sana. Namanya diserahkan
+ * ke jalur antar-bot, yang memang kotak surat.
+ */
+export function dataDirIn(botHome: string): string {
+  return join(botHome, "data");
 }
 
-// Ditulis bridge statusline, dibaca engine saat menjawab /context. Terpusat
-// seperti sessions/ dan locks/ -- bukan di dalam folder project masing-masing.
-// Menyebarkannya per-folder adalah pola scattered-state yang justru dibongkar
-// rewrite ini: "apa status bot X" harus satu kali listing, bukan menyusuri enam
-// folder yang tidak saling tahu.
-export function statusDir(): string {
-  return join(stateRoot(), "status");
+/**
+ * Titipan pesan dari bot lain. Dipakai sebagaimana namanya.
+ *
+ * Antrean offline ikut gratis dari bentuk ini: bot yang mati tidak memindai,
+ * pesannya menunggu di folder, dan `ls inbox/` memperlihatkan berapa yang
+ * menunggu tanpa query apa pun.
+ */
+export function inboxDirIn(botHome: string): string {
+  return join(botHome, "inbox");
 }
 
-export function statusPath(bot: string): string {
-  return join(statusDir(), `${bot}.json`);
+export function logsDirIn(botHome: string): string {
+  return join(botHome, "logs");
 }
 
-// Statusline pendahulu yang WAJIB dipanggil bridge sesudah menangkap. Satu
-// berkas untuk seluruh armada: bridge-nya sama, dan yang digantikan selalu
-// statusline yang sama juga.
-export function chainedStatuslinePath(): string {
-  return join(statusDir(), "chained-statusline");
-}
-
-export function ensureStateDirs(): void {
-  const root = stateRoot();
-  for (const dir of [root, join(root, "inbox"), logsDir(), locksDir(), sessionsDir(), statusDir()]) {
+export function ensureBotDirs(botHome: string): void {
+  for (const dir of [dataDirIn(botHome), inboxDirIn(botHome), logsDirIn(botHome)]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }

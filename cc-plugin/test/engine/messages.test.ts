@@ -18,8 +18,8 @@ import type { PollerDeps } from "../../src/engine/telegram/poller";
 import type { Config } from "../../src/engine/config";
 
 const config: Config = {
+  token: "t",
   allowFrom: ["111"],
-  bots: { "bot-01": { home: "/tmp/bot-01", token: "t" } },
 };
 
 function makeDeps(): PollerDeps {
@@ -27,7 +27,7 @@ function makeDeps(): PollerDeps {
     config,
     conversationsDb: openConversationsDb(":memory:"),
     sink: new CollectingSink(),
-    inboxRoot: mkdtempSync(join(tmpdir(), "main-test-")),
+    dataDir: mkdtempSync(join(tmpdir(), "main-test-")),
   };
 }
 
@@ -316,7 +316,9 @@ describe("buildTappedMessageEdit (U-2: a tapped keyboard must not stay tappable)
   });
 
   test("carries the original entities through, so formatting survives the edit", () => {
-    const entities = [{ type: "bold", offset: 0, length: 5 }];
+    // `as const` pada type: MessageEntity grammy adalah union yang disempitkan
+    // oleh field itu, dan `string` polos cocok dengan tidak satu pun anggotanya.
+    const entities = [{ type: "bold" as const, offset: 0, length: 5 }];
     const edit = buildTappedMessageEdit({ text: "Pilih salah satu:", entities }, "confirm_no");
 
     // editMessageText treats the new text as plain, so an edit without entities
@@ -435,77 +437,46 @@ describe("findMissingButtonNarration (U-5: numbered buttons must be explained in
   });
 });
 
-describe("history and search (K-3: default to this session's own bot)", () => {
+describe("history and search (satu database per bot)", () => {
   function seeded() {
     const db = openConversationsDb(":memory:");
-    insertMessage(db, { ts: "t", bot: "bot-01", chatId: "111", source: "user", messageId: "100", text: "punya bot-01 tentang backup" });
-    insertMessage(db, { ts: "t", bot: "bot-01", chatId: "111", source: "user", messageId: "101", text: "lanjutan bot-01" });
-    insertMessage(db, { ts: "t", bot: "bot-02", chatId: "222", source: "user", messageId: "100", text: "punya bot-02 tentang backup" });
+    // Dua nama bot berbeda di SATU berkas: itu persis yang terjadi sesudah
+    // sebuah folder di-rename, karena kolom `bot` menyimpan nama saat baris
+    // ditulis. Sesudah state per-folder, berkas ini milik satu bot, jadi
+    // KEDUANYA harus terbaca.
+    insertMessage(db, { ts: "t", bot: "nama-lama", chatId: "111", source: "user", messageId: "100", text: "sebelum rename, soal backup" });
+    insertMessage(db, { ts: "t", bot: "nama-lama", chatId: "111", source: "user", messageId: "101", text: "lanjutannya" });
+    insertMessage(db, { ts: "t", bot: "nama-baru", chatId: "111", source: "user", messageId: "102", text: "sesudah rename, soal backup" });
     return db;
   }
-  const twoBots: Config = {
-    allowFrom: ["111"],
-    bots: { "bot-01": { home: "/tmp/bot-01", token: "t" }, "bot-02": { home: "/tmp/bot-02", token: "t" } },
-  };
 
-  test("history defaults to the calling bot and never leaks another bot's messages", () => {
-    const res = handleHistoryRequest({ messageId: "100" }, "bot-01", twoBots, seeded());
+  test("history membaca seluruh isi database ini, apa pun nilai kolom bot-nya", () => {
+    const res = handleHistoryRequest({ messageId: "101", before: 5, after: 5 }, seeded());
 
-    // bot-02 also has a message_id 100. Defaulting wrong here would hand one
-    // bot's private conversation to another bot's AI with no one asking for it.
     expect(res).toMatchObject({ ok: true });
     const messages = (res as { ok: true; messages: any[] }).messages;
-    expect(messages.length).toBeGreaterThan(0);
-    expect(messages.every((m) => m.bot === "bot-01")).toBe(true);
-    expect(messages.some((m) => m.text.includes("bot-02"))).toBe(false);
+    expect(messages.map((m) => m.messageId)).toEqual(["100", "101", "102"]);
   });
 
-  // Dulu ada test kebalikannya: "menyeberang ke bot lain HANYA kalau parameter
-  // bot disebut" (K-3). Parameternya dibuang 2026-08-04, jadi yang dikunci
-  // sekarang justru KETIADAAN jalur itu -- menyeberang tidak mungkin, bukan
-  // sekadar tidak default. Sebuah argumen tambahan sengaja diselipkan lewat
-  // `as never` supaya test ini tetap membuktikan sesuatu andai seseorang
-  // menghidupkan parameternya lagi tanpa membaca komentar ini.
-  test("tidak ada jalan menyeberang ke bot lain, bahkan bila argumennya diselundupkan", () => {
-    const res = handleHistoryRequest(
-      { messageId: "100", bot: "bot-02" } as never,
-      "bot-01",
-      twoBots,
-      seeded()
-    );
+  // Dulu ada test yang mengunci "menyeberang ke bot lain HANYA kalau parameter
+  // bot disebut" (K-3), lalu satu lagi yang mengunci KETIADAAN jalur itu.
+  // Keduanya berdiri di atas asumsi yang sekarang tidak ada: satu database
+  // memuat banyak bot. Yang dikunci sekarang adalah bahayanya yang sebenarnya --
+  // penyaring `bot` yang tertinggal akan membuang riwayat diam-diam begitu
+  // folder di-rename, dan rename adalah cara resmi memindahkan bot.
+  test("rename folder tidak membuang riwayat lama", () => {
+    const res = handleSearchRequest({ query: "backup" }, seeded());
 
     const messages = (res as { ok: true; messages: any[] }).messages;
-    expect(messages.length).toBeGreaterThan(0);
-    expect(messages.every((m) => m.bot === "bot-01")).toBe(true);
-  });
-
-  test("search defaults to the calling bot and never leaks another bot's messages", () => {
-    const res = handleSearchRequest({ query: "backup" }, "bot-01", twoBots, seeded());
-
-    const messages = (res as { ok: true; messages: any[] }).messages;
-    // Both bots have a message containing "backup"; only one is the caller's.
-    expect(messages.length).toBe(1);
-    expect(messages[0].bot).toBe("bot-01");
-  });
-
-
-  test("bot pemanggil yang tidak ada di config ditolak, bukan dijawab kosong", () => {
-    // "Tidak ada di config" sekarang hanya bisa terjadi pada bot pemanggilnya
-    // sendiri -- mis. config disunting sementara sesinya hidup. Dijawab error
-    // supaya AI bisa membedakan "tidak ada botnya" dari "tidak ada yang cocok";
-    // jawaban kosong membuat keduanya terlihat sama.
-    expect(handleSearchRequest({ query: "backup" }, "bot-99", twoBots, seeded())).toEqual({
-      ok: false,
-      error: "unknown_bot",
-    });
+    expect(messages.length).toBe(2);
   });
 
   test("a malformed FTS query is answered with an error instead of throwing out of the handler", () => {
     // Verified: an unbalanced quote makes SQLite throw. The AI writes these
     // queries, so this is a normal input, not an exotic one. Throwing here would
-    // reach the socket server's catch-all as handler_failed -- answerable, but
-    // useless to the AI, which cannot tell it should just rephrase.
-    const res = handleSearchRequest({ query: 'backup"' }, "bot-01", twoBots, seeded());
+    // reach the tool layer's catch-all -- answerable, but useless to the AI,
+    // which cannot tell it should just rephrase.
+    const res = handleSearchRequest({ query: 'backup"' }, seeded());
 
     expect(res).toMatchObject({ ok: false });
     expect((res as { ok: false; error: string }).error).toContain("bad_search_query");
