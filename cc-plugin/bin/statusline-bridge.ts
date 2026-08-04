@@ -26,6 +26,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { botForCwd } from "../src/engine/context/bot-for-cwd";
+import { planChainInvocation } from "../src/engine/context/invoke";
 import { writeCapturedStatus } from "../src/engine/context/status-file";
 import { chainedStatuslinePath, configPath, statusPath } from "../src/engine/paths";
 
@@ -62,6 +63,19 @@ if (existsSync(chainPath)) {
   // sempat diisi". Installer-lah yang menjamin bedanya: ia menolak memasang
   // kalau tidak yakin, jadi rantai kosong di sini sudah lolos pemeriksaan.
   if (chain) {
-    spawnSync(chain, { input, stdio: ["pipe", "inherit", "inherit"], shell: true });
+    const plan = planChainInvocation(chain);
+    spawnSync(plan.command, {
+      input,
+      stdio: ["pipe", "inherit", "inherit"],
+      shell: plan.shell,
+      // Tanpa ini, perintah yang ternyata membuka aplikasi GUI akan
+      // memunculkan jendela di wajah user, puluhan kali per menit.
+      windowsHide: true,
+      // Baris status yang menggantung MEMBEKUKAN tampilan Claude Code. Lebih
+      // baik statusline kosong sesaat daripada CC yang berhenti menggambar --
+      // dan ini bukan hipotetis: versi pertama menggantung dua menit penuh
+      // karena Windows membuka .sh alih-alih menjalankannya.
+      timeout: 5000,
+    });
   }
 }
