@@ -199,6 +199,65 @@ export function buildServer(backend: ServerBackend): McpServer {
     }
   );
 
+  server.registerTool(
+    "agent_send",
+    {
+      description:
+        "Send a message to ANOTHER BOT on this machine. This never touches Telegram: it does not appear on the user's phone, and it costs them nothing to read. " +
+        "Address it by folder name -- every bot is a sibling folder, and `agent_list` tells you which names exist. " +
+        "Set `expects_reply: true` only when you genuinely need an answer back, and only on a NEW message: a reply may not itself ask for a reply, and that rule is enforced, not advised. " +
+        "When you do use it, set a one-shot schedule in your own session to notice if the answer never arrives, cancel it when the answer lands, and on timeout tell the user -- you cannot decide alone between resending, picking another bot, and giving up. " +
+        "When you are ANSWERING an inter-bot message, pass `in_reply_to` set to its `agent_message_id` and `hop_count` one higher than the one it arrived with. " +
+        "If the target bot is not running, the message waits in its inbox folder until it is -- nothing is lost and nothing needs retrying.",
+      inputSchema: {
+        to: z.string().min(1),
+        text: z.string().min(1),
+        expects_reply: z.boolean().optional(),
+        in_reply_to: z.string().min(1).optional(),
+        hop_count: z.number().int().min(0).optional(),
+      },
+    },
+    async ({ to, text, expects_reply, in_reply_to, hop_count }) => {
+      if (isUnavailable(backend)) return unavailableAnswer(backend);
+      const result = backend.agentSend(to, text, {
+        ...(expects_reply !== undefined ? { expectsReply: expects_reply } : {}),
+        ...(in_reply_to !== undefined ? { inReplyTo: in_reply_to } : {}),
+        ...(hop_count !== undefined ? { hopCount: hop_count } : {}),
+      });
+      // Penolakan dijawab sebagai error, bukan sukses tanpa efek: "ditolak" dan
+      // "terkirim" yang terlihat sama membuat AI mengira pesannya sedang
+      // ditunggu bot lain padahal tidak pernah berangkat.
+      if (!result.ok) {
+        return { content: [{ type: "text" as const, text: result.error }], isError: true };
+      }
+      return {
+        content: [
+          { type: "text" as const, text: `titipan ${result.id} sudah masuk inbox ${to}` },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "agent_list",
+    {
+      description:
+        "List the other bots on this machine that you can reach with `agent_send`. The list is read from the parent folder every time -- there is no registry to fall out of date, and a folder counts as a bot when it contains config.json.",
+      inputSchema: {},
+    },
+    async () => {
+      if (isUnavailable(backend)) return unavailableAnswer(backend);
+      const peers = backend.agentPeers();
+      // Kalimat, bukan daftar kosong: "tidak ada tetangga" adalah keadaan sah
+      // dan harus terbaca berbeda dari kegagalan membaca folder induk.
+      const text =
+        peers.length === 0
+          ? "There are no other bots next to this one. Nothing to send to."
+          : `Bots you can reach: ${peers.join(", ")}.`;
+      return { content: [{ type: "text" as const, text }] };
+    }
+  );
+
   if (!isUnavailable(backend)) {
     backend.onPush((msg) => {
     // SCAR-056: Claude Code's notification meta schema is Record<string,string>

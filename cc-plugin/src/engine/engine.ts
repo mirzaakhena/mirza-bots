@@ -21,6 +21,8 @@ import { waitForCapture } from "./context/wait";
 import { loadConfig } from "./config";
 import { identifyBot } from "./identity";
 import { startInboxScanner } from "./agent/receive";
+import { sendToPeer, type SendResult } from "./agent/send";
+import { listPeers } from "./agent/peers";
 import { acquireBotLock, releaseBotLock } from "./lock";
 import { openConversationsDb, insertMessage, encodeMetadata } from "./db/conversations-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
@@ -90,6 +92,14 @@ export type Engine = {
   ): Promise<ReplyResult>;
   history(opts: { messageId: string; before?: number; after?: number }): Promise<HistoryMessage[]>;
   search(opts: { query: string; limit?: number }): Promise<HistoryMessage[]>;
+  /** Menitipkan satu pesan ke inbox bot tetangga. TIDAK menyentuh Telegram. */
+  agentSend(
+    to: string,
+    text: string,
+    opts: { expectsReply?: boolean; inReplyTo?: string; hopCount?: number }
+  ): SendResult;
+  /** Nama bot tetangga yang benar-benar ada, dibaca dari folder induk. */
+  agentPeers(): string[];
   onPush(handler: (msg: PushMessage) => void): void;
   close(): void;
 };
@@ -771,6 +781,25 @@ export function startEngine(botHome: string): EngineStart {
         const res = handleSearchRequest(opts, conversationsDb);
         if (!res.ok) throw new Error(res.error);
         return res.messages;
+      },
+
+      agentSend(to, text, opts): SendResult {
+        return sendToPeer(
+          botHome,
+          to,
+          {
+            text,
+            ...(opts.expectsReply !== undefined ? { expects_reply: opts.expectsReply } : {}),
+            ...(opts.inReplyTo !== undefined ? { in_reply_to: opts.inReplyTo } : {}),
+            ...(opts.hopCount !== undefined ? { hop_count: opts.hopCount } : {}),
+          },
+          () => new Date(),
+          () => randomUUID()
+        );
+      },
+
+      agentPeers(): string[] {
+        return listPeers(botHome);
       },
 
       onPush(fn: (msg: PushMessage) => void): void {

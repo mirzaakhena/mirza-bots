@@ -348,6 +348,45 @@ membuktikan "yang lama tidak ketinggalan".
 ⚠️ **Skrip ini belum pernah dijalankan atas state nyata.** Testnya memakai
 folder tiruan.
 
+## Bicara ke bot lain
+
+**Alamat bot lain adalah folder tetangganya.** Tidak ada registry, tidak ada
+berkas daftar peer — daftar botnya adalah isi folder induk, dibaca ulang setiap
+kali. Menambah bot ke-7 berarti membuat satu folder; tidak ada berkas lain yang
+perlu disunting, jadi tidak ada yang bisa terlewat.
+
+Dua tool MCP:
+
+- **`agent_list`** — nama bot tetangga yang benar-benar ada.
+- **`agent_send`** — menitipkan `<uuid>.json` ke `../<nama-bot>/inbox/`.
+
+**Pesan antar-bot tidak pernah menyentuh Telegram.** Yang membuat sesuatu
+muncul di HP user hanyalah tool `reply`. Prinsipnya: *urusan antar-bot diam di
+jalurnya sendiri; naik ke Telegram hanya kalau butuh keputusan manusia.*
+
+**Antrean offline gratis dari bentuknya.** Bot yang mati tidak memindai, jadi
+pesannya menunggu di folder — dan `ls inbox/` memperlihatkan berapa yang
+menunggu tanpa query apa pun.
+
+Dua aturan yang dijaga kode, bukan ingatan:
+
+1. **Balasan tidak boleh menuntut balasan.** `expects_reply: true` hanya sah
+   bila `in_reply_to` kosong. Satu baris validasi, dan loop A↔B jadi
+   **mustahil** — bukan sekadar dibatasi.
+2. **`hop_count` maksimum 5**, ditolak di sisi pengirim dengan kalimat yang
+   menyuruh berhenti me-relay. Karena aturan (1) sudah menutup kasus hariannya,
+   ini jaring pengaman untuk yang tak terbayang.
+
+**Timeout tidak dilacak sistem.** Kalau kamu mengirim dengan `expects_reply`,
+pasang jadwal sekali-tembak di sesimu sendiri dan batalkan saat jawabannya
+datang; kalau timeout tercapai, **lapor ke user** — bot pengirim tidak bisa
+memutuskan sendiri antara kirim ulang, ganti bot, atau batal. Kalau bot
+penerima atau pengirim mati, ya sudah: tidak ada pemulihan, dan itu keputusan
+sadar, bukan kelalaian.
+
+⚠️ **Belum diuji hidup.** Yang ada baru test unit; dua bot sungguhan belum
+pernah saling kirim lewat jalur ini.
+
 ## Menjalankan
 
 **Tidak ada yang perlu dinyalakan.** Engine hidup di dalam sesi Claude Code:

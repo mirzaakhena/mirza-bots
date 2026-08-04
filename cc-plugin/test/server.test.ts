@@ -1,14 +1,16 @@
 import { describe, test, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { buildServer, TERSE_TURN_MARKER } from "../src/server";
+import { buildServer, TERSE_TURN_MARKER, AGENT_TURN_MARKER, markerFor } from "../src/server";
 import type { Engine } from "../src/engine/engine";
 import type { PushMessage } from "../src/engine/sink";
 
 function fakeEngine(overrides: Partial<Engine> = {}): Engine {
   return {
     bot: "bot-01",
-    reply: async () => ({ chars: 0, parts: 1 }),
+    reply: async () => ({ chars: 0, parts: 1, files: 0 }),
+    agentSend: () => ({ ok: true as const, id: "u", path: "p" }),
+    agentPeers: () => [],
     history: async () => [],
     search: async () => [],
     onPush: () => {},
@@ -359,7 +361,13 @@ describe("cc-plugin MCP server when the engine could not start", () => {
     const { server, mcpClient } = await connected();
 
     const { tools } = await mcpClient.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["read_history", "reply", "search_history"]);
+    expect(tools.map((t) => t.name).sort()).toEqual([
+      "agent_list",
+      "agent_send",
+      "read_history",
+      "reply",
+      "search_history",
+    ]);
 
     await mcpClient.close();
     await server.close();
@@ -372,6 +380,8 @@ describe("cc-plugin MCP server when the engine could not start", () => {
       { name: "reply", arguments: { text: "halo" } },
       { name: "read_history", arguments: { message_id: "1" } },
       { name: "search_history", arguments: { query: "apa" } },
+      { name: "agent_send", arguments: { to: "bot-03", text: "halo" } },
+      { name: "agent_list", arguments: {} },
     ]) {
       const res = await mcpClient.callTool(call);
       expect(res.isError).toBe(true);
@@ -422,4 +432,123 @@ test("balasan berpotongan menyebut jumlah pesannya", () => {
 test("pedomannya satu angka bernama, bukan tersebar di beberapa tempat", () => {
   expect(REPLY_LENGTH_GUIDELINE).toBe(1000);
   expect(SERVER_INSTRUCTIONS).toContain("1000");
+});
+
+// Tanpa tool ini jalur antar-bot ada di kode tapi tidak bisa dipakai AI --
+// rumahnya dibangun, penghuninya belum ada (persis nasib tabel `handoffs` di
+// fleet.db: skema lengkap, nol baris kode memakainya).
+describe("tool antar-bot", () => {
+  async function connect(engine: Engine) {
+    const server = buildServer(engine);
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+    return { server, mcpClient };
+  }
+
+  test("agent_send meneruskan ke engine dan mengembalikan id titipan", async () => {
+    const calls: Array<{ to: string; text: string; opts: unknown }> = [];
+    const { server, mcpClient } = await connect(
+      fakeEngine({
+        agentSend: (to, text, opts) => {
+          calls.push({ to, text, opts });
+          return { ok: true, id: "u-1", path: "p" };
+        },
+        agentPeers: () => ["bot-01", "bot-03"],
+      } as Partial<Engine>)
+    );
+
+    const result = await mcpClient.callTool({
+      name: "agent_send",
+      arguments: { to: "bot-03", text: "halo" },
+    });
+
+    expect(calls.length).toBe(1);
+    expect(calls[0]!.to).toBe("bot-03");
+    expect(JSON.stringify(result.content)).toContain("u-1");
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("penolakan dilaporkan sebagai error yang bisa dibaca AI, bukan sukses palsu", async () => {
+    const { server, mcpClient } = await connect(
+      fakeEngine({
+        agentSend: () => ({
+          ok: false,
+          error: "hop_count 6 melewati batas 5 -- menolak mengirim (anti-loop guard).",
+        }),
+        agentPeers: () => [],
+      } as Partial<Engine>)
+    );
+
+    const result = await mcpClient.callTool({
+      name: "agent_send",
+      arguments: { to: "bot-03", text: "x", hop_count: 6 },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("anti-loop");
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("agent_list menyebut tetangga yang benar-benar ada", async () => {
+    const { server, mcpClient } = await connect(
+      fakeEngine({
+        agentSend: () => ({ ok: true, id: "u", path: "p" }),
+        agentPeers: () => ["bot-01", "bot-03"],
+      } as Partial<Engine>)
+    );
+
+    const result = await mcpClient.callTool({ name: "agent_list", arguments: {} });
+
+    expect(JSON.stringify(result.content)).toContain("bot-01");
+    expect(JSON.stringify(result.content)).toContain("bot-03");
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  // Tidak ada tetangga adalah keadaan sah, dan harus terbaca berbeda dari
+  // "tidak bisa membaca folder induk". Daftar kosong yang tampak seperti
+  // kegagalan membuat AI mencoba hal yang salah.
+  test("tanpa tetangga, jawabannya kalimat -- bukan daftar kosong", async () => {
+    const { server, mcpClient } = await connect(
+      fakeEngine({
+        agentSend: () => ({ ok: true, id: "u", path: "p" }),
+        agentPeers: () => [],
+      } as Partial<Engine>)
+    );
+
+    const result = await mcpClient.callTool({ name: "agent_list", arguments: {} });
+
+    expect(JSON.stringify(result.content).length).toBeGreaterThan(20);
+
+    await mcpClient.close();
+    await server.close();
+  });
+});
+
+// Tanpa test ini ada lubang yang tidak terlihat: test reply-guard membuat
+// transcript dengan tangan, jadi mereka tetap hijau meski forwarder memasang
+// penanda yang salah. Yang menghubungkan meta.origin ke penanda adalah fungsi
+// ini, dan hanya ini.
+describe("markerFor", () => {
+  test("push dari bot lain memakai penanda agent-turn", () => {
+    expect(markerFor({ origin: "agent", from_bot: "bot-03" })).toBe(AGENT_TURN_MARKER);
+  });
+
+  test("push dari Telegram memakai penanda terse-turn", () => {
+    expect(markerFor({ chat_id: "111", kind: "message" })).toBe(TERSE_TURN_MARKER);
+  });
+
+  test("origin yang tidak dikenal diperlakukan sebagai Telegram, bukan sebaliknya", () => {
+    // Arah default-nya penting: salah menandai pesan Telegram sebagai antar-bot
+    // MEMATIKAN reply-guard dan membuat user tidak dijawab -- kegagalan paling
+    // mahal di proyek ini. Salah arah sebaliknya cuma bikin guard cerewet.
+    expect(markerFor({ origin: "entah-apa" })).toBe(TERSE_TURN_MARKER);
+    expect(markerFor({})).toBe(TERSE_TURN_MARKER);
+  });
 });
