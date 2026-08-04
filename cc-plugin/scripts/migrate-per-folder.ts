@@ -46,6 +46,11 @@ export type MigrationPlan = {
 const KNOWN_ENTRIES = new Set([
   "config.json",
   "conversations.db",
+  // Berkas sisi SQLite. Bukan "berkas asing": memperingatkannya melatih
+  // pembaca mengabaikan warning, dan warning yang diabaikan tidak menjaga
+  // apa pun.
+  "conversations.db-wal",
+  "conversations.db-shm",
   "sessions",
   "status",
   "locks",
@@ -92,7 +97,19 @@ export function planMigration(stateRoot: string, botHome: string, botName: strin
     if (existsSync(from)) copies.push({ from, to });
   };
 
-  push(join(stateRoot, "conversations.db"), join(botHome, "conversations.db"));
+  // Ketiganya, bukan cuma .db. SQLite berjalan dalam mode WAL, jadi transaksi
+  // terbaru hidup di berkas -wal sampai di-checkpoint. Menyalin .db saja
+  // menghasilkan database yang TERBUKA BAIK-BAIK SAJA dengan isi lebih
+  // sedikit -- kehilangan yang tidak punya gejala.
+  //
+  // Diukur pada state produksi 2026-08-05, bukan ditaksir: .db saja memuat 135
+  // baris, .db + -wal memuat 137, dan pesan terakhirnya mundur 74 menit.
+  for (const suffix of ["", "-wal", "-shm"]) {
+    push(
+      join(stateRoot, `conversations.db${suffix}`),
+      join(botHome, `conversations.db${suffix}`)
+    );
+  }
   push(join(stateRoot, "sessions", `${botName}.id`), join(botHome, "session.id"));
   push(join(stateRoot, "status", `${botName}.json`), join(botHome, "status.json"));
   push(join(stateRoot, "status", "chained-statusline"), join(botHome, "chained-statusline"));
