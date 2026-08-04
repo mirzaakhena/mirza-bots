@@ -1,39 +1,83 @@
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { test, expect, describe } from "bun:test";
+import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stateRoot, ensureStateDirs, logsDir, lockPath } from "../../src/engine/paths";
+import {
+  resolveBotHome,
+  botNameFrom,
+  configPathIn,
+  conversationsDbPathIn,
+  sessionIdPathIn,
+  statusPathIn,
+  chainedStatuslinePathIn,
+  botPidPathIn,
+  dataDirIn,
+  inboxDirIn,
+  logsDirIn,
+  ensureBotDirs,
+} from "../../src/engine/paths";
 
-let tmp: string;
+const HOME = join("C:", "Users", "Mirza", "workspace", "mirza_01_bot");
 
-beforeEach(() => {
-  tmp = mkdtempSync(join(tmpdir(), "mirza-bots-paths-"));
-  process.env.MIRZA_BOTS_HOME = tmp;
+describe("resolveBotHome", () => {
+  test("memakai CLAUDE_PROJECT_DIR bila ada", () => {
+    expect(resolveBotHome({ CLAUDE_PROJECT_DIR: HOME }, "C:\\lain")).toBe(HOME);
+  });
+
+  test("jatuh ke cwd bila env kosong", () => {
+    expect(resolveBotHome({}, HOME)).toBe(HOME);
+    expect(resolveBotHome({ CLAUDE_PROJECT_DIR: "   " }, HOME)).toBe(HOME);
+  });
 });
 
-afterEach(() => {
-  delete process.env.MIRZA_BOTS_HOME;
-  rmSync(tmp, { recursive: true, force: true });
+describe("botNameFrom", () => {
+  test("nama bot adalah nama folder", () => {
+    expect(botNameFrom(HOME)).toBe("mirza_01_bot");
+  });
+
+  test("separator dan trailing slash tidak mengubah nama", () => {
+    expect(botNameFrom("C:/Users/Mirza/workspace/bot-02/")).toBe("bot-02");
+    expect(botNameFrom("C:\\Users\\Mirza\\workspace\\bot-02\\")).toBe("bot-02");
+  });
 });
 
-describe("paths", () => {
-  test("stateRoot honors MIRZA_BOTS_HOME override", () => {
-    expect(stateRoot()).toBe(tmp);
+describe("path di dalam folder bot", () => {
+  test("semuanya berpangkal pada folder bot, tanpa state root", () => {
+    expect(configPathIn(HOME)).toBe(join(HOME, "config.json"));
+    expect(conversationsDbPathIn(HOME)).toBe(join(HOME, "conversations.db"));
+    expect(sessionIdPathIn(HOME)).toBe(join(HOME, "session.id"));
+    expect(statusPathIn(HOME)).toBe(join(HOME, "status.json"));
+    expect(chainedStatuslinePathIn(HOME)).toBe(join(HOME, "chained-statusline"));
+    expect(botPidPathIn(HOME)).toBe(join(HOME, "bot.pid"));
+    expect(dataDirIn(HOME)).toBe(join(HOME, "data"));
+    expect(inboxDirIn(HOME)).toBe(join(HOME, "inbox"));
+    expect(logsDirIn(HOME)).toBe(join(HOME, "logs"));
   });
 
-  test("ensureStateDirs creates root, inbox, and logs dirs", () => {
-    ensureStateDirs();
-    expect(existsSync(tmp)).toBe(true);
-    expect(existsSync(join(tmp, "inbox"))).toBe(true);
-    expect(existsSync(logsDir())).toBe(true);
+  // Pagar terhadap kembalinya state terpusat lewat pintu belakang.
+  test("tidak satu pun path menyeberang keluar dari folder bot", () => {
+    for (const p of [
+      configPathIn(HOME),
+      conversationsDbPathIn(HOME),
+      sessionIdPathIn(HOME),
+      statusPathIn(HOME),
+      chainedStatuslinePathIn(HOME),
+      botPidPathIn(HOME),
+      dataDirIn(HOME),
+      inboxDirIn(HOME),
+      logsDirIn(HOME),
+    ]) {
+      expect(p.startsWith(HOME)).toBe(true);
+    }
   });
+});
 
-  test("lockPath lives under the fleet state root, not inside the bot's folder", () => {
-    expect(lockPath("bot-01")).toBe(join(tmp, "locks", "bot-01.pid"));
-  });
-
-  test("ensureStateDirs creates the locks directory too", () => {
-    ensureStateDirs();
-    expect(existsSync(join(tmp, "locks"))).toBe(true);
+describe("ensureBotDirs", () => {
+  test("membuat data/, inbox/, dan logs/ -- dan tidak membuat state root apa pun", () => {
+    const home = mkdtempSync(join(tmpdir(), "bothome-"));
+    ensureBotDirs(home);
+    expect(existsSync(dataDirIn(home))).toBe(true);
+    expect(existsSync(inboxDirIn(home))).toBe(true);
+    expect(existsSync(logsDirIn(home))).toBe(true);
   });
 });
