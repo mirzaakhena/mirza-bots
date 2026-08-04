@@ -57,13 +57,16 @@ sesi).
 - **Konfigurasi tervalidasi ketat.** `config.json` divalidasi lewat zod
   (`z.strictObject`) — field yang salah nama atau kosong ditolak, bukan
   didiamkan.
-- **Dua database SQLite terpisah**, sesuai prinsip "state kecil yang boleh
-  hilang" vs "riwayat besar yang tak boleh hilang":
-  - `fleet.db` — state operasional: `sessions`, `handoffs`, `injections`,
-    `bot_inbox`, `incidents`. Aman dihapus & dibangun ulang.
-  - `conversations.db` — riwayat percakapan dengan pencarian teks penuh
-    (FTS5), disinkron otomatis lewat trigger SQL setiap kali baris pesan
-    ditambah/diubah/dihapus.
+- **Satu database SQLite:** `conversations.db` — riwayat percakapan dengan
+  pencarian teks penuh (FTS5), disinkron otomatis lewat trigger SQL setiap kali
+  baris pesan ditambah/diubah/dihapus.
+  **`fleet.db` dibuang 2026-08-04** (`3451037`). Ia dulu memegang state
+  operasional (`sessions`, `handoffs`, `injections`, `bot_inbox`, `incidents`),
+  dan diukur satu per satu: keempat tabel pertama **nol baris dan nol rujukan
+  kode**, lalu `bot_inbox` ternyata ikut mati bersama daemonnya — poller kini
+  berjalan di dalam proses yang memegang token, jadi "tidak ada sesi" berarti
+  "tidak ada poller", dan Telegram sendiri menahan update yang belum diambil
+  selama 24 jam. Itu persis peran `bot_inbox` dulu.
 - **Kunci satu-penarik-per-token** (`locks/<bot>.pid`) — dijelaskan di
   "Menjalankan" di bawah.
 - **`doctor`** — status check yang melaporkan jumlah bot terdaftar, tabel
@@ -289,7 +292,13 @@ sesi pertama dibuka):
   kerja bot itu, `token` token BotFather. Boleh lebih dari satu bot.
 
 Path lain yang dipakai engine, semuanya di bawah `~/.claude/mirza-bots/`:
-`fleet.db`, `conversations.db`, `inbox/`, `logs/`, dan `locks/<bot>.pid`.
+`conversations.db`, `inbox/`, `logs/`, `sessions/<bot>.id`, `status/<bot>.json`,
+dan `locks/<bot>.pid`.
+
+⚠️ **Struktur ini akan berubah.** User memutuskan 2026-08-04 bahwa seluruh state
+pindah ke folder masing-masing bot dan `~/.claude/mirza-bots/` hilang — lihat
+`mirza-marketplace/docs/2026-08-04-state-per-folder-bot.md`. Belum dikerjakan
+saat baris ini ditulis.
 
 **Untuk testing tanpa menyentuh folder asli**, override dengan env var
 `MIRZA_BOTS_HOME=/path/ke/folder/sementara` — semua path di atas ikut
