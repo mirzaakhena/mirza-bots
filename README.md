@@ -241,25 +241,23 @@ cp bin/mirza-bot.cmd ~/.local/bin/
 ```
 
 ```
-mirza-bot                 folder tempat kamu berdiri
-mirza-bot bot-uji         <workspace>\bot-uji
-mirza-bot D:\some\path    path itu
+mirza-bot         jalan, cepat, tanpa menyentuh jaringan
+mirza-bot -u      update cc-plugin dulu, baru jalan
 ```
 
-Bentuk pertama yang dipakai sehari-hari — tiap bot dijalankan dari foldernya
-sendiri, jadi tidak ada nama yang perlu diketik.
+Dijalankan dari folder bot-nya masing-masing, jadi tidak ada nama yang perlu
+diketik (argumen nama/path tetap didukung kalau sewaktu-waktu perlu).
 
-**Update `cc-plugin` otomatis, tapi hanya kalau perlu.** Plugin dimuat dari
-**cache** dan bukan dari repo, jadi "lupa update" berarti menjalankan kode lama
-tanpa sadar — dua kali di proyek ini waktu terbuang menguji perbaikan yang
-ternyata tidak pernah berjalan. Tapi menjalankan update di setiap start memakan
-**~6,5 detik**, dan **5,6 detik** di antaranya adalah `marketplace update` yang
-menembak GitHub (terukur 2026-08-04).
+**Update ada di belakang flag `-u`.** Terukur 2026-08-04: update memakan
+**~6,5 detik**, dan **5,6 detik** di antaranya `marketplace update` yang
+menembak GitHub — terlalu mahal untuk dibayar di setiap start demi rilis yang
+jarang. Tanpa flag, start hanya **~0,3 detik**.
 
-Jalan tengahnya: bandingkan dulu versi di repo dengan versi yang terpasang —
-keduanya berkas lokal, **~0,3 detik**. Sama berarti tidak ada yang perlu
-diambil, dan update dilewati sepenuhnya. Harga 6,5 detik itu hanya dibayar pada
-start pertama sesudah rilis baru, bukan setiap kali.
+Versi `cc-plugin` yang **benar-benar terpasang** tetap dicetak saat start,
+dibaca dari `installed_plugins.json`. Plugin dimuat dari **cache** dan bukan
+dari repo, jadi angka itu satu-satunya petunjuk cepat bahwa kode yang berjalan
+sudah usang — dua kali di proyek ini waktu terbuang menguji perbaikan yang
+ternyata tidak pernah dijalankan. Angkanya ketinggalan → ulangi dengan `-u`.
 
 Sengaja terpisah dari `mirza-cc`, launcher sistem lama: berkas itu melayani bot
 harian, dan menumpanginya berarti mempertaruhkan yang produksi demi yang
