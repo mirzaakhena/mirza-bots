@@ -20,6 +20,12 @@ function fakeStateRoot(): string {
   mkdirSync(join(root, "logs"), { recursive: true });
   mkdirSync(join(root, "inbox", "mirza_01_bot"), { recursive: true });
   writeFileSync(join(root, "conversations.db"), "db-bytes");
+  // SQLite berjalan dalam mode WAL: transaksi terbaru hidup di berkas -wal
+  // sampai di-checkpoint, BUKAN di dalam .db. Diukur pada state produksi
+  // 2026-08-05: .db saja memuat 135 baris, .db + -wal memuat 137, dan pesan
+  // terakhirnya mundur 74 menit.
+  writeFileSync(join(root, "conversations.db-wal"), "wal-bytes");
+  writeFileSync(join(root, "conversations.db-shm"), "shm-bytes");
   writeFileSync(
     join(root, "config.json"),
     JSON.stringify({
@@ -52,6 +58,9 @@ describe("planMigration", () => {
     const targets = plan.copies.map((c) => relative(home, c.to));
 
     expect(targets).toContain("conversations.db");
+    // WAJIB ikut: tanpa -wal, riwayat yang belum di-checkpoint hilang DIAM-DIAM
+    // -- database barunya terbuka baik-baik saja, cuma isinya lebih sedikit.
+    expect(targets).toContain("conversations.db-wal");
     expect(targets).toContain("session.id");
     expect(targets).toContain("status.json");
     expect(targets).toContain("bot.pid");
@@ -72,6 +81,15 @@ describe("planMigration", () => {
   // Verifikasi DUA ARAH, pelajaran migrasi bot-uji -> mirza_01_bot: "yang baru
   // ada" tidak membuktikan "yang lama tidak ketinggalan". Berkas tanpa tujuan
   // harus DISEBUT, bukan didiamkan.
+  // Berkas sisi-SQLite bukan "berkas asing": memperingatkannya melatih pembaca
+  // mengabaikan warning, dan warning yang diabaikan tidak menjaga apa pun.
+  test("berkas sisi conversations.db tidak dilaporkan sebagai tanpa tujuan", () => {
+    const plan = planMigration(fakeStateRoot(), newHome(), "mirza_01_bot");
+
+    expect(plan.warnings.join("\n")).not.toContain("conversations.db-wal");
+    expect(plan.warnings.join("\n")).not.toContain("conversations.db-shm");
+  });
+
   test("melaporkan berkas lama yang tidak punya tujuan", () => {
     const root = fakeStateRoot();
     writeFileSync(join(root, "berkas-asing.txt"), "x");
