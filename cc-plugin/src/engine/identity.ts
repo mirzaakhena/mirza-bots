@@ -1,10 +1,18 @@
-import type { Config } from "./config";
-import { samePath } from "./same-path";
+import { botNameFrom, configPathIn } from "./paths";
 
 export type IdentityResult = { ok: true; bot: string } | { ok: false; message: string };
 
 /**
- * Answers "which bot am I?" from the session's project directory.
+ * Answers "which bot am I?" from the folder this session runs in.
+ *
+ * Dulu pertanyaan ini dijawab dengan mencocokkan cwd ke setiap `home` di
+ * `config.bots`. Sekarang cwd ADALAH botnya, dan satu-satunya syarat adalah
+ * folder itu memuat `config.json` -- syarat yang sama yang membuat sebuah
+ * folder tetangga bisa dikenali sebagai tujuan pesan antar-bot. Satu aturan,
+ * dua pemakaian, jadi keduanya tidak bisa berbeda pendapat soal folder mana
+ * yang bot.
+ *
+ * `hasConfig` dilewatkan pemanggil supaya fungsi ini tetap murni.
  *
  * Returns a sentence rather than null on failure, and that difference IS the fix
  * for W-16. The old path rejected an unknown cwd over the socket, cc-plugin's
@@ -13,29 +21,18 @@ export type IdentityResult = { ok: true; bot: string } | { ok: false; message: s
  * chasing that on 2026-08-01, and the root cause was never found, because a
  * process that dies before it can speak leaves nothing to find.
  *
- * The message names the registered bots and the fix, not just the fault: a
- * refusal that does not teach the correct alternative gets answered with the
- * same wrong attempt.
+ * The message names the fix, not just the fault: a refusal that does not teach
+ * the correct alternative gets answered with the same wrong attempt.
  */
-export function resolveBotByCwd(config: Config, cwd: string): IdentityResult {
-  for (const [name, bot] of Object.entries(config.bots)) {
-    // samePath, not ===: the same directory reaches this function spelled two
-    // different ways depending on which part of Claude Code handed it over.
-    if (samePath(bot.home, cwd)) return { ok: true, bot: name };
-  }
-
-  const names = Object.keys(config.bots);
-  const known =
-    names.length === 0
-      ? "no bots are registered in config.json at all"
-      : `registered bots: ${names.join(", ")}`;
+export function identifyBot(botHome: string, hasConfig: boolean): IdentityResult {
+  if (hasConfig) return { ok: true, bot: botNameFrom(botHome) };
 
   return {
     ok: false,
     message:
-      `This directory (${cwd}) is not the home of any bot in config.json, so this ` +
-      `session has no Telegram identity and will not poll. ${known}. To fix it, add ` +
-      `an entry to config.json whose "home" is exactly this path, then restart the ` +
-      `session.`,
+      `Folder ini (${botHome}) tidak memuat config.json, jadi sesi ini tidak punya ` +
+      `identitas Telegram dan tidak akan polling. Sebuah folder menjadi bot dengan ` +
+      `memuat ${configPathIn(botHome)} berisi {"token": "...", "allowFrom": ["..."]}. ` +
+      `Buat berkas itu, lalu restart sesi.`,
   };
 }
