@@ -16,9 +16,13 @@ dengan `ERR_SOCKET_CLOSED` sementara Node v22 bekerja. Diukur, bukan ditebak —
 menjalankan dan mengawasinya, ada di
 `mirza-marketplace/docs/superpowers/specs/2026-08-02-penyatuan-engine-fleetd-design.md`.
 
-**Yang TIDAK ikut dibubarkan adalah pemusatan state.** Seluruh armada tetap
-berbagi satu `~/.claude/mirza-bots/`: satu config, satu riwayat yang bisa
-dicari lintas bot. Yang dibubarkan prosesnya, bukan gudangnya.
+**Tidak ada state bersama.** Sejak 2026-08-04, seluruh state satu bot hidup di
+folder bot itu sendiri — token, riwayat, sesi, status, kunci. `~/.claude/mirza-bots/`
+tidak dipakai lagi. Kriteria yang membingkainya, dari user: *"instalasi serta
+struktur yang mudah dipelajari orang lain"* — dan sesuatu mudah dipelajari kalau
+orang bisa **menebak di mana barangnya** tanpa membaca dokumen.
+
+Efek samping yang diinginkan: **memindahkan bot = rename folder.**
 
 Konsekuensi yang diterima sadar: **bot hanya hidup selama ada sesi Claude Code
 terbuka.** Pesan tidak hilang — Telegram menahan update yang belum diambil
@@ -67,16 +71,18 @@ sesi).
   berjalan di dalam proses yang memegang token, jadi "tidak ada sesi" berarti
   "tidak ada poller", dan Telegram sendiri menahan update yang belum diambil
   selama 24 jam. Itu persis peran `bot_inbox` dulu.
-- **Kunci satu-penarik-per-token** (`locks/<bot>.pid`) — dijelaskan di
+- **Kunci satu-penarik-per-token** (`bot.pid` di folder bot) — dijelaskan di
   "Menjalankan" di bawah.
-- **`doctor`** — status check yang melaporkan jumlah bot terdaftar, tabel
-  yang ada, kesiapan kedua database, dan siapa yang memegang tiap token.
+- **`doctor`** — status check untuk **satu** bot: namanya, kesiapan
+  `conversations.db`-nya, dan siapa yang memegang tokennya. Ia berhenti
+  melaporkan armada karena sesudah state per-folder ia tidak bisa tahu:
+  `ls workspace/*/bot.pid` menjawabnya tanpa berpura-pura.
 
 ### Jalur pesan masuk (Tahap 2 + 2.5-MASUK)
 
 - **Poller Telegram** (satu per bot, lewat grammy) menerima:
   - **teks**,
-  - **foto tunggal** — diunduh ke `inbox/<bot>/` lalu dicatat sebagai
+  - **foto tunggal** — diunduh ke `data/` milik bot itu lalu dicatat sebagai
     attachment,
   - **album** (beberapa foto sekaligus) — disatukan jadi **satu** pesan
     lewat buffer debounce, bukan tiga pesan terpisah,
@@ -86,10 +92,11 @@ sesi).
   (untuk chat pribadi ini sama dengan user ID pengirim; grup belum didukung,
   §"belum ada" di bawah) dijatuhkan sebelum disimpan, sebelum di-push, dan sebelum chat-nya boleh
   jadi tujuan balasan AI berikutnya.
-- **Antrean offline (`bot_inbox`).** Kalau pesan masuk saat tidak ada sesi
-  Claude Code yang terhubung, pesan itu ditulis ke `bot_inbox`. Begitu ada
-  plugin yang menyambung (`hello`), antreannya langsung dikuras dan dikirim —
-  jadi pesan yang datang waktu bot "mati" tidak hilang.
+- **Pesan yang datang saat bot mati tidak hilang.** Tidak ada antrean sendiri
+  untuk itu, dan tidak perlu: poller berjalan di dalam proses yang memegang
+  token, jadi "tidak ada sesi" berarti "tidak ada yang mengambil", dan Telegram
+  menahan update yang belum diambil selama **24 jam**. Tabel `bot_inbox` yang
+  dulu melakukan tugas ini dibuang 2026-08-04 bersama daemonnya.
 - **`cc-plugin`** — plugin Claude Code (MCP server) yang **berisi engine-nya**:
   ia menentukan bot mana dirinya dari folder kerja sesi, mengklaim token bot itu,
   menarik pesannya sendiri, menyediakan tool **`reply`** (teks + tombol opsional)
@@ -162,7 +169,7 @@ sesi).
   Telegram menolak seluruh pesan dengan 400. **Yang disimpan ke database tetap
   teks aslinya**, bukan hasil escape.
 - **Identitas sesi dibaca, bukan dipotret.** Hook `SessionStart` menulis id sesi
-  terbaru ke `sessions/<bot>.id`; engine membacanya tiap kali push. Tanpa ini,
+  terbaru ke `session.id` di folder bot; engine membacanya tiap kali push. Tanpa ini,
   `/clear` membuat pesan berikutnya distempel id sesi lama — terukur 2026-08-02.
 - **Slash Telegram dicegat SESUDAH dicatat, tidak sebelum.** `/rename <nama>`
   dan `/new <nama>` dari Telegram tidak lagi diteruskan ke AI: keduanya diolah
@@ -187,7 +194,7 @@ sesi).
 - **`/context` dijawab tanpa mengorbankan statusline user.** Payload statusline
   di-**push** Claude Code ke command-nya lewat stdin dan tidak bisa ditarik
   kapan pun — jadi satu-satunya cara memperolehnya adalah **menjadi** command
-  itu, menangkapnya, dan menyimpannya (`status/<bot>.json`). Karena Claude Code
+  itu, menangkapnya, dan menyimpannya (`status.json` di folder bot). Karena Claude Code
   hanya mengizinkan **satu** `statusLine`, meneruskan ke statusline pendahulu
   bukan pilihan gaya melainkan satu-satunya jalan yang tidak menggusurnya.
   **Sistem lama menggusurnya, dan masih menggusurnya di enam dari enam bot
@@ -272,37 +279,74 @@ percobaan.
 
 ## Konfigurasi
 
-Buat `~/.claude/mirza-bots/config.json` (folder ini dibuat otomatis saat
-sesi pertama dibuka):
+### Memasang bot baru
+
+Tiga langkah, dan tidak ada langkah keempat:
+
+1. Buat sebuah folder. **Namanya adalah nama botnya.**
+2. Isi `config.json` di dalamnya:
 
 ```json
 {
+  "token": "TOKEN_BOT_TELEGRAM",
   "allowFrom": ["123456789"],
-  "bots": {
-    "bot-01": {
-      "home": "/Users/kamu/Workspace/project-bot-01",
-      "token": "TOKEN_BOT_TELEGRAM"
-    }
-  }
+  "timezone": "Asia/Jakarta"
 }
 ```
 
-- `allowFrom` — daftar user ID Telegram yang boleh memakai bot.
-- `bots` — satu entri per bot. Nama bot bebas (jadi key), `home` folder
-  kerja bot itu, `token` token BotFather. Boleh lebih dari satu bot.
+3. Jalankan `mirza-bot` dari folder itu.
 
-Path lain yang dipakai engine, semuanya di bawah `~/.claude/mirza-bots/`:
-`conversations.db`, `inbox/`, `logs/`, `sessions/<bot>.id`, `status/<bot>.json`,
-dan `locks/<bot>.pid`.
+- `token` — token dari BotFather, milik bot INI.
+- `allowFrom` — daftar user ID Telegram yang boleh memakainya.
+- `timezone` — opsional, nama zona IANA. Salah ketik menghilangkan waktu lokal,
+  tidak menghentikan bot.
 
-⚠️ **Struktur ini akan berubah.** User memutuskan 2026-08-04 bahwa seluruh state
-pindah ke folder masing-masing bot dan `~/.claude/mirza-bots/` hilang — lihat
-`mirza-marketplace/docs/2026-08-04-state-per-folder-bot.md`. Belum dikerjakan
-saat baris ini ditulis.
+**Sebuah folder adalah bot bila ia memuat `config.json`.** Aturan itu dipakai
+tiga kali: engine memakainya untuk tahu siapa dirinya, hook SessionStart untuk
+tahu apakah perlu mencatat apa pun, dan jalur antar-bot untuk tahu folder
+tetangga mana yang bisa dititipi pesan.
 
-**Untuk testing tanpa menyentuh folder asli**, override dengan env var
-`MIRZA_BOTS_HOME=/path/ke/folder/sementara` — semua path di atas ikut
-pindah ke situ.
+### Isi folder bot
+
+```
+<nama-bot>/
+├── config.json        token + allowFrom + timezone bot INI
+├── conversations.db   riwayat bot INI
+├── session.id         id sesi Claude Code terbaru (ditulis hook)
+├── status.json        tangkapan statusline (ditulis bridge)
+├── bot.pid            pemegang token
+├── chained-statusline statusline pendahulu yang diteruskan bridge
+├── data/              berkas & gambar yang dikirim user
+├── inbox/             titipan pesan dari bot lain
+└── logs/              session-hook.log
+```
+
+Semuanya dibuat sendiri saat bot pertama kali dijalankan, kecuali `config.json`
+yang memang harus ditulis manusia.
+
+Tidak ada env var untuk memindahkan state. `MIRZA_BOTS_HOME` **dibuang** —
+ia ada untuk memindahkan *state root*, dan tidak ada lagi state root.
+
+### Migrasi dari bentuk lama
+
+Bot yang masih memakai `~/.claude/mirza-bots/`:
+
+```bash
+# lihat rencananya dulu -- tidak ada yang ditulis
+bun run scripts/migrate-per-folder.ts ~/.claude/mirza-bots <folder-bot> <nama-bot>
+
+# baru salin
+bun run scripts/migrate-per-folder.ts ~/.claude/mirza-bots <folder-bot> <nama-bot> --apply
+```
+
+Skrip **menyalin**, tidak memindahkan, dan tidak pernah menghapus apa pun —
+state lama sengaja ditinggalkan utuh sampai kamu sendiri yakin bot barunya
+jalan. Ia juga menyebut setiap berkas lama yang tidak punya tujuan dan setiap
+bot lain yang belum dimigrasikan, karena "yang baru muncul" tidak pernah
+membuktikan "yang lama tidak ketinggalan".
+
+⚠️ **Skrip ini belum pernah dijalankan atas state nyata.** Testnya memakai
+folder tiruan.
 
 ## Menjalankan
 
@@ -316,7 +360,7 @@ Telegram hanya mengizinkan **satu** konsumen `getUpdates` per token. Dua
 penarik tidak menghasilkan galat yang keras — mereka membagi pesanmu secara
 acak, yang terbaca sebagai "botnya kadang mendengar".
 
-Karena itu tiap sesi mengklaim `~/.claude/mirza-bots/locks/<bot>.pid` saat
+Karena itu tiap sesi mengklaim `bot.pid` di folder botnya saat
 start. **Sesi terbaru menang:** kalau kunci itu dipegang proses yang masih
 hidup, sesi baru menghentikannya dan mengambil alih, lalu mencatatnya ke
 stderr. Sesi lama berhenti menerima pesan Telegram — itu disengaja, dan bukan
@@ -337,17 +381,18 @@ Contoh keluaran:
 ```json
 {
   "ok": true,
-  "botCount": 1,
-  "locks": [{ "bot": "bot-uji", "pid": 41234, "alive": true }],
-  "fleetTables": ["sessions", "handoffs", "injections", "bot_inbox", "incidents"],
+  "bot": "mirza_01_bot",
+  "lock": { "bot": "mirza_01_bot", "pid": 41234, "alive": true },
   "conversationsReady": true,
-  "version": "0.9.0"
+  "version": "0.11.0"
 }
 ```
 
-`locks` memuat **setiap** bot di config, dipegang atau tidak — `pid: null`
-berarti tidak ada sesi yang melayani bot itu sekarang, dan `alive: false`
-dengan `pid` terisi berarti kuncinya basi (sesi mati tanpa melepasnya).
+`lock` selalu ada, dipegang atau tidak — `pid: null` berarti tidak ada sesi
+yang melayani bot ini sekarang, dan `alive: false` dengan `pid` terisi berarti
+kuncinya basi (sesi mati tanpa melepasnya). Membedakan "tidak berjalan" dari
+"aman" adalah seluruh guna laporan ini, jadi keadaan kosong pun dilaporkan
+alih-alih dihilangkan.
 
 ### Kalau bot ini tidak mau bicara
 
