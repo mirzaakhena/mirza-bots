@@ -31,6 +31,31 @@ function unavailableAnswer(b: Unavailable) {
 export const TERSE_TURN_MARKER = "[protocol: terse-turn]";
 
 /**
+ * Penanda untuk turn yang dipicu BOT LAIN, bukan Telegram.
+ *
+ * Ia ada untuk satu alasan mekanis: `reply-guard` hanya melihat teks
+ * transcript, dan `origin.server` untuk pesan antar-bot memuat "cc-plugin"
+ * persis seperti pesan Telegram -- penyempitan yang dulu memperbaiki W-14
+ * (membatasi guard ke plugin sendiri) TIDAK menolong untuk sumber baru di dalam
+ * plugin yang sama. Penandanya ditaruh di teks, karena di situlah guard bisa
+ * melihatnya.
+ *
+ * ⚠️ Batas yang disadari: user bisa mengetik string ini lewat Telegram dan
+ * membuat guard diam untuk satu pesan. Sekelas dengan `<channel source=...>`
+ * yang sudah bisa dipalsukan sejak semula; konsekuensinya ringan, dan
+ * dinyatakan di sini alih-alih disembunyikan.
+ */
+export const AGENT_TURN_MARKER = "[protocol: agent-turn]";
+
+/**
+ * Penanda mana yang dipasang di depan sebuah push. Murni, diekspor supaya bisa
+ * diuji tanpa menyalakan server MCP.
+ */
+export function markerFor(meta: Record<string, string>): string {
+  return meta.origin === "agent" ? AGENT_TURN_MARKER : TERSE_TURN_MARKER;
+}
+
+/**
  * Panjang balasan yang disasar, dalam karakter.
  *
  * Bukan gerbang -- tidak ada yang ditolak karena kepanjangan, karena isi yang
@@ -71,6 +96,12 @@ export const SERVER_INSTRUCTIONS = [
   "This applies only to turns carrying that prefix. Turns the user types directly into this terminal are ordinary turns -- answer those in full, as usual.",
   "",
   `Keep replies short: aim for about ${REPLY_LENGTH_GUIDELINE} characters. This is a chat on someone's phone, not a document. If a topic needs more room, send several focused \`reply\` calls that each stand on their own rather than one long block. Nothing is ever rejected for being long -- a reply past Telegram's hard limit is split into several messages automatically -- so this is about what is worth reading, not about what fits.`,
+  "",
+  `A message prefixed with ${AGENT_TURN_MARKER} came from ANOTHER BOT, not from the user. Do NOT answer it with \`reply\` -- that tool writes to the user's Telegram chat, and inter-bot traffic must stay off it. Answer with \`agent_send\` instead, addressed back to \`from_bot\`, with \`in_reply_to\` set to the \`agent_message_id\` from the meta and \`hop_count\` one higher than the incoming one.`,
+  "",
+  `Only reply to an inter-bot message when its meta says \`expects_reply: true\`. Anything else is one-way -- answering it anyway costs the other bot a turn it did not ask for. And a reply may never itself ask for a reply; that rule is enforced, not merely advised.`,
+  "",
+  `When YOU send with \`expects_reply: true\`, set a one-shot schedule in your own session to notice if the answer never arrives, and cancel it when the answer lands. On timeout, tell the user -- you cannot decide alone between resending, picking another bot, and giving up. That is exactly the case that deserves their attention; nothing else about inter-bot traffic does.`,
 ].join("\n");
 
 export function buildServer(backend: ServerBackend): McpServer {
@@ -196,7 +227,7 @@ export function buildServer(backend: ServerBackend): McpServer {
         // `telegramDriven` flag for the same job and it went sticky: once a
         // session had ever seen a Telegram message, terminal-typed turns were
         // misclassified too (audit area-10 §10.2).
-        params: { content: `${TERSE_TURN_MARKER}\n${msg.text}`, meta: safeMeta },
+        params: { content: `${markerFor(safeMeta)}\n${msg.text}`, meta: safeMeta },
       })
       .catch((err) => {
         console.error(`cc-plugin: failed to forward push notification: ${err}`);

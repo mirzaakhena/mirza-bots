@@ -22,6 +22,16 @@ import { readFileSync } from "node:fs";
 const PLUGIN_ID = "cc-plugin";
 const REPLY_TOOL = `mcp__plugin_${PLUGIN_ID}_${PLUGIN_ID}__reply`;
 
+/**
+ * Penanda turn yang dipicu bot lain. Salinan sengaja dari `src/server.ts`.
+ *
+ * Hook ini hanya boleh mengimpor `node:` (lihat header berkas), jadi yang
+ * menutup jarak antara dua literal ini adalah sebuah TEST yang mengadu
+ * keduanya, bukan sebuah import. Dua literal yang harus sama akan menyimpang
+ * diam-diam kalau tidak ada yang memeriksanya (K-15).
+ */
+export const AGENT_TURN_MARKER = "[protocol: agent-turn]";
+
 export interface TranscriptAnalysis {
   channelDriven: boolean;
   latestInboundIdx: number;
@@ -61,6 +71,18 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
     }
 
     if (obj?.type === "user") {
+      const content = textOf(obj?.message?.content);
+
+      // Pesan dari bot lain TIDAK PERNAH menjadi "inbound yang menunggu
+      // jawaban": tujuannya bot lain, bukan Telegram. Menghitungnya akan
+      // membuat guard menuntut `reply` ke chat user setiap kali dua bot
+      // berbicara -- pengulangan W-14, kali ini dari sumber baru DI DALAM
+      // plugin yang sama, yang penyempitan W-14 tidak bisa saring.
+      //
+      // Diperiksa SEBELUM viaOrigin/viaTag, karena keduanya akan berkata "ya"
+      // untuk pesan ini: transportnya memang plugin yang sama.
+      if (content.includes(AGENT_TURN_MARKER)) return;
+
       // Both signals must name THIS plugin, not merely "some channel".
       //
       // The first version tested `origin.kind === "channel"` and the bare
@@ -75,9 +97,7 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
       const viaOrigin = String(obj?.origin?.server ?? "").includes(PLUGIN_ID);
       // Fallback for when Claude Code records no `origin`: the channel tag names
       // the server it came from. Still scoped to us, never "any channel".
-      const viaTag = new RegExp(`<channel[^>]*source="[^"]*${PLUGIN_ID}`).test(
-        textOf(obj?.message?.content)
-      );
+      const viaTag = new RegExp(`<channel[^>]*source="[^"]*${PLUGIN_ID}`).test(content);
       if (viaOrigin || viaTag) {
         channelDriven = true;
         latestInboundIdx = idx;
