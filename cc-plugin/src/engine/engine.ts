@@ -20,6 +20,7 @@ import { renderContext } from "./context/render";
 import { waitForCapture } from "./context/wait";
 import { loadConfig } from "./config";
 import { identifyBot } from "./identity";
+import { startInboxScanner } from "./agent/receive";
 import { acquireBotLock, releaseBotLock } from "./lock";
 import { openConversationsDb, insertMessage, encodeMetadata } from "./db/conversations-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
@@ -345,6 +346,11 @@ export function startEngine(botHome: string): EngineStart {
     // restarting this process. See session-file.ts for the measurement.
     sessionId: () => readCurrentSessionId(botHome),
   };
+
+  // Kotak surat antar-bot. Dinyalakan bersama engine dan berhenti bersamanya:
+  // pesan yang datang saat bot mati menunggu di folder, dan `ls inbox/`
+  // memperlihatkannya tanpa query apa pun.
+  const stopInboxScanner = startInboxScanner(botHome, sink);
 
   const bot = makeBot(config.token);
 
@@ -774,6 +780,9 @@ export function startEngine(botHome: string): EngineStart {
 
       close(): void {
         typing.stopAll();
+        // Sebelum db ditutup: pemindai yang masih berjalan akan mendorong ke
+        // sink yang tujuannya sudah pergi.
+        stopInboxScanner();
         releaseBotLock(botPidPathIn(botHome), process.pid);
         conversationsDb.close();
       },
