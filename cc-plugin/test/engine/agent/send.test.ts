@@ -13,7 +13,13 @@ function fleet(): { parent: string; self: string; peerInbox: string } {
   const parent = mkdtempSync(join(tmpdir(), "send-"));
   for (const name of ["bot-02", "bot-03"]) {
     mkdirSync(join(parent, name), { recursive: true });
-    writeFileSync(join(parent, name, "config.json"), "{}");
+    // Config yang SAH, bukan "{}": sejak 2026-08-05 sebuah folder dihitung bot
+    // hanya bila config-nya lolos schema -- `config.json` adalah nama berkas
+    // yang terlalu umum untuk dijadikan tanda pengenal sendirian.
+    writeFileSync(
+      join(parent, name, "config.json"),
+      JSON.stringify({ token: "123:fake", allowFrom: ["1"] })
+    );
   }
   return {
     parent,
