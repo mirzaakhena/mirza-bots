@@ -31,6 +31,31 @@ function unavailableAnswer(b: Unavailable) {
 export const TERSE_TURN_MARKER = "[protocol: terse-turn]";
 
 /**
+ * Penanda untuk turn yang dipicu BOT LAIN, bukan Telegram.
+ *
+ * Ia ada untuk satu alasan mekanis: `reply-guard` hanya melihat teks
+ * transcript, dan `origin.server` untuk pesan antar-bot memuat "cc-plugin"
+ * persis seperti pesan Telegram -- penyempitan yang dulu memperbaiki W-14
+ * (membatasi guard ke plugin sendiri) TIDAK menolong untuk sumber baru di dalam
+ * plugin yang sama. Penandanya ditaruh di teks, karena di situlah guard bisa
+ * melihatnya.
+ *
+ * ⚠️ Batas yang disadari: user bisa mengetik string ini lewat Telegram dan
+ * membuat guard diam untuk satu pesan. Sekelas dengan `<channel source=...>`
+ * yang sudah bisa dipalsukan sejak semula; konsekuensinya ringan, dan
+ * dinyatakan di sini alih-alih disembunyikan.
+ */
+export const AGENT_TURN_MARKER = "[protocol: agent-turn]";
+
+/**
+ * Penanda mana yang dipasang di depan sebuah push. Murni, diekspor supaya bisa
+ * diuji tanpa menyalakan server MCP.
+ */
+export function markerFor(meta: Record<string, string>): string {
+  return meta.origin === "agent" ? AGENT_TURN_MARKER : TERSE_TURN_MARKER;
+}
+
+/**
  * Panjang balasan yang disasar, dalam karakter.
  *
  * Bukan gerbang -- tidak ada yang ditolak karena kepanjangan, karena isi yang
@@ -71,6 +96,12 @@ export const SERVER_INSTRUCTIONS = [
   "This applies only to turns carrying that prefix. Turns the user types directly into this terminal are ordinary turns -- answer those in full, as usual.",
   "",
   `Keep replies short: aim for about ${REPLY_LENGTH_GUIDELINE} characters. This is a chat on someone's phone, not a document. If a topic needs more room, send several focused \`reply\` calls that each stand on their own rather than one long block. Nothing is ever rejected for being long -- a reply past Telegram's hard limit is split into several messages automatically -- so this is about what is worth reading, not about what fits.`,
+  "",
+  `A message prefixed with ${AGENT_TURN_MARKER} came from ANOTHER BOT, not from the user. Do NOT answer it with \`reply\` -- that tool writes to the user's Telegram chat, and inter-bot traffic must stay off it. Answer with \`agent_send\` instead, addressed back to \`from_bot\`, with \`in_reply_to\` set to the \`agent_message_id\` from the meta and \`hop_count\` one higher than the incoming one.`,
+  "",
+  `Only reply to an inter-bot message when its meta says \`expects_reply: true\`. Anything else is one-way -- answering it anyway costs the other bot a turn it did not ask for. And a reply may never itself ask for a reply; that rule is enforced, not merely advised.`,
+  "",
+  `When YOU send with \`expects_reply: true\`, set a one-shot schedule in your own session to notice if the answer never arrives, and cancel it when the answer lands. On timeout, tell the user -- you cannot decide alone between resending, picking another bot, and giving up. That is exactly the case that deserves their attention; nothing else about inter-bot traffic does.`,
 ].join("\n");
 
 export function buildServer(backend: ServerBackend): McpServer {
@@ -168,6 +199,65 @@ export function buildServer(backend: ServerBackend): McpServer {
     }
   );
 
+  server.registerTool(
+    "agent_send",
+    {
+      description:
+        "Send a message to ANOTHER BOT on this machine. This never touches Telegram: it does not appear on the user's phone, and it costs them nothing to read. " +
+        "Address it by folder name -- every bot is a sibling folder, and `agent_list` tells you which names exist. " +
+        "Set `expects_reply: true` only when you genuinely need an answer back, and only on a NEW message: a reply may not itself ask for a reply, and that rule is enforced, not advised. " +
+        "When you do use it, set a one-shot schedule in your own session to notice if the answer never arrives, cancel it when the answer lands, and on timeout tell the user -- you cannot decide alone between resending, picking another bot, and giving up. " +
+        "When you are ANSWERING an inter-bot message, pass `in_reply_to` set to its `agent_message_id` and `hop_count` one higher than the one it arrived with. " +
+        "If the target bot is not running, the message waits in its inbox folder until it is -- nothing is lost and nothing needs retrying.",
+      inputSchema: {
+        to: z.string().min(1),
+        text: z.string().min(1),
+        expects_reply: z.boolean().optional(),
+        in_reply_to: z.string().min(1).optional(),
+        hop_count: z.number().int().min(0).optional(),
+      },
+    },
+    async ({ to, text, expects_reply, in_reply_to, hop_count }) => {
+      if (isUnavailable(backend)) return unavailableAnswer(backend);
+      const result = backend.agentSend(to, text, {
+        ...(expects_reply !== undefined ? { expectsReply: expects_reply } : {}),
+        ...(in_reply_to !== undefined ? { inReplyTo: in_reply_to } : {}),
+        ...(hop_count !== undefined ? { hopCount: hop_count } : {}),
+      });
+      // Penolakan dijawab sebagai error, bukan sukses tanpa efek: "ditolak" dan
+      // "terkirim" yang terlihat sama membuat AI mengira pesannya sedang
+      // ditunggu bot lain padahal tidak pernah berangkat.
+      if (!result.ok) {
+        return { content: [{ type: "text" as const, text: result.error }], isError: true };
+      }
+      return {
+        content: [
+          { type: "text" as const, text: `titipan ${result.id} sudah masuk inbox ${to}` },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "agent_list",
+    {
+      description:
+        "List the other bots on this machine that you can reach with `agent_send`. The list is read from the parent folder every time -- there is no registry to fall out of date, and a folder counts as a bot when it contains config.json.",
+      inputSchema: {},
+    },
+    async () => {
+      if (isUnavailable(backend)) return unavailableAnswer(backend);
+      const peers = backend.agentPeers();
+      // Kalimat, bukan daftar kosong: "tidak ada tetangga" adalah keadaan sah
+      // dan harus terbaca berbeda dari kegagalan membaca folder induk.
+      const text =
+        peers.length === 0
+          ? "There are no other bots next to this one. Nothing to send to."
+          : `Bots you can reach: ${peers.join(", ")}.`;
+      return { content: [{ type: "text" as const, text }] };
+    }
+  );
+
   if (!isUnavailable(backend)) {
     backend.onPush((msg) => {
     // SCAR-056: Claude Code's notification meta schema is Record<string,string>
@@ -196,7 +286,7 @@ export function buildServer(backend: ServerBackend): McpServer {
         // `telegramDriven` flag for the same job and it went sticky: once a
         // session had ever seen a Telegram message, terminal-typed turns were
         // misclassified too (audit area-10 §10.2).
-        params: { content: `${TERSE_TURN_MARKER}\n${msg.text}`, meta: safeMeta },
+        params: { content: `${markerFor(safeMeta)}\n${msg.text}`, meta: safeMeta },
       })
       .catch((err) => {
         console.error(`cc-plugin: failed to forward push notification: ${err}`);

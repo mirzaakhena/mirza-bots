@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { analyzeTranscript, decideStop, parseHookInput } from "../hooks/reply-guard";
-import { TERSE_TURN_MARKER } from "../src/server";
+import { TERSE_TURN_MARKER, AGENT_TURN_MARKER } from "../src/server";
+import { AGENT_TURN_MARKER as GUARD_AGENT_MARKER } from "../hooks/reply-guard";
 
 // Shapes below are copied from a REAL transcript
 // (~/.claude/projects/<project>/<session>.jsonl, 2026-08-01), not invented. The
@@ -171,6 +172,59 @@ describe("decideStop", () => {
 
   test("stays out of the way of a purely terminal session", () => {
     const decision = decideStop(analyzeTranscript([typedByUser("halo")]), false);
+
+    expect(decision.block).toBe(false);
+  });
+});
+
+// Pesan antar-bot lewat transport yang SAMA (MCP push dari plugin yang sama),
+// jadi `origin.server` memuat "cc-plugin" persis seperti pesan Telegram.
+// Penyempitan yang dulu memperbaiki W-14 -- membatasi guard ke plugin sendiri --
+// tidak menolong untuk sumber baru DI DALAM plugin yang sama. Yang membedakan
+// hanyalah penanda di teksnya, karena teks itulah satu-satunya yang guard lihat.
+const agentInbound = (from: string) =>
+  JSON.stringify({
+    type: "user",
+    message: {
+      role: "user",
+      content:
+        `<channel source="plugin:cc-plugin:cc-plugin" origin="agent" from_bot="${from}">\n` +
+        `${AGENT_TURN_MARKER}\nkerjakan X\n</channel>`,
+    },
+    isMeta: true,
+    origin: { kind: "channel", server: "plugin:cc-plugin:cc-plugin" },
+  });
+
+describe("pesan antar-bot bukan inbound Telegram", () => {
+  // K-15: dua literal yang harus sama akan menyimpang diam-diam. Hook tidak
+  // boleh mengimpor dari src/ (hanya `node:`), jadi yang menutup jaraknya adalah
+  // test ini, bukan sebuah import.
+  test("penanda di hook identik dengan yang ditulis server", () => {
+    expect(GUARD_AGENT_MARKER).toBe(AGENT_TURN_MARKER);
+  });
+
+  test("pesan antar-bot TIDAK membuat guard menuntut balasan Telegram", () => {
+    const decision = decideStop(analyzeTranscript([agentInbound("bot-03")]), false);
+
+    expect(decision.block).toBe(false);
+  });
+
+  // Yang paling mudah salah: pesan Telegram yang BELUM dijawab tidak boleh ikut
+  // terhapus hanya karena sesudahnya datang pesan antar-bot.
+  test("pesan Telegram yang belum dijawab tetap diblokir meski disusul pesan antar-bot", () => {
+    const decision = decideStop(
+      analyzeTranscript([inbound("32"), agentInbound("bot-03")]),
+      false
+    );
+
+    expect(decision.block).toBe(true);
+  });
+
+  test("pesan Telegram yang sudah dijawab tetap tidak diblokir", () => {
+    const decision = decideStop(
+      analyzeTranscript([inbound("32"), replyTurn(), agentInbound("bot-03")]),
+      false
+    );
 
     expect(decision.block).toBe(false);
   });
