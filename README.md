@@ -355,6 +355,11 @@ berkas daftar peer — daftar botnya adalah isi folder induk, dibaca ulang setia
 kali. Menambah bot ke-7 berarti membuat satu folder; tidak ada berkas lain yang
 perlu disunting, jadi tidak ada yang bisa terlewat.
 
+Sebuah folder tetangga dihitung bot bila `config.json`-nya **lolos schema** —
+bukan sekadar ada. Bedanya nyata: `wa-kajian-aggregator` di folder induk yang
+sama punya `config.json` sendiri (`webPort`, `ollamaUrl`), dan aturan "ada
+config.json" akan menaruh pesan antar-bot di dalam project itu.
+
 Dua tool MCP:
 
 - **`agent_list`** — nama bot tetangga yang benar-benar ada.
