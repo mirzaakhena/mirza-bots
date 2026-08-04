@@ -249,13 +249,17 @@ mirza-bot D:\some\path    path itu
 Bentuk pertama yang dipakai sehari-hari — tiap bot dijalankan dari foldernya
 sendiri, jadi tidak ada nama yang perlu diketik.
 
-**Update `cc-plugin` dijalankan selalu, bukan lewat flag.** Plugin dimuat dari
+**Update `cc-plugin` otomatis, tapi hanya kalau perlu.** Plugin dimuat dari
 **cache** dan bukan dari repo, jadi "lupa update" berarti menjalankan kode lama
 tanpa sadar — dua kali di proyek ini waktu terbuang menguji perbaikan yang
-ternyata tidak pernah berjalan. Menaruh langkah itu di belakang flag hanya
-memindahkan beban ingatan ke orang yang menjalankan, demi menghemat beberapa
-detik. Versi yang benar-benar terpasang dicetak saat start, dibaca dari
-`installed_plugins.json`.
+ternyata tidak pernah berjalan. Tapi menjalankan update di setiap start memakan
+**~6,5 detik**, dan **5,6 detik** di antaranya adalah `marketplace update` yang
+menembak GitHub (terukur 2026-08-04).
+
+Jalan tengahnya: bandingkan dulu versi di repo dengan versi yang terpasang —
+keduanya berkas lokal, **~0,3 detik**. Sama berarti tidak ada yang perlu
+diambil, dan update dilewati sepenuhnya. Harga 6,5 detik itu hanya dibayar pada
+start pertama sesudah rilis baru, bukan setiap kali.
 
 Sengaja terpisah dari `mirza-cc`, launcher sistem lama: berkas itu melayani bot
 harian, dan menumpanginya berarti mempertaruhkan yang produksi demi yang
