@@ -1,46 +1,24 @@
 import { Database } from "bun:sqlite";
 
+/**
+ * Skema `fleet.db` — state operasional yang boleh hilang.
+ *
+ * Sengaja HANYA memuat tabel yang benar-benar ada kodenya. Empat tabel lain
+ * (`sessions`, `handoffs`, `injections`, `incidents`) dibuang 2026-08-04
+ * setelah diukur: masing-masing **nol baris di produksi DAN nol rujukan di
+ * seluruh `src/`** — 77 baris skema untuk satu tabel yang hidup. Semuanya
+ * ditulis saat masih ada daemon dan rencana yang lebih besar, lalu bertahan
+ * karena tidak ada yang error.
+ *
+ * Ongkosnya bukan ruang penyimpanan, melainkan penyunting berikutnya yang harus
+ * membaca dan bertanya "ini dipakai buat apa?" — dan pembaca dokumen yang
+ * mengira fiturnya ada padahal baru mejanya.
+ *
+ * Aturannya sekarang: **jangan buat tabel sampai ada kode yang mengisinya di
+ * commit yang sama.** Kalau protokol handoff dibangun nanti, `handoffs` lahir
+ * bersama kodenya — bukan menunggu bertahun-tahun sebagai meja kosong.
+ */
 const SCHEMA = `
-CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY,
-  bot TEXT NOT NULL,
-  name TEXT,
-  status TEXT NOT NULL DEFAULT 'idle',
-  source TEXT,
-  turn_count INTEGER NOT NULL DEFAULT 0,
-  tokens_used INTEGER NOT NULL DEFAULT 0,
-  hidden INTEGER NOT NULL DEFAULT 0,
-  started_at TEXT NOT NULL,
-  ended_at TEXT,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS handoffs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  from_bot TEXT NOT NULL,
-  to_bot TEXT NOT NULL,
-  slug TEXT NOT NULL,
-  file_path TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'terkirim',
-  mode TEXT NOT NULL DEFAULT 'handoff',
-  deadline_at TEXT,
-  paired_with INTEGER REFERENCES handoffs(id),
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS injections (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  bot TEXT NOT NULL,
-  command_class TEXT NOT NULL,
-  payload TEXT,
-  status TEXT NOT NULL DEFAULT 'antre',
-  attempt INTEGER NOT NULL DEFAULT 0,
-  queued_at TEXT NOT NULL,
-  written_at TEXT,
-  done_at TEXT
-);
-
 CREATE TABLE IF NOT EXISTS bot_inbox (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   bot TEXT NOT NULL,
@@ -50,19 +28,9 @@ CREATE TABLE IF NOT EXISTS bot_inbox (
   created_at TEXT NOT NULL,
   delivered_at TEXT
 );
-
-CREATE TABLE IF NOT EXISTS incidents (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind TEXT NOT NULL,
-  detail TEXT,
-  bot TEXT,
-  occurred_at TEXT NOT NULL,
-  notified INTEGER NOT NULL DEFAULT 0,
-  notified_at TEXT
-);
 `;
 
-export const FLEET_TABLES = ["sessions", "handoffs", "injections", "bot_inbox", "incidents"] as const;
+export const FLEET_TABLES = ["bot_inbox"] as const;
 
 export function openFleetDb(path: string): Database {
   const db = new Database(path);
