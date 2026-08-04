@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { currentSessionPath } from "./paths";
+import { sessionIdPathIn } from "./paths";
 
 /**
  * The Claude Code session this bot's window is on RIGHT NOW.
@@ -26,9 +26,9 @@ import { currentSessionPath } from "./paths";
  * `fleetd listening on …` line that kept printing after the bind had failed
  * (W-4), and it cost this project real hours once already.
  */
-export function readCurrentSessionId(bot: string): string | undefined {
+export function readCurrentSessionId(botHome: string): string | undefined {
   try {
-    const id = readFileSync(currentSessionPath(bot), "utf8").trim();
+    const id = readFileSync(sessionIdPathIn(botHome), "utf8").trim();
     return id.length > 0 ? id : undefined;
   } catch {
     // No file yet (hook has not run), or unreadable. Both are "don't know".

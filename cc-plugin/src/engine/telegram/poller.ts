@@ -47,7 +47,15 @@ export type PollerDeps = {
   config: Config;
   conversationsDb: Database;
   sink: MessageSink;
-  inboxRoot: string;
+  /**
+   * Tempat lampiran dari user mendarat: `<botHome>/data`.
+   *
+   * BUKAN `inbox/`, yang sekarang milik pesan antar-bot. Nama lamanya keliru
+   * sejak awal -- tidak ada yang "masuk kotak surat" di sana -- dan menaruh
+   * unduhan user di sana sekarang akan membuat pemindai inbox membaca berkas
+   * .jpg sebagai payload rusak.
+   */
+  dataDir: string;
 };
 
 /**
@@ -142,7 +150,6 @@ export async function handleIncomingMessage(
 ): Promise<boolean> {
   if (!isAllowed(deps.config, msg.chatId)) return false;
 
-  const inboxDir = join(deps.inboxRoot, "inbox", msg.bot);
   // Stamped once, outside the map: Date.now() per item could collide when two
   // downloads land in the same millisecond, and would make the names non-monotonic.
   const stamp = Date.now();
@@ -153,7 +160,7 @@ export async function handleIncomingMessage(
       fileName: `${stamp}-${doc.fileName}`,
     })),
   ];
-  const { attachments, failedCount } = await downloadAll(downloads, inboxDir);
+  const { attachments, failedCount } = await downloadAll(downloads, deps.dataDir);
 
   // A button press has no `text` of its own -- its meaning IS the callback data
   // (e.g. "confirm_yes"). Store and push that as the message content so the AI

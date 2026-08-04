@@ -27,7 +27,7 @@ function makeDeps(): PollerDeps {
     config,
     conversationsDb: openConversationsDb(":memory:"),
     sink: new CollectingSink(),
-    inboxRoot: mkdtempSync(join(tmpdir(), "main-test-")),
+    dataDir: mkdtempSync(join(tmpdir(), "main-test-")),
   };
 }
 

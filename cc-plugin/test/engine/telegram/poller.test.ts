@@ -11,11 +11,11 @@ import type { Config } from "../../../src/engine/config";
 import type { PushMessage } from "../../../src/engine/sink";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 
 const config: Config = {
+  token: "t",
   allowFrom: ["111"],
-  bots: { "bot-01": { home: "/tmp/bot-01", token: "t" } },
 };
 
 function baseMsg(overrides: Partial<NormalizedMessage> = {}): NormalizedMessage {
@@ -40,7 +40,7 @@ describe("handleIncomingMessage", () => {
       config,
       conversationsDb,
       sink,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
     const hits = searchMessages(conversationsDb, "halo");
@@ -54,7 +54,7 @@ describe("handleIncomingMessage", () => {
       config,
       conversationsDb: openConversationsDb(":memory:"),
       sink: new CollectingSink(),
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
     expect(accepted).toBe(true);
@@ -73,7 +73,7 @@ describe("handleIncomingMessage", () => {
         config,
         conversationsDb,
         sink,
-        inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+        dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
       }
     );
 
@@ -84,18 +84,18 @@ describe("handleIncomingMessage", () => {
   });
 
 
-  test("downloads a single photo into the bot's inbox directory before storing", async () => {
+  test("downloads a single photo into the bot's data directory before storing", async () => {
     const server = Bun.serve({
       port: 0,
       fetch: () => new Response(new Uint8Array([9, 9, 9]), { headers: { "content-type": "image/jpeg" } }),
     });
     const conversationsDb = openConversationsDb(":memory:");
     const sink = new CollectingSink();
-    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
       baseMsg({ text: undefined, photoUrls: [`http://localhost:${server.port}/photo.jpg`] }),
-      { config, conversationsDb, sink, inboxRoot }
+      { config, conversationsDb, sink, dataDir }
     );
 
     const rows = conversationsDb.query("SELECT attachments FROM messages").all() as Array<{ attachments: string }>;
@@ -103,8 +103,13 @@ describe("handleIncomingMessage", () => {
     const attachments = JSON.parse(rows[0]!.attachments);
     expect(attachments.length).toBe(1);
     expect(existsSync(attachments[0])).toBe(true);
+    // Mendarat PERSIS di dataDir, tanpa subfolder per bot. Folder itu sudah
+    // milik satu bot; menambahkan lapisan `inbox/<bot>/` di dalamnya akan
+    // menaruh unduhan user di kotak surat antar-bot, dan pemindai inbox akan
+    // membaca .jpg sebagai payload rusak.
+    expect(dirname(attachments[0])).toBe(dataDir);
     server.stop(true);
-    rmSync(inboxRoot, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   test("an album (multiple photoUrls) downloads every photo and stores ONE message with all attachments", async () => {
@@ -115,7 +120,7 @@ describe("handleIncomingMessage", () => {
     const conversationsDb = openConversationsDb(":memory:");
     const sink = new CollectingSink();
     const sent = sink.sent;
-    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
       baseMsg({
@@ -126,7 +131,7 @@ describe("handleIncomingMessage", () => {
           `http://localhost:${server.port}/photo3.jpg`,
         ],
       }),
-      { config, conversationsDb, sink, inboxRoot }
+      { config, conversationsDb, sink, dataDir }
     );
 
     // Exactly ONE row, not three -- this is the whole point of grouping an album.
@@ -144,7 +149,7 @@ describe("handleIncomingMessage", () => {
     expect(sent[0]!.meta.attachments!.split(",").length).toBe(3);
 
     server.stop(true);
-    rmSync(inboxRoot, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   test("a button press (callbackData set) is stored and pushed as the pressed button's data, tagged kind=callback", async () => {
@@ -156,7 +161,7 @@ describe("handleIncomingMessage", () => {
       config,
       conversationsDb,
       sink,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
     const hits = searchMessages(conversationsDb, "confirm_yes");
@@ -175,7 +180,7 @@ describe("handleIncomingMessage", () => {
       config,
       conversationsDb,
       sink,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
     // The whole root cause of this sub-project: the column and the parameter
@@ -193,7 +198,7 @@ describe("handleIncomingMessage", () => {
       config,
       conversationsDb: openConversationsDb(":memory:"),
       sink,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
     // cc-plugin's SCAR-056 guard coerces with String(value), so a present-but-
@@ -210,7 +215,7 @@ describe("handleIncomingMessage", () => {
       config,
       conversationsDb,
       sink,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
     const row = conversationsDb.query("SELECT session_id FROM messages").get() as { session_id: string };
@@ -233,7 +238,7 @@ describe("handleIncomingMessage", () => {
         config,
         conversationsDb,
         sink: new CollectingSink(),
-        inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+        dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
       }
     );
 
@@ -257,7 +262,7 @@ describe("handleIncomingMessage", () => {
         config,
         conversationsDb: openConversationsDb(":memory:"),
         sink,
-        inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+        dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
       }
     );
 
@@ -280,7 +285,7 @@ describe("handleIncomingMessage", () => {
       config,
       conversationsDb,
       sink,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
     const row = conversationsDb.query("SELECT metadata FROM messages").get() as { metadata: string | null };
@@ -304,7 +309,7 @@ describe("handleIncomingMessage", () => {
     const conversationsDb = openConversationsDb(":memory:");
     const sink = new CollectingSink();
     const sent = sink.sent;
-    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
       baseMsg({
@@ -315,7 +320,7 @@ describe("handleIncomingMessage", () => {
           `http://localhost:${server.port}/ok2.jpg`,
         ],
       }),
-      { config, conversationsDb, sink, inboxRoot }
+      { config, conversationsDb, sink, dataDir }
     );
 
     // The message got through. Before this change, the rejected fetch escaped
@@ -326,7 +331,7 @@ describe("handleIncomingMessage", () => {
     expect(sent[0]!.meta.attachments!.split(",").length).toBe(2);
 
     server.stop(true);
-    rmSync(inboxRoot, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   test("every download failing still delivers the message, just with no attachments", async () => {
@@ -334,11 +339,11 @@ describe("handleIncomingMessage", () => {
     const conversationsDb = openConversationsDb(":memory:");
     const sink = new CollectingSink();
     const sent = sink.sent;
-    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
       baseMsg({ text: "foto yang hilang semua", photoUrls: [`http://localhost:${server.port}/a.jpg`] }),
-      { config, conversationsDb, sink, inboxRoot }
+      { config, conversationsDb, sink, dataDir }
     );
 
     expect(sent.length).toBe(1);
@@ -348,7 +353,7 @@ describe("handleIncomingMessage", () => {
     expect("attachments" in sent[0]!.meta).toBe(false);
 
     server.stop(true);
-    rmSync(inboxRoot, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   test("downloadAll reports how many items failed, and never leaks the bot token when they do", async () => {
@@ -359,7 +364,7 @@ describe("handleIncomingMessage", () => {
           ? new Response("gone", { status: 404 })
           : new Response(new Uint8Array([1]), { headers: { "content-type": "image/jpeg" } }),
     });
-    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "poller-test-"));
     const TOKEN = "8123456789:AAExampleSecretTokenValue";
 
     const errors: string[] = [];
@@ -372,7 +377,7 @@ describe("handleIncomingMessage", () => {
           { url: `http://localhost:${server.port}/file/bot${TOKEN}/good.jpg`, fileName: "1.jpg" },
           { url: `http://localhost:${server.port}/file/bot${TOKEN}/bad.jpg`, fileName: "2.jpg" },
         ],
-        inboxRoot
+        dataDir
       );
     } finally {
       console.error = originalError;
@@ -386,7 +391,7 @@ describe("handleIncomingMessage", () => {
     expect(errors.join("\n")).toContain("<redacted>");
 
     server.stop(true);
-    rmSync(inboxRoot, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   test("a partially failed album appends the failure suffix instead of silently losing photos", async () => {
@@ -399,7 +404,7 @@ describe("handleIncomingMessage", () => {
     });
     const sink = new CollectingSink();
     const sent = sink.sent;
-    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
       baseMsg({
@@ -412,7 +417,7 @@ describe("handleIncomingMessage", () => {
           `http://localhost:${server.port}/c.jpg`,
         ],
       }),
-      { config, conversationsDb: openConversationsDb(":memory:"), sink, inboxRoot }
+      { config, conversationsDb: openConversationsDb(":memory:"), sink, dataDir }
     );
 
     // Our own text, not the sender's -- so it may live in the content the AI
@@ -422,14 +427,14 @@ describe("handleIncomingMessage", () => {
     expect(sent[0]?.meta.album_total_count).toBe("3");
 
     server.stop(true);
-    rmSync(inboxRoot, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   test("an album whose photos ALL fail says so, instead of arriving as a bare caption", async () => {
     const server = Bun.serve({ port: 0, fetch: () => new Response("gone", { status: 404 }) });
     const sink = new CollectingSink();
     const sent = sink.sent;
-    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
       baseMsg({
@@ -437,13 +442,13 @@ describe("handleIncomingMessage", () => {
         isAlbum: true,
         photoUrls: [`http://localhost:${server.port}/a.jpg`, `http://localhost:${server.port}/b.jpg`],
       }),
-      { config, conversationsDb: openConversationsDb(":memory:"), sink, inboxRoot }
+      { config, conversationsDb: openConversationsDb(":memory:"), sink, dataDir }
     );
 
     expect(sent[0]?.text).toBe("lihat ini\n⚠️ Failed to load the album photos.");
 
     server.stop(true);
-    rmSync(inboxRoot, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   test("an album whose photos all load carries no failure notice and records its member ids", async () => {
@@ -454,7 +459,7 @@ describe("handleIncomingMessage", () => {
     const conversationsDb = openConversationsDb(":memory:");
     const sink = new CollectingSink();
     const sent = sink.sent;
-    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
       baseMsg({
@@ -468,7 +473,7 @@ describe("handleIncomingMessage", () => {
           `http://localhost:${server.port}/c.jpg`,
         ],
       }),
-      { config, conversationsDb, sink, inboxRoot }
+      { config, conversationsDb, sink, dataDir }
     );
 
     expect(sent[0]?.text).toBe("tiga foto");
@@ -479,7 +484,7 @@ describe("handleIncomingMessage", () => {
     expect(JSON.parse(row.metadata)).toEqual({ message_ids: ["101", "102", "103"], kind: "album" });
 
     server.stop(true);
-    rmSync(inboxRoot, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   test("a document is downloaded under a sanitized name and reported in meta", async () => {
@@ -490,7 +495,7 @@ describe("handleIncomingMessage", () => {
     const conversationsDb = openConversationsDb(":memory:");
     const sink = new CollectingSink();
     const sent = sink.sent;
-    const inboxRoot = mkdtempSync(join(tmpdir(), "poller-test-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "poller-test-"));
 
     await handleIncomingMessage(
       baseMsg({
@@ -503,7 +508,7 @@ describe("handleIncomingMessage", () => {
           },
         ],
       }),
-      { config, conversationsDb, sink, inboxRoot }
+      { config, conversationsDb, sink, dataDir }
     );
 
     const rows = conversationsDb.query("SELECT attachments, metadata FROM messages").all() as Array<{
@@ -522,7 +527,7 @@ describe("handleIncomingMessage", () => {
     expect(sent[0]?.meta.document_names).toBe("laporan.pdf");
 
     server.stop(true);
-    rmSync(inboxRoot, { recursive: true, force: true });
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   test("a document over the 20 MB limit is not downloaded, and the AI is told rather than left in silence", async () => {
@@ -538,7 +543,7 @@ describe("handleIncomingMessage", () => {
         config,
         conversationsDb: openConversationsDb(":memory:"),
         sink,
-        inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+        dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
       }
     );
 
@@ -559,7 +564,7 @@ describe("handleIncomingMessage", () => {
       config: { ...config, timezone: "Asia/Jakarta" },
       conversationsDb: openConversationsDb(":memory:"),
       sink,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
     // Both, not either: ts stays the unambiguous UTC instant, ts_local is what
@@ -577,7 +582,7 @@ describe("handleIncomingMessage", () => {
       config,
       conversationsDb: openConversationsDb(":memory:"),
       sink,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
     // SCAR-056: absent, never present-and-undefined -- String(undefined) would
@@ -596,7 +601,7 @@ describe("handleIncomingMessage", () => {
       config: { ...config, timezone: "Asia/Jakartaaa" },
       conversationsDb,
       sink,
-      inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
     });
 
     expect(sent.length).toBe(1);
@@ -618,7 +623,7 @@ describe("handleIncomingMessage", () => {
         config,
         conversationsDb: openConversationsDb(":memory:"),
         sink,
-        inboxRoot: mkdtempSync(join(tmpdir(), "poller-test-")),
+        dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
       }
     );
 
