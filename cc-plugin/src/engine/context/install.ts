@@ -76,6 +76,8 @@ export function pluginRootFrom(envRoot: string | undefined, engineModuleUrl: str
 export type InstallResult =
   | { kind: "installed"; chained: string | null }
   | { kind: "already-installed" }
+  /** Bridge versi lama diganti versi ini. Rantainya sengaja tidak disentuh. */
+  | { kind: "updated" }
   | { kind: "refused"; reason: string }
   | { kind: "rolled-back"; reason: string };
 
@@ -117,6 +119,33 @@ export function installBridge(deps: InstallDeps): InstallResult {
 
   const chain = resolveChain(project.value.statusLine, user.value.statusLine, deps.bridgeCommand);
   if (chain.kind === "already-bridge") return { kind: "already-installed" };
+
+  // Bridge versi lama: hanya path-nya yang diperbarui. Rantainya sengaja TIDAK
+  // disentuh -- di sana sudah tersimpan statusline user yang asli sejak
+  // pemasangan pertama, dan menulis ulang di sini akan menggantinya dengan
+  // path bridge lama. Hasilnya bridge memanggil bridge, dan statusline user
+  // hilang untuk selamanya. Terukur nyaris terjadi 2026-08-04.
+  if (chain.kind === "stale-bridge") {
+    const before = project.existed ? readFileSync(projectSettingsPath, "utf8") : null;
+    try {
+      write(
+        projectSettingsPath,
+        JSON.stringify(
+          { ...project.value, statusLine: { type: "command", command: deps.bridgeCommand } },
+          null,
+          2
+        ) + "\n"
+      );
+    } catch (err) {
+      try {
+        if (before !== null) writeFileSync(projectSettingsPath, before);
+      } catch {
+        // Rollback yang ikut gagal tidak boleh menutupi sebab aslinya.
+      }
+      return { kind: "rolled-back", reason: `gagal memperbarui path bridge: ${(err as Error).message}` };
+    }
+    return { kind: "updated" };
+  }
 
   const chained = chain.kind === "found" ? chain.command : null;
 

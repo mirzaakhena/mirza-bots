@@ -62,3 +62,47 @@ describe("resolveChain", () => {
     });
   });
 });
+
+describe("resolveChain -- bridge versi lain", () => {
+  const LAMA = 'bun run "C:/Users/Mirza/.claude/plugins/cache/mirza-bots/cc-plugin/0.10.0/bin/statusline-bridge.ts"';
+  const BARU = 'bun run "C:/Users/Mirza/.claude/plugins/cache/mirza-bots/cc-plugin/0.10.2/bin/statusline-bridge.ts"';
+
+  // INI bug kedua, terukur hidup 2026-08-04. Perintah statusLine menyematkan
+  // NOMOR VERSI di path-nya, dan versinya berubah tiap rilis. Perbandingan
+  // string persis membuat bridge versi lama terbaca sebagai "statusline
+  // pendahulu yang harus diselamatkan" -- lalu ia ditulis ke chained-statusline
+  // dan statusline user yang asli HILANG, digantikan bridge memanggil bridge.
+  test("bridge versi LAMA dikenali sebagai bridge, bukan sebagai pendahulu", () => {
+    expect(resolveChain({ command: LAMA }, { command: "sl.sh" }, BARU)).toEqual({
+      kind: "stale-bridge",
+    });
+  });
+
+  test("bridge versi lama di lapisan user juga dikenali", () => {
+    expect(resolveChain(undefined, { command: LAMA }, BARU)).toEqual({ kind: "stale-bridge" });
+  });
+
+  test("versi yang sama persis tetap already-bridge", () => {
+    expect(resolveChain({ command: BARU }, undefined, BARU)).toEqual({ kind: "already-bridge" });
+  });
+
+  // Pagar terhadap kelewat longgar: statusline milik orang lain yang kebetulan
+  // memuat kata "statusline" TIDAK boleh disangka bridge kita.
+  test("statusline lain tidak disangka bridge", () => {
+    expect(resolveChain({ command: "C:/x/my-statusline.sh" }, undefined, BARU)).toEqual({
+      kind: "found",
+      command: "C:/x/my-statusline.sh",
+    });
+    expect(
+      resolveChain({ command: 'node "C:/x/statusline-bridge.js"' }, undefined, BARU)
+    ).toEqual({ kind: "found", command: 'node "C:/x/statusline-bridge.js"' });
+  });
+
+  test("path bridge dengan backslash tetap dikenali", () => {
+    const backslash =
+      'bun run "C:\\Users\\Mirza\\.claude\\plugins\\cache\\mirza-bots\\cc-plugin\\0.9.0\\bin\\statusline-bridge.ts"';
+    expect(resolveChain({ command: backslash }, undefined, BARU)).toEqual({
+      kind: "stale-bridge",
+    });
+  });
+});
