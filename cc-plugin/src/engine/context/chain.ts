@@ -18,8 +18,14 @@ export type ChainResult =
   | { kind: "none" }
   /** Ada, dan inilah yang harus dipanggil bridge sesudah menangkap. */
   | { kind: "found"; command: string }
-  /** Bridge sudah terpasang. Memasang lagi akan membuatnya memanggil dirinya. */
-  | { kind: "already-bridge" };
+  /** Bridge versi ini sudah terpasang. Tidak ada yang perlu dikerjakan. */
+  | { kind: "already-bridge" }
+  /**
+   * Yang terpasang bridge kita, tapi versi LAIN. Path-nya perlu diperbarui --
+   * dan rantainya TIDAK boleh disentuh, karena statusline user yang asli sudah
+   * tersimpan di sana sejak pemasangan pertama.
+   */
+  | { kind: "stale-bridge" };
 
 function commandOf(statusLine: unknown): string | null {
   if (typeof statusLine !== "object" || statusLine === null || Array.isArray(statusLine)) {
@@ -32,6 +38,25 @@ function commandOf(statusLine: unknown): string | null {
   return c;
 }
 
+/**
+ * Apakah perintah ini bridge KITA, versi apa pun.
+ *
+ * Perlu ada karena perintah bridge menyematkan NOMOR VERSI di path-nya
+ * (`…/cc-plugin/0.10.0/bin/statusline-bridge.ts`) dan versinya berubah tiap
+ * rilis. Terukur hidup 2026-08-04: perbandingan string persis membuat bridge
+ * versi lama terbaca sebagai "statusline pendahulu yang harus diselamatkan",
+ * dan menulisnya ke rantai akan MENGHAPUS statusline user yang asli --
+ * menggantinya dengan bridge yang memanggil bridge.
+ *
+ * Polanya sengaja spesifik (folder plugin + nama berkas persis), bukan sekadar
+ * mencari kata "statusline": statusline milik orang lain boleh saja bernama
+ * mirip, dan menyangkanya milik kita justru membuang punya user.
+ */
+function isOurBridge(command: string): boolean {
+  const p = command.replace(/\\/g, "/").toLowerCase();
+  return p.includes("/cc-plugin/") && p.includes("/bin/statusline-bridge.ts");
+}
+
 export function resolveChain(
   projectStatusLine: unknown,
   userStatusLine: unknown,
@@ -42,5 +67,6 @@ export function resolveChain(
   const effective = commandOf(projectStatusLine) ?? commandOf(userStatusLine);
   if (effective === null) return { kind: "none" };
   if (effective === bridgeCommand) return { kind: "already-bridge" };
+  if (isOurBridge(effective)) return { kind: "stale-bridge" };
   return { kind: "found", command: effective };
 }

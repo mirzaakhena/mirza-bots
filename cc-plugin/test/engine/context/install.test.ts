@@ -164,6 +164,46 @@ describe("installBridge", () => {
   });
 });
 
+describe("installBridge -- bridge versi lama", () => {
+  const LAMA = 'bun run "C:/Users/Mirza/.claude/plugins/cache/mirza-bots/cc-plugin/0.10.0/bin/statusline-bridge.ts"';
+
+  // Skenario terukur hidup 2026-08-04: plugin di-update, tapi settings.json
+  // masih menunjuk bridge versi lama karena versinya tersemat di path.
+  test("path diperbarui, dan RANTAINYA TIDAK DISENTUH", () => {
+    const s = scratch();
+    writeFileSync(s.projectSettings, JSON.stringify({ statusLine: { command: LAMA } }));
+    writeFileSync(s.userSettingsPath, JSON.stringify({ statusLine: { command: "sl.sh" } }));
+    mkdirSync(join(s.chainPath, ".."), { recursive: true });
+    // Rantai sudah berisi statusline user yang ASLI, dari pemasangan pertama.
+    writeFileSync(s.chainPath, "C:/Users/Mirza/.claude/statusline-progress.sh");
+
+    const r = installBridge(s);
+
+    expect(r).toEqual({ kind: "updated" });
+    expect(JSON.parse(readFileSync(s.projectSettings, "utf8")).statusLine.command).toBe(BRIDGE);
+    // INI yang paling penting: menulis ulang rantai di sini akan menimpanya
+    // dengan path bridge lama, dan statusline user hilang selamanya.
+    expect(readFileSync(s.chainPath, "utf8")).toBe(
+      "C:/Users/Mirza/.claude/statusline-progress.sh"
+    );
+  });
+
+  test("setting lain tetap utuh saat path bridge diperbarui", () => {
+    const s = scratch();
+    writeFileSync(
+      s.projectSettings,
+      JSON.stringify({ env: { FOO: "bar" }, statusLine: { command: LAMA } })
+    );
+    writeFileSync(s.userSettingsPath, JSON.stringify({}));
+    mkdirSync(join(s.chainPath, ".."), { recursive: true });
+    writeFileSync(s.chainPath, "sl.sh");
+
+    installBridge(s);
+
+    expect(JSON.parse(readFileSync(s.projectSettings, "utf8")).env).toEqual({ FOO: "bar" });
+  });
+});
+
 describe("buildBridgeCommand + pluginRootFrom", () => {
   test("perintah selalu forward slash, walau root-nya backslash Windows", () => {
     expect(buildBridgeCommand("C:\\plugins\\cc-plugin")).toBe(
