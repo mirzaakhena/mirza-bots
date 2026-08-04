@@ -8,7 +8,6 @@ import { join } from "node:path";
 import {
   ensureStateDirs,
   configPath,
-  fleetDbPath,
   conversationsDbPath,
   stateRoot,
   lockPath,
@@ -23,7 +22,6 @@ import { loadConfig } from "./config";
 import { resolveBotByCwd } from "./identity";
 import { acquireBotLock, releaseBotLock } from "./lock";
 import { openConversationsDb, insertMessage, encodeMetadata } from "./db/conversations-schema";
-import { openFleetDb } from "./db/fleet-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
 import { safeName, MAX_DOCUMENT_BYTES } from "./telegram/media";
@@ -337,7 +335,6 @@ export function startEngine(cwd: string): EngineStart {
   }
 
   const conversationsDb = openConversationsDb(conversationsDbPath());
-  const fleetDb = openFleetDb(fleetDbPath());
 
   // Held until onPush registers a handler rather than dropped: polling starts
   // before the MCP server finishes connecting, and losing that window would look
@@ -776,7 +773,6 @@ export function startEngine(cwd: string): EngineStart {
         typing.stopAll();
         releaseBotLock(lockPath(botName), process.pid);
         conversationsDb.close();
-        fleetDb.close();
       },
     },
   };

@@ -3,7 +3,6 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openConversationsDb } from "../../../src/engine/db/conversations-schema";
-import { openFleetDb } from "../../../src/engine/db/fleet-schema";
 
 // WAL lets readers and writers work in parallel, but two WRITERS still take
 // turns. While one daemon owned both files that never mattered. Now up to six
@@ -16,8 +15,3 @@ test("conversations db waits instead of giving up when another writer holds the 
   db.close();
 });
 
-test("fleet db waits too", () => {
-  const db = openFleetDb(join(mkdtempSync(join(tmpdir(), "db-")), "f.db"));
-  expect(db.query("PRAGMA busy_timeout").get()).toEqual({ timeout: 5000 });
-  db.close();
-});
