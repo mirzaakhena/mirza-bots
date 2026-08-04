@@ -148,10 +148,12 @@ const HISTORY_COLUMNS = `m.id AS id, m.ts AS ts, m.bot AS bot, m.chat_id AS chat
 /**
  * Messages around a given Telegram message id, in chronological order.
  *
- * `bot` is required, never defaulted here: K-3 puts the "default to the caller,
- * cross bots only on request" decision at the socket handler, which is the one
- * place that knows who is asking. A default in this function would silently
- * change what every existing caller of the module sees.
+ * TIDAK ADA penyaring `bot`, dan itu keputusan, bukan kelalaian. Sesudah state
+ * per-folder, berkas database ini milik SATU bot, jadi filternya tidak
+ * menyaring apa pun -- tapi begitu foldernya di-rename (cara resmi memindahkan
+ * bot sekarang), baris lama membawa nama lama dan filternya mulai membuang
+ * riwayat DIAM-DIAM. Kolom `bot` tetap ditulis sebagai jejak; membuang kolomnya
+ * adalah keputusan user yang belum diambil.
  *
  * Returns [] when the anchor is unknown -- deliberately NOT "the newest
  * messages", which would let the AI answer confidently about a message that was
@@ -159,20 +161,20 @@ const HISTORY_COLUMNS = `m.id AS id, m.ts AS ts, m.bot AS bot, m.chat_id AS chat
  */
 export function getMessagesAround(
   db: Database,
-  opts: { bot: string; messageId: string; before: number; after: number }
+  opts: { messageId: string; before: number; after: number }
 ): HistoryMessage[] {
   const anchor = db
-    .query("SELECT id FROM messages WHERE bot = ? AND message_id = ? ORDER BY id DESC LIMIT 1")
-    .get(opts.bot, opts.messageId) as { id: number } | null;
+    .query("SELECT id FROM messages WHERE message_id = ? ORDER BY id DESC LIMIT 1")
+    .get(opts.messageId) as { id: number } | null;
   if (!anchor) return [];
 
   const preceding = (
     opts.before > 0
       ? (db
           .query(
-            `SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.bot = ? AND m.id < ? ORDER BY m.id DESC LIMIT ?`
+            `SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.id < ? ORDER BY m.id DESC LIMIT ?`
           )
-          .all(opts.bot, anchor.id, opts.before) as HistoryMessage[])
+          .all(anchor.id, opts.before) as HistoryMessage[])
       : []
   ).reverse();
 
@@ -184,18 +186,17 @@ export function getMessagesAround(
     opts.after > 0
       ? (db
           .query(
-            `SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.bot = ? AND m.id > ? ORDER BY m.id ASC LIMIT ?`
+            `SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.id > ? ORDER BY m.id ASC LIMIT ?`
           )
-          .all(opts.bot, anchor.id, opts.after) as HistoryMessage[])
+          .all(anchor.id, opts.after) as HistoryMessage[])
       : [];
 
   return [...preceding, anchorRow, ...following];
 }
 
 /**
- * FTS5 keyword search. `opts.bot` is optional here for the same reason as above:
- * the bot-scoping decision lives at the socket handler. Existing callers that
- * pass no options keep their unfiltered behaviour.
+ * FTS5 keyword search atas database milik bot ini. Tanpa penyaring `bot`,
+ * alasannya sama persis dengan getMessagesAround di atas.
  *
  * Throws on a malformed query (verified: an unbalanced quote gives
  * "unterminated string"). Deliberately not swallowed -- a silent [] would be
@@ -204,21 +205,12 @@ export function getMessagesAround(
 export function searchMessages(
   db: Database,
   query: string,
-  opts: { bot?: string; limit?: number } = {}
+  opts: { limit?: number } = {}
 ): HistoryMessage[] {
-  const limit = opts.limit ?? 20;
-  if (opts.bot !== undefined) {
-    return db
-      .query(
-        `SELECT ${HISTORY_COLUMNS} FROM messages_fts f JOIN messages m ON m.id = f.rowid
-         WHERE messages_fts MATCH ? AND m.bot = ? ORDER BY m.id DESC LIMIT ?`
-      )
-      .all(query, opts.bot, limit) as HistoryMessage[];
-  }
   return db
     .query(
       `SELECT ${HISTORY_COLUMNS} FROM messages_fts f JOIN messages m ON m.id = f.rowid
        WHERE messages_fts MATCH ? ORDER BY m.id DESC LIMIT ?`
     )
-    .all(query, limit) as HistoryMessage[];
+    .all(query, opts.limit ?? 20) as HistoryMessage[];
 }

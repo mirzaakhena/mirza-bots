@@ -87,13 +87,8 @@ export type Engine = {
     replyTo?: string,
     files?: string[]
   ): Promise<ReplyResult>;
-  history(opts: {
-    messageId: string;
-    before?: number;
-    after?: number;
-    bot?: string;
-  }): Promise<HistoryMessage[]>;
-  search(opts: { query: string; limit?: number; bot?: string }): Promise<HistoryMessage[]>;
+  history(opts: { messageId: string; before?: number; after?: number }): Promise<HistoryMessage[]>;
+  search(opts: { query: string; limit?: number }): Promise<HistoryMessage[]>;
   onPush(handler: (msg: PushMessage) => void): void;
   close(): void;
 };
@@ -750,7 +745,7 @@ export function startEngine(cwd: string): EngineStart {
       },
 
       async history(opts): Promise<HistoryMessage[]> {
-        const res = handleHistoryRequest(opts, botName, config, conversationsDb);
+        const res = handleHistoryRequest(opts, conversationsDb);
         // Thrown, not returned as {ok:false}: the caller awaits a value now
         // instead of reading one line off a socket, and "the query was refused"
         // must not arrive looking like "nothing matched".
@@ -759,7 +754,7 @@ export function startEngine(cwd: string): EngineStart {
       },
 
       async search(opts): Promise<HistoryMessage[]> {
-        const res = handleSearchRequest(opts, botName, config, conversationsDb);
+        const res = handleSearchRequest(opts, conversationsDb);
         if (!res.ok) throw new Error(res.error);
         return res.messages;
       },
