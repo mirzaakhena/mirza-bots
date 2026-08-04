@@ -231,6 +231,32 @@ Butuh [Bun](https://bun.sh) 1.3+. Satu paket:
 cd cc-plugin && bun install
 ```
 
+### Launcher `mirza-bot`
+
+`bin/mirza-bot.cmd` (Windows) menjalankan satu bot lewat `cc-wrapper` dari mana
+saja. Pasang dengan menyalinnya ke folder yang ada di PATH:
+
+```bash
+cp bin/mirza-bot.cmd ~/.local/bin/
+```
+
+```
+mirza-bot                 folder tempat kamu berdiri
+mirza-bot bot-uji         <workspace>\bot-uji
+mirza-bot D:\some\path    path itu
+mirza-bot -u bot-uji      update cc-plugin dulu, baru jalan
+```
+
+Ia mencetak versi `cc-plugin` yang **benar-benar terpasang** saat start, dibaca
+dari `installed_plugins.json`. Itu bukan hiasan: plugin dimuat dari **cache**,
+bukan dari repo, jadi kode yang baru di-merge tidak berjalan sampai plugin
+di-update — dan dua kali di proyek ini waktu terbuang menguji perbaikan yang
+tidak pernah dijalankan. Angka ketinggalan → ulangi dengan `-u`.
+
+Sengaja terpisah dari `mirza-cc`, launcher sistem lama: berkas itu melayani bot
+harian, dan menumpanginya berarti mempertaruhkan yang produksi demi yang
+percobaan.
+
 ## Konfigurasi
 
 Buat `~/.claude/mirza-bots/config.json` (folder ini dibuat otomatis saat
