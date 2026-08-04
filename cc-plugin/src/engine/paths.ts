@@ -10,10 +10,6 @@ export function configPath(): string {
   return join(stateRoot(), "config.json");
 }
 
-export function fleetDbPath(): string {
-  return join(stateRoot(), "fleet.db");
-}
-
 export function conversationsDbPath(): string {
   return join(stateRoot(), "conversations.db");
 }

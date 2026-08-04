@@ -2,7 +2,6 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openFleetDb, FLEET_TABLES } from "../../src/engine/db/fleet-schema";
 import { openConversationsDb } from "../../src/engine/db/conversations-schema";
 import { buildDoctorReport } from "../../src/engine/doctor";
 import type { Config } from "../../src/engine/config";
@@ -19,13 +18,11 @@ describe("doctor report", () => {
   test("reports bot count, fleet tables, and conversations readiness", () => {
     const report = buildDoctorReport(
       config,
-      openFleetDb(":memory:"),
       openConversationsDb(":memory:"),
       "0.1.0"
     );
 
     expect(report.botCount).toBe(2);
-    expect(report.fleetTables.length).toBe(FLEET_TABLES.length);
     expect(report.conversationsReady).toBe(true);
     expect(report.version).toBe("0.1.0");
   });
@@ -42,7 +39,6 @@ describe("doctor report", () => {
     try {
       const report = buildDoctorReport(
         config,
-        openFleetDb(":memory:"),
         openConversationsDb(":memory:"),
         "0.1.0"
       );
@@ -73,7 +69,6 @@ describe("doctor report", () => {
     try {
       const report = buildDoctorReport(
         config,
-        openFleetDb(":memory:"),
         openConversationsDb(":memory:"),
         "0.1.0"
       );

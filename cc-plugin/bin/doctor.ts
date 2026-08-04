@@ -3,15 +3,14 @@
  * `bun run doctor` -- one look at whether this machine's fleet is healthy.
  *
  * It used to ask the daemon over the socket. There is no daemon, so it now reads
- * the same files an engine process would: the config, both databases, and the
+ * the same files an engine process would: the config, the conversations database, and the
  * lock directory. That also makes it useful in the case it is most needed --
  * when nothing is running at all, which the old version could not report on
  * because it had nobody to ask.
  */
 import { loadConfig } from "../src/engine/config";
-import { configPath, conversationsDbPath, fleetDbPath, ensureStateDirs } from "../src/engine/paths";
+import { configPath, conversationsDbPath, ensureStateDirs } from "../src/engine/paths";
 import { openConversationsDb } from "../src/engine/db/conversations-schema";
-import { openFleetDb } from "../src/engine/db/fleet-schema";
 import { buildDoctorReport } from "../src/engine/doctor";
 import pkg from "../package.json";
 
@@ -21,7 +20,6 @@ function main(): void {
     const config = loadConfig(configPath());
     const report = buildDoctorReport(
       config,
-      openFleetDb(fleetDbPath()),
       openConversationsDb(conversationsDbPath()),
       pkg.version
     );

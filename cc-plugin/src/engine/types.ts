@@ -32,7 +32,6 @@ export type DoctorReport = {
   botCount: number;
   /** One entry per configured bot, held or not -- see doctor.ts for why. */
   locks: LockStatus[];
-  fleetTables: string[];
   conversationsReady: boolean;
   version: string;
 };
