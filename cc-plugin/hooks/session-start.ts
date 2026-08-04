@@ -27,17 +27,12 @@
  * appends its own outcome. Diagnosing the previous version cost a full round of
  * guesswork precisely because it left nothing behind either way.
  */
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 
-function stateRoot(): string {
-  return process.env.MIRZA_BOTS_HOME ?? join(homedir(), ".claude", "mirza-bots");
-}
-
-function note(line: string): void {
+function note(botHome: string, line: string): void {
   try {
-    const dir = join(stateRoot(), "logs");
+    const dir = join(botHome, "logs");
     mkdirSync(dir, { recursive: true });
     appendFileSync(join(dir, "session-hook.log"), `${new Date().toISOString()} ${line}\n`);
   } catch {
@@ -61,90 +56,63 @@ export function sessionIdFrom(input: any, env: NodeJS.ProcessEnv): string | unde
 }
 
 /**
- * Which bot owns this directory, read straight from config.json.
+ * Sebuah folder adalah bot bila ia memuat config.json.
  *
- * Plain JSON.parse rather than the engine's zod-validated loader: this hook needs
- * exactly one string out of that file, and pulling in the validator is what tied
- * the previous version to the engine's whole import graph. The engine still
- * validates the same file properly, in the place where a complaint reaches
- * someone who can act on it.
+ * Menggantikan `botForCwd`, yang membaca daftar `bots` dan mencocokkan `home`
+ * tiap entri ke cwd. Pencocokan itu punya sekelas bug sendiri -- separator,
+ * trailing slash, kapitalisasi -- dan salah satunya benar-benar terjadi
+ * (2026-08-02: CC memberi forward slash, config menyimpan backslash, dan bot
+ * tidak mengenali rumahnya sendiri). Keberadaan sebuah berkas tidak bisa salah
+ * cocok.
+ *
+ * Aturan yang sama dipakai engine dan pemindai tetangga. Dieja ulang di sini,
+ * bukan diimpor, karena hook ini hanya boleh mengimpor `node:` (lihat header).
  */
-/**
- * Same-directory test, spelled out here rather than imported from the engine.
- *
- * This hook imports nothing but `node:` on purpose (see the header), so it keeps
- * its own five-line copy instead of reaching into src/. The duplication is the
- * price of a hook that cannot be broken by anything upstream of it.
- *
- * Separators only, never case: Windows would call C:/BOT and C:/bot the same and
- * Linux would not, and answering "same" for two different directories is worse
- * than missing a match -- a missed match shows up in this hook's own log.
- */
-function normalize(p: string): string {
-  const withSlashes = p.split("\\").join("/");
-  if (/^\/$/.test(withSlashes) || /^[A-Za-z]:\/$/.test(withSlashes)) return withSlashes;
-  return withSlashes.endsWith("/") ? withSlashes.slice(0, -1) : withSlashes;
+export function isBotFolder(cwd: string): boolean {
+  return existsSync(join(cwd, "config.json"));
 }
 
-export function botForCwd(configRaw: string, cwd: string): string | undefined {
-  let parsed: any;
-  try {
-    parsed = JSON.parse(configRaw.replace(/^﻿/, ""));
-  } catch {
-    return undefined;
-  }
-  const bots = parsed?.bots;
-  if (typeof bots !== "object" || bots === null) return undefined;
-  for (const [name, bot] of Object.entries<any>(bots)) {
-    if (typeof bot?.home === "string" && normalize(bot.home) === normalize(cwd)) return name;
-  }
-  return undefined;
+/** Nama bot = nama folder. Salinan sengaja dari paths.botNameFrom, alasan sama. */
+export function botNameOf(cwd: string): string {
+  const n = cwd.split("\\").join("/").replace(/\/+$/, "");
+  return n.slice(n.lastIndexOf("/") + 1);
 }
 
 function main(): void {
-  note("fired");
+  // cwd dihitung PERTAMA, karena sekarang ia juga menentukan ke mana log
+  // ditulis. Tanpa itu tidak ada tempat untuk mencatat "fired".
+  const cwd = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  note(cwd, "fired");
 
   let raw = "";
   try {
     raw = readFileSync(0, "utf8");
   } catch {
-    note("stdin unreadable (falling back to env)");
+    note(cwd, "stdin unreadable (falling back to env)");
   }
 
   const payload = parseHookInput(raw) ?? {};
   const id = sessionIdFrom(payload, process.env);
   if (id === undefined) {
-    note("no session id in payload or env -- leaving the previous value alone");
+    note(cwd, "no session id in payload or env -- leaving the previous value alone");
     return;
   }
 
-  const cwd = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-  let configRaw = "";
-  try {
-    configRaw = readFileSync(join(stateRoot(), "config.json"), "utf8");
-  } catch {
-    note(`config.json unreadable; cwd=${cwd}`);
-    return;
-  }
-
-  const bot = botForCwd(configRaw, cwd);
-  if (bot === undefined) {
+  if (!isBotFolder(cwd)) {
     // Not a bot folder. Nothing to record, and nothing to complain about either:
     // saying so here would mean shouting in every unrelated project the user
     // opens, which is how a useful signal turns into noise people filter out.
-    note(`no bot has home=${cwd} -- nothing to record`);
+    note(cwd, `no config.json in ${cwd} -- nothing to record`);
     return;
   }
 
   try {
-    const dir = join(stateRoot(), "sessions");
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${bot}.id`), id);
-    note(`wrote ${bot} = ${id} (source=${payload?.source ?? "-"})`);
+    writeFileSync(join(cwd, "session.id"), id);
+    note(cwd, `wrote ${botNameOf(cwd)} = ${id} (source=${payload?.source ?? "-"})`);
   } catch (err) {
     // Worst case the engine keeps using the previous id -- exactly where it
     // would have been without this hook, never worse.
-    note(`write failed for ${bot}: ${err}`);
+    note(cwd, `write failed for ${botNameOf(cwd)}: ${err}`);
   }
 }
 

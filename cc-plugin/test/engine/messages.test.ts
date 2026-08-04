@@ -316,7 +316,9 @@ describe("buildTappedMessageEdit (U-2: a tapped keyboard must not stay tappable)
   });
 
   test("carries the original entities through, so formatting survives the edit", () => {
-    const entities = [{ type: "bold", offset: 0, length: 5 }];
+    // `as const` pada type: MessageEntity grammy adalah union yang disempitkan
+    // oleh field itu, dan `string` polos cocok dengan tidak satu pun anggotanya.
+    const entities = [{ type: "bold" as const, offset: 0, length: 5 }];
     const edit = buildTappedMessageEdit({ text: "Pilih salah satu:", entities }, "confirm_no");
 
     // editMessageText treats the new text as plain, so an edit without entities

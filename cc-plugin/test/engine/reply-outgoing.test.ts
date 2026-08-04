@@ -27,7 +27,7 @@ test("a stored reply is findable by search, so history is no longer one-sided", 
   const db = openConversationsDb(":memory:");
   storeOutgoing(db, { bot: "bot-uji", chatId: "111", messageId: "512", text: "jawaban unik xyzzy" });
 
-  const hits = searchMessages(db, "xyzzy", { bot: "bot-uji" });
+  const hits = searchMessages(db, "xyzzy");
   expect(hits.length).toBe(1);
   expect(hits[0]!.source).toBe("assistant");
 });

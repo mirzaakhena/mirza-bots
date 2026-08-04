@@ -25,10 +25,14 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { botForCwd } from "../src/engine/context/bot-for-cwd";
 import { planChainInvocation } from "../src/engine/context/invoke";
 import { writeCapturedStatus } from "../src/engine/context/status-file";
-import { chainedStatuslinePath, configPath, statusPath } from "../src/engine/paths";
+import {
+  resolveBotHome,
+  chainedStatuslinePathIn,
+  configPathIn,
+  statusPathIn,
+} from "../src/engine/paths";
 
 // Baca stdin. Gagal di sini pun tidak boleh menghentikan penerusan -- lihat
 // urutan kepentingan di atas.
@@ -39,16 +43,18 @@ try {
   input = "";
 }
 
+// Dihitung sekali, dipakai kedua tugas. Folder bot ADALAH project dir-nya:
+// tidak ada lagi config armada untuk dicari, jadi "bot mana ini" berhenti jadi
+// pencarian dan menjadi keberadaan sebuah berkas.
+const botHome = resolveBotHome(process.env, process.cwd());
+
 // --- Tugas 2: tangkap (boleh gagal diam-diam) ---
 try {
-  const cwd = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-  const cfgPath = configPath();
-  const config = existsSync(cfgPath) ? JSON.parse(readFileSync(cfgPath, "utf8")) : {};
-  const bot = botForCwd(config, cwd);
   // Folder yang bukan rumah bot mana pun: tidak ditulis apa-apa. Ia tetap
-  // mendapat statusline-nya lewat blok di bawah.
-  if (bot !== null && input !== "") {
-    writeCapturedStatus(statusPath(bot), JSON.parse(input), Date.now());
+  // mendapat statusline-nya lewat blok di bawah -- folder yang bukan bot tidak
+  // boleh kehilangan baris statusnya hanya karena bridge kebetulan terpasang.
+  if (existsSync(configPathIn(botHome)) && input !== "") {
+    writeCapturedStatus(statusPathIn(botHome), JSON.parse(input), Date.now());
   }
 } catch {
   // Sengaja kosong. Menangkap adalah tugas kedua; kegagalannya tidak boleh
@@ -56,7 +62,7 @@ try {
 }
 
 // --- Tugas 1: teruskan (selalu berjalan) ---
-const chainPath = chainedStatuslinePath();
+const chainPath = chainedStatuslinePathIn(botHome);
 if (existsSync(chainPath)) {
   const chain = readFileSync(chainPath, "utf8").trim();
   // Rantai kosong berarti memang tidak ada pendahulu -- BUKAN berarti "belum

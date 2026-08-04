@@ -6,7 +6,7 @@ import {
   writeCapturedStatus,
   readCapturedStatus,
 } from "../../../src/engine/context/status-file";
-import { statusDir, statusPath } from "../../../src/engine/paths";
+import { statusPathIn } from "../../../src/engine/paths";
 
 const NOW = 1785784649346;
 
@@ -58,13 +58,14 @@ describe("status-file", () => {
 });
 
 describe("paths", () => {
-  test("statusPath berada di dalam statusDir dan dinamai per bot", () => {
-    expect(statusPath("bot-uji")).toBe(join(statusDir(), "bot-uji.json"));
-  });
-
-  // Sejajar sessions/<bot>.id -- state sistem baru terpusat, bukan tersebar di
-  // folder tiap project. Itu justru yang dibenahi rewrite ini.
-  test("statusDir berada di bawah state root, di folder status", () => {
-    expect(statusDir().replace(/\\/g, "/")).toMatch(/\/status$/);
+  // Dulu test ini mengunci status/<bot>.json di bawah state root terpusat,
+  // dengan alasan "state tersebar itu yang dibenahi rewrite ini". Alasan itu
+  // dibalik user 2026-08-04, dan pembalikannya punya dasar baru yang dulu belum
+  // ada: memindahkan bot ternyata mahal, dan dengan state di folder, pindah bot
+  // = rename folder. Namanya pun ikut disederhanakan -- nama bot sudah dijawab
+  // nama folder, jadi menuliskannya lagi di nama berkas cuma pengulangan.
+  test("status.json berada di dalam folder bot, tanpa nama bot di namanya", () => {
+    const home = join("C:", "w", "mirza_01_bot");
+    expect(statusPathIn(home)).toBe(join(home, "status.json"));
   });
 });

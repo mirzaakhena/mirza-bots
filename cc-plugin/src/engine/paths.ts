@@ -13,7 +13,10 @@ import { mkdirSync, existsSync } from "node:fs";
  * STATE ROOT, dan tidak ada lagi state root untuk dipindahkan.
  */
 export function resolveBotHome(
-  env: { CLAUDE_PROJECT_DIR?: string | undefined },
+  // Record, bukan objek satu-field: `process.env` bertipe ProcessEnv, dan tsc
+  // menolak melewatkannya ke bentuk yang lebih sempit ("no properties in
+  // common"). Ini persis kelas error yang `bun test` tidak bisa lihat.
+  env: Record<string, string | undefined>,
   cwd: string
 ): string {
   const fromEnv = env.CLAUDE_PROJECT_DIR?.trim();
