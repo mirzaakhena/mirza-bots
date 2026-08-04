@@ -10,34 +10,31 @@ rem  Pemakaian:
 rem    mirza-bot                run untuk folder tempat kamu berdiri
 rem    mirza-bot bot-uji        run untuk C:\Users\Mirza\workspace\bot-uji
 rem    mirza-bot D:\some\path   run untuk path itu
-rem    mirza-bot -u bot-uji     update cc-plugin dulu, baru run
+rem
+rem  Update cc-plugin dijalankan SELALU, bukan lewat flag. Plugin dimuat dari
+rem  cache dan bukan dari repo, jadi "lupa update" = menjalankan kode lama
+rem  tanpa sadar -- sudah dua kali menghabiskan waktu di proyek ini. Menyerahkan
+rem  itu ke ingatan manusia adalah beban yang salah alamat.
 rem
 rem  Terpasang di: %USERPROFILE%\.local\bin\mirza-bot.cmd  (sudah di PATH)
+rem  Sumbernya di repo: mirza-bots\bin\mirza-bot.cmd
 rem ============================================================================
 setlocal
 set "WRAPPER=C:\Users\Mirza\workspace\mirza-bots\cc-wrapper"
 set "WORKSPACE=C:\Users\Mirza\workspace"
 set "INSTALLED=%USERPROFILE%\.claude\plugins\installed_plugins.json"
 
-set "TARGET=%~1"
-if /i "%TARGET%"=="-u" (
-  call claude plugin marketplace update mirza-bots
-  call claude plugin update cc-plugin@mirza-bots
-  set "TARGET=%~2"
-)
-
-if "%TARGET%"=="" (
+if "%~1"=="" (
   set "CLAUDE_PROJECT_DIR=%CD%"
-) else if exist "%TARGET%\" (
-  set "CLAUDE_PROJECT_DIR=%TARGET%"
+) else if exist "%~1\" (
+  set "CLAUDE_PROJECT_DIR=%~f1"
 ) else (
-  set "CLAUDE_PROJECT_DIR=%WORKSPACE%\%TARGET%"
+  set "CLAUDE_PROJECT_DIR=%WORKSPACE%\%~1"
 )
 
-rem Versi cc-plugin yang BENAR-BENAR terpasang. Dicetak saja, tidak memblokir:
-rem plugin dimuat dari cache, jadi tanpa angka ini kamu bisa menjalankan kode
-rem lama tanpa sadar -- sudah dua kali kejadian. Kalau angkanya ketinggalan,
-rem jalankan ulang dengan -u.
+call claude plugin marketplace update mirza-bots >nul 2>&1
+call claude plugin update cc-plugin@mirza-bots >nul 2>&1
+
 for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "((ConvertFrom-Json (Get-Content -Raw '%INSTALLED%')).plugins.'cc-plugin@mirza-bots')[0].version"`) do set "VER=%%v"
 
 echo [mirza-bot] project   : %CLAUDE_PROJECT_DIR%
