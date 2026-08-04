@@ -17,10 +17,16 @@ import { KNOWN_COMMANDS } from "./classify";
 /** Bentuk yang diminta Telegram: nama telanjang, tanpa garis miring. */
 export type BotCommandEntry = { command: string; description: string };
 
+/**
+ * Teks yang tampil di menu "/" Telegram. Disalin PERSIS dari `menuHint` sistem
+ * lama (`plugins/telegram/commands-registry.ts`) supaya user tidak melihat dua
+ * bot yang sama berbicara dengan dua suara berbeda saat migrasi berlangsung --
+ * dan bahasanya Inggris karena itu yang sudah dipakai enam bot hariannya.
+ */
 export const COMMAND_DESCRIPTIONS: Record<string, string> = {
-  "/rename": "Ganti nama sesi yang sedang berjalan",
-  "/new": "Mulai sesi baru dengan nama",
-  "/context": "Pemakaian context, rate limit, dan biaya sesi",
+  "/context": "Context window and session info",
+  "/rename": "Rename the current session",
+  "/new": "Start a fresh named session",
 };
 
 export function buildCommandMenu(): BotCommandEntry[] {

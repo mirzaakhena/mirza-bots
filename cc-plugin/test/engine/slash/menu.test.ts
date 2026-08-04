@@ -61,3 +61,15 @@ describe("buildCommandMenu", () => {
     }
   });
 });
+
+describe("deskripsi menu sama dengan sistem lama", () => {
+  // Disalin persis dari menuHint di plugins/telegram/commands-registry.ts.
+  // Dikunci sebagai teks harfiah, bukan "ada isinya": selama migrasi, dua bot
+  // yang sama tidak boleh berbicara dengan dua suara berbeda di menu yang
+  // dilihat user setiap hari.
+  test("teks persis, bahasa Inggris, sama seperti sistem lama", () => {
+    expect(COMMAND_DESCRIPTIONS["/context"]).toBe("Context window and session info");
+    expect(COMMAND_DESCRIPTIONS["/rename"]).toBe("Rename the current session");
+    expect(COMMAND_DESCRIPTIONS["/new"]).toBe("Start a fresh named session");
+  });
+});
