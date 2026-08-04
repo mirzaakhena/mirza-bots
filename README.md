@@ -122,8 +122,11 @@ sesi).
 - **Dua tool riwayat untuk AI:** `read_history` (ambil pesan di sekitar sebuah
   `message_id` — inilah yang membuat "telusuri beberapa pesan setelah yang saya
   kutip" bisa dijawab) dan `search_history` (cari kata kunci, lewat FTS5).
-  Keduanya **default ke bot pemanggil**; melihat percakapan bot lain hanya
-  terjadi kalau parameter `bot` disebut sengaja.
+  Keduanya **selalu membaca percakapan bot pemanggil**, dan tidak ada cara
+  menyeberang. Parameter `bot` opsional yang dulu ada dibuang 2026-08-04 atas
+  keputusan user: ia menjanjikan sesuatu yang tidak bisa diberikan begitu tiap
+  bot memegang `conversations.db`-nya sendiri. Diukur sebelum dibuang —
+  lintas-bot belum pernah benar-benar terjadi.
 - **Keyboard dicopot setelah tombol ditap.** Pesannya diedit tanpa `reply_markup`
   (itulah yang mencopot keyboard-nya) dan ditambahi `→ <pilihan>`, jadi prompt yang
   sama tidak bisa dijawab dua kali. Entities aslinya dikirim ulang supaya format

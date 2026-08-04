@@ -129,22 +129,20 @@ export function buildServer(backend: ServerBackend): McpServer {
     "read_history",
     {
       description:
-        "Read stored conversation history around a Telegram message id. Use this when a message quotes or replies to an earlier one and you need what came before or after it -- the quoted message's id arrives as `reply_to_message_id` in a notification's meta. Defaults to this session's own bot; pass `bot` only when deliberately looking at another bot's conversation. " +
+        "Read stored conversation history around a Telegram message id. Use this when a message quotes or replies to an earlier one and you need what came before or after it -- the quoted message's id arrives as `reply_to_message_id` in a notification's meta. Always reads this session's own bot. " +
         "NEVER ask the user for a message id. They never see one: ids are an internal Telegram detail, not something a person can read off their screen. If you do not have an id, ask them to quote the message instead -- quoting delivers the id to you automatically. Do not print ids at them either.",
       inputSchema: {
         message_id: z.string().min(1),
         before: z.number().int().min(0).max(50).optional(),
         after: z.number().int().min(0).max(50).optional(),
-        bot: z.string().min(1).optional(),
       },
     },
-    async ({ message_id, before, after, bot }) => {
+    async ({ message_id, before, after }) => {
       if (isUnavailable(backend)) return unavailableAnswer(backend);
       const messages = await backend.history({
         messageId: message_id,
         ...(before !== undefined ? { before } : {}),
         ...(after !== undefined ? { after } : {}),
-        ...(bot !== undefined ? { bot } : {}),
       });
       return { content: [{ type: "text", text: renderMessages(messages) }] };
     }
@@ -154,19 +152,17 @@ export function buildServer(backend: ServerBackend): McpServer {
     "search_history",
     {
       description:
-        "Search stored conversation history by keyword (SQLite FTS5). Defaults to this session's own bot; pass `bot` only when deliberately searching another bot's conversation. Keep queries to plain words -- quotes and operators like AND/OR are rejected by the search engine.",
+        "Search stored conversation history by keyword (SQLite FTS5). Always searches this session's own bot. Keep queries to plain words -- quotes and operators like AND/OR are rejected by the search engine.",
       inputSchema: {
         query: z.string().min(1),
         limit: z.number().int().min(1).max(50).optional(),
-        bot: z.string().min(1).optional(),
       },
     },
-    async ({ query, limit, bot }) => {
+    async ({ query, limit }) => {
       if (isUnavailable(backend)) return unavailableAnswer(backend);
       const messages = await backend.search({
         query,
         ...(limit !== undefined ? { limit } : {}),
-        ...(bot !== undefined ? { bot } : {}),
       });
       return { content: [{ type: "text", text: renderMessages(messages) }] };
     }

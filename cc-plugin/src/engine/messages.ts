@@ -69,31 +69,34 @@ export function normalizeMessage(
 }
 
 /**
- * Resolves which bot's history a request may read.
+ * Memastikan bot pemanggil memang terdaftar.
  *
- * K-3: "default read = your own conversation; peeking at another bot goes
- * through an explicit tool." So an absent `bot` means this session's own, and
- * naming another one is the deliberate act. An unconfigured name is an error
- * rather than an empty result -- the AI must be able to tell "no such bot" apart
- * from "nothing matched".
+ * Dulu fungsi ini juga menerima nama bot LAIN: K-3 membolehkan "mengintip"
+ * percakapan bot tetangga lewat parameter `bot` yang eksplisit. Parameter itu
+ * dibuang 2026-08-04 atas keputusan user, bersama keputusan bahwa tiap bot
+ * memegang `conversations.db`-nya sendiri di foldernya sendiri — sesudah itu
+ * "bot lain" tidak ada di berkas ini, jadi parameternya menjanjikan sesuatu
+ * yang tidak bisa ia berikan.
+ *
+ * Diukur sebelum dibuang: seluruh riwayat sistem baru memuat 136 baris milik
+ * satu bot dan 1 baris nyasar dari percobaan awal — lintas-bot belum pernah
+ * benar-benar terjadi.
  */
-function resolveRequestedBot(
-  requested: string | undefined,
+function resolveOwnBot(
   ownBot: string,
   config: Config
 ): { ok: true; bot: string } | { ok: false; error: string } {
-  const bot = requested ?? ownBot;
-  if (!(bot in config.bots)) return { ok: false, error: "unknown_bot" };
-  return { ok: true, bot };
+  if (!(ownBot in config.bots)) return { ok: false, error: "unknown_bot" };
+  return { ok: true, bot: ownBot };
 }
 
 export function handleHistoryRequest(
-  req: { messageId: string; before?: number; after?: number; bot?: string },
+  req: { messageId: string; before?: number; after?: number },
   ownBot: string,
   config: Config,
   db: Database
 ): MessagesResult {
-  const target = resolveRequestedBot(req.bot, ownBot, config);
+  const target = resolveOwnBot(ownBot, config);
   if (!target.ok) return target;
 
   return {
@@ -110,12 +113,12 @@ export function handleHistoryRequest(
 }
 
 export function handleSearchRequest(
-  req: { query: string; limit?: number; bot?: string },
+  req: { query: string; limit?: number },
   ownBot: string,
   config: Config,
   db: Database
 ): MessagesResult {
-  const target = resolveRequestedBot(req.bot, ownBot, config);
+  const target = resolveOwnBot(ownBot, config);
   if (!target.ok) return target;
 
   try {

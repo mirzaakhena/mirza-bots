@@ -284,7 +284,7 @@ describe("cc-plugin MCP server", () => {
     await server.close();
   });
 
-  test("the search_history tool proxies to Engine.search and passes an explicit bot through", async () => {
+  test("the search_history tool proxies to Engine.search, and an argumen bot yang diselundupkan tidak ikut lewat", async () => {
     const calls: any[] = [];
     const client = fakeEngine({
       search: async (opts: any) => {
@@ -300,11 +300,13 @@ describe("cc-plugin MCP server", () => {
 
     const result: any = await mcpClient.callTool({
       name: "search_history",
-      arguments: { query: "backup", bot: "bot-02" },
+      arguments: { query: "backup", bot: "bot-02" }, // `bot` sudah tidak ada di schema
     });
 
-    // Crossing to another bot happens ONLY because `bot` was named (K-3).
-    expect(calls).toEqual([{ query: "backup", bot: "bot-02" }]);
+    // Parameter `bot` dibuang 2026-08-04. Argumen yang tidak ada di schema
+    // DIBUANG oleh lapisan MCP, jadi yang sampai ke Engine hanya query -- dan
+    // itu yang dikunci: bukan "tidak dipakai", tapi "tidak pernah sampai".
+    expect(calls).toEqual([{ query: "backup" }]);
     // An empty result reads as words, not as "[]" -- the AI should not have to
     // parse an empty array to learn nothing matched.
     expect(result.content[0].text).toContain("No messages");
