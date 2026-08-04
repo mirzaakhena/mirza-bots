@@ -244,14 +244,18 @@ cp bin/mirza-bot.cmd ~/.local/bin/
 mirza-bot                 folder tempat kamu berdiri
 mirza-bot bot-uji         <workspace>\bot-uji
 mirza-bot D:\some\path    path itu
-mirza-bot -u bot-uji      update cc-plugin dulu, baru jalan
 ```
 
-Ia mencetak versi `cc-plugin` yang **benar-benar terpasang** saat start, dibaca
-dari `installed_plugins.json`. Itu bukan hiasan: plugin dimuat dari **cache**,
-bukan dari repo, jadi kode yang baru di-merge tidak berjalan sampai plugin
-di-update — dan dua kali di proyek ini waktu terbuang menguji perbaikan yang
-tidak pernah dijalankan. Angka ketinggalan → ulangi dengan `-u`.
+Bentuk pertama yang dipakai sehari-hari — tiap bot dijalankan dari foldernya
+sendiri, jadi tidak ada nama yang perlu diketik.
+
+**Update `cc-plugin` dijalankan selalu, bukan lewat flag.** Plugin dimuat dari
+**cache** dan bukan dari repo, jadi "lupa update" berarti menjalankan kode lama
+tanpa sadar — dua kali di proyek ini waktu terbuang menguji perbaikan yang
+ternyata tidak pernah berjalan. Menaruh langkah itu di belakang flag hanya
+memindahkan beban ingatan ke orang yang menjalankan, demi menghemat beberapa
+detik. Versi yang benar-benar terpasang dicetak saat start, dibaca dari
+`installed_plugins.json`.
 
 Sengaja terpisah dari `mirza-cc`, launcher sistem lama: berkas itu melayani bot
 harian, dan menumpanginya berarti mempertaruhkan yang produksi demi yang
