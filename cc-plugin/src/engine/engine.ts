@@ -344,10 +344,18 @@ export type LastPushOrigin = { kind: "user" } | { kind: "agent"; fromBot: string
  * diam-diam berbeda pendapat soal pesan mana yang "dari bot lain".
  *
  * Setiap push yang BUKAN agent (termasuk yang metanya entah bagaimana rusak
- * atau tidak lengkap) jatuh ke "user" -- arah defaultnya sengaja begitu:
- * salah menandai (menandai balasan yang sebenarnya dari user) jauh lebih
- * murah daripada gagal menandai (membiarkan balasan antar-bot lolos tanpa
- * penanda, persis masalah yang perubahan ini ada untuk menutup).
+ * atau tidak lengkap) jatuh ke "user", jadi arah defaultnya adalah TIDAK
+ * menandai. Itu disengaja, dan alasannya sama persis dengan `markerFor` di
+ * server.ts: `meta.origin` ditulis oleh jalur antar-bot itu sendiri, bukan
+ * oleh siapa pun di luar, jadi "bukan agent" bukan keadaan ragu-ragu -- ia
+ * memang bukan pesan antar-bot. Menebak ke arah sebaliknya akan menandai
+ * balasan biasa milik user, dan itu kasus mayoritas mutlak; membuatnya
+ * berisik merugikan setiap hari demi kasus yang tidak pernah terjadi.
+ *
+ * Konsekuensi yang diterima sadar: kalau suatu hari `meta.origin` benar-benar
+ * hilang di jalur antar-bot, balasannya lolos TANPA penanda. Yang menjaga itu
+ * bukan default di sini melainkan `AGENT_ORIGIN` sebagai konstanta bersama --
+ * satu-satunya sumber, dipakai di kedua tempat.
  */
 export function nextPushOrigin(meta: Record<string, string>): LastPushOrigin {
   return meta.origin === AGENT_ORIGIN
