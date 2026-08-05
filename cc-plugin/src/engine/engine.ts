@@ -463,7 +463,7 @@ export function startEngine(botHome: string): EngineStart {
     if (!accepted || !isSlash) return;
 
     const outcome = handleSlash(ctx.message.text, {
-      projectDir: botHome,
+      botHome,
       newId: () => randomUUID(),
     });
     if (outcome.kind === "passthrough") return;
@@ -610,7 +610,7 @@ export function startEngine(botHome: string): EngineStart {
     if (accepted && slashTap !== null) {
       if (slashTap.kind === "go") {
         const outcome = handleConfirm(slashTap.command, {
-          projectDir: botHome,
+          botHome,
           newId: () => randomUUID(),
         });
         if (outcome.kind === "sent") await ctx.reply(outcome.ack);

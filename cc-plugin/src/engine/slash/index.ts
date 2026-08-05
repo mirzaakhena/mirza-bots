@@ -8,7 +8,8 @@
  */
 import { classify } from "./classify";
 import { mapKnown } from "./map";
-import { writePending, pendingDir } from "./pending";
+import { writePending } from "./pending";
+import { slashDirIn } from "../paths";
 
 export type SlashOutcome =
   /** Bukan slash Telegram: teruskan ke sesi AI seperti biasa. */
@@ -25,7 +26,7 @@ export type SlashOutcome =
   /** Slash tak dikenal: minta konfirmasi sebelum disuntik. */
   | { kind: "confirm"; command: string; prompt: string };
 
-export type SlashDeps = { projectDir: string; newId: () => string };
+export type SlashDeps = { botHome: string; newId: () => string };
 
 /** Prefiks tombol "Kirim". Dihitung: 9 byte. */
 export const SLASH_CALLBACK_GO = "slash:go:";
@@ -93,7 +94,7 @@ export function handleSlash(text: string, deps: SlashDeps): SlashOutcome {
   const m = mapKnown(c.name, c.arg);
   if (!m.ok) return { kind: "error", message: m.message };
 
-  writePending(pendingDir(deps.projectDir), m.payload, deps.newId());
+  writePending(slashDirIn(deps.botHome), m.payload, deps.newId());
   return { kind: "sent", ack: m.ack };
 }
 
@@ -103,6 +104,6 @@ export function handleSlash(text: string, deps: SlashDeps): SlashOutcome {
  * membuat tombol konfirmasi berbohong soal apa yang dikirim.
  */
 export function handleConfirm(command: string, deps: SlashDeps): SlashOutcome {
-  writePending(pendingDir(deps.projectDir), { command }, deps.newId());
+  writePending(slashDirIn(deps.botHome), { command }, deps.newId());
   return { kind: "sent", ack: `📤 \`${command}\` dikirim ke Claude Code` };
 }

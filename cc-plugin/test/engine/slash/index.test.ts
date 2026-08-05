@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,18 +10,18 @@ import {
   MAX_CONFIRM_COMMAND_BYTES,
   SLASH_CALLBACK_GO,
 } from "../../../src/engine/slash";
-import { pendingDir } from "../../../src/engine/slash/pending";
+import { slashDirIn } from "../../../src/engine/paths";
 
 let proj: string;
 let n = 0;
-const deps = () => ({ projectDir: proj, newId: () => `id${++n}` });
+const deps = () => ({ botHome: proj, newId: () => `id${++n}` });
 
 beforeEach(() => { proj = mkdtempSync(join(tmpdir(), "slash-")); n = 0; });
 afterEach(() => rmSync(proj, { recursive: true, force: true }));
 
 function berkasPending(): string[] {
   try {
-    return readdirSync(pendingDir(proj)).filter((f) => f.endsWith(".json"));
+    return readdirSync(slashDirIn(proj)).filter((f) => f.endsWith(".json"));
   } catch {
     return [];
   }
@@ -37,13 +37,13 @@ describe("handleSlash", () => {
     const r = handleSlash("/rename sesi-x", deps());
     expect(r.kind).toBe("sent");
     expect(berkasPending()).toHaveLength(1);
-    const isi = JSON.parse(readFileSync(join(pendingDir(proj), berkasPending()[0]!), "utf8"));
+    const isi = JSON.parse(readFileSync(join(slashDirIn(proj), berkasPending()[0]!), "utf8"));
     expect(isi).toEqual({ command: "/rename sesi-x" });
   });
 
   test("/new menulis batch dua perintah", () => {
     handleSlash("/new sesi-y", deps());
-    const isi = JSON.parse(readFileSync(join(pendingDir(proj), berkasPending()[0]!), "utf8"));
+    const isi = JSON.parse(readFileSync(join(slashDirIn(proj), berkasPending()[0]!), "utf8"));
     expect(isi).toEqual([{ command: "/clear" }, { command: "/rename sesi-y" }]);
   });
 
@@ -68,7 +68,7 @@ describe("handleConfirm", () => {
   test("sesudah dikonfirmasi, command diteruskan apa adanya", () => {
     const r = handleConfirm("/compact", deps());
     expect(r.kind).toBe("sent");
-    const isi = JSON.parse(readFileSync(join(pendingDir(proj), berkasPending()[0]!), "utf8"));
+    const isi = JSON.parse(readFileSync(join(slashDirIn(proj), berkasPending()[0]!), "utf8"));
     expect(isi).toEqual({ command: "/compact" });
   });
 
@@ -76,7 +76,7 @@ describe("handleConfirm", () => {
   // dan tidak boleh diam-diam menerapkan pemetaan.
   test("command dikenal yang lewat jalur konfirmasi tidak dipetakan", () => {
     handleConfirm("/new x", deps());
-    const isi = JSON.parse(readFileSync(join(pendingDir(proj), berkasPending()[0]!), "utf8"));
+    const isi = JSON.parse(readFileSync(join(slashDirIn(proj), berkasPending()[0]!), "utf8"));
     expect(isi).toEqual({ command: "/new x" });
   });
 });
@@ -137,5 +137,16 @@ describe("urutan catat-lalu-cegat", () => {
     catat();
     kirim();
     expect(urutan).toEqual(["catat", "kirim"]);
+  });
+});
+
+// Pagar terhadap kembalinya alamat legacy lewat pintu belakang. Yang dikunci
+// bukan "berkasnya ada" melainkan "berkasnya ada DI SINI" -- test yang cuma
+// menghitung berkas akan tetap hijau untuk folder mana pun.
+describe("alamat penulisan", () => {
+  test("payload mendarat di <botHome>/slash, bukan di .claude/channels", () => {
+    handleSlash("/rename sesi-alamat", deps());
+    expect(readdirSync(slashDirIn(proj)).filter((f) => f.endsWith(".json"))).toHaveLength(1);
+    expect(existsSync(join(proj, ".claude", "channels"))).toBe(false);
   });
 });

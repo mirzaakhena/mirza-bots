@@ -2,19 +2,11 @@ import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { writePending, pendingDir } from "../../../src/engine/slash/pending";
+import { writePending } from "../../../src/engine/slash/pending";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "pending-")); });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
-describe("pendingDir", () => {
-  test("mengikuti letak yang dibaca wrapper", () => {
-    expect(pendingDir("C:/proyek").split(/[\\/]/).slice(-4)).toEqual([
-      ".claude", "channels", "pty-controller", "pending",
-    ]);
-  });
-});
 
 describe("writePending", () => {
   test("menulis satu berkas .json berisi payload", () => {
