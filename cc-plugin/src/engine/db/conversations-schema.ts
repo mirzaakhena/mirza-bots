@@ -195,6 +195,31 @@ export function getMessagesAround(
 }
 
 /**
+ * Chat_id TERBARU yang tercatat di database ini (W-27).
+ *
+ * Dipakai sebagai fallback saat `lastChatByBot` di memori proses kosong --
+ * paling sering karena engine baru saja restart. TIDAK ADA penyaring `bot`,
+ * alasannya sama persis dengan getMessagesAround di atas: sesudah state
+ * per-folder, berkas database ini milik SATU bot.
+ *
+ * `id DESC`, bukan `ts DESC`: `id` AUTOINCREMENT selalu naik mengikuti urutan
+ * INSERT yang sebenarnya terjadi, sedangkan `ts` datang dari luar (jam
+ * Telegram di sisi pengirim) dan bisa kembar atau tidak monoton.
+ *
+ * Sengaja BUKAN sumber fallback lain seperti `allowFrom[0]` di config: kolom
+ * ini mencatat chat yang BENAR-BENAR pernah terjadi, sedangkan allowFrom
+ * cuma daftar siapa yang BOLEH -- mengambil entri pertamanya kalau daftar itu
+ * lebih dari satu berarti menebak, dan salah kirim ke orang lain lebih buruk
+ * daripada menolak mengirim sama sekali.
+ */
+export function getLastChatId(db: Database): string | null {
+  const row = db.query("SELECT chat_id FROM messages ORDER BY id DESC LIMIT 1").get() as
+    | { chat_id: string }
+    | null;
+  return row ? row.chat_id : null;
+}
+
+/**
  * FTS5 keyword search atas database milik bot ini. Tanpa penyaring `bot`,
  * alasannya sama persis dengan getMessagesAround di atas.
  *

@@ -9,7 +9,9 @@ import {
   dataDirIn,
   inboxDirIn,
   logsDirIn,
+  conversationsDbPathIn,
 } from "../../src/engine/paths";
+import { openConversationsDb, insertMessage } from "../../src/engine/db/conversations-schema";
 
 /**
  * Sebuah folder bot: sebuah folder, dan config.json di dalamnya. Itu saja
@@ -144,5 +146,117 @@ test("reply before any message has arrived explains itself instead of guessing a
   }
 
   expect(message).toContain("no_known_chat");
+  // W-27: kalimat errornya harus menyebut SEBAB (belum pernah menerima pesan),
+  // bukan menyalahkan Telegram -- itulah yang membuat AI dulu menjelaskan ke
+  // user "bot Telegram tidak bisa memulai percakapan duluan", padahal itu
+  // keliru dan sebabnya cuma kalimat error kita sendiri.
+  expect(message).not.toContain("Telegram");
+  res.engine.close();
+});
+
+// Server Telegram palsu, generik untuk seluruh tiga test W-27 di bawah:
+// sendMessage dijawab OK (dengan chat.id APA PUN yang dikirim, supaya test
+// bisa memverifikasi chat_id yang benar-benar dipakai lewat body request),
+// endpoint lain (getMe, getUpdates, setMyCommands) dijawab OK generik supaya
+// polling latar belakang milik startEngine tidak berisik gagal di tengah test.
+function withFakeTelegram<T>(fn: (baseUrl: string, sentTo: string[]) => Promise<T>): Promise<T> {
+  const sentTo: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (req) => {
+      const path = new URL(req.url).pathname;
+      if (path.endsWith("/sendMessage")) {
+        const body = (await req.json()) as { chat_id: string | number };
+        sentTo.push(String(body.chat_id));
+        return Response.json({
+          ok: true,
+          result: { message_id: sentTo.length, date: 0, chat: { id: body.chat_id }, text: "" },
+        });
+      }
+      if (path.endsWith("/getMe")) {
+        return Response.json({
+          ok: true,
+          result: { id: 1, is_bot: true, first_name: "t", username: "t_bot" },
+        });
+      }
+      if (path.endsWith("/getUpdates")) return Response.json({ ok: true, result: [] });
+      return Response.json({ ok: true, result: true });
+    },
+  });
+
+  const prevRoot = process.env.TELEGRAM_API_ROOT;
+  process.env.TELEGRAM_API_ROOT = `http://localhost:${server.port}`;
+
+  return fn(process.env.TELEGRAM_API_ROOT, sentTo).finally(() => {
+    server.stop();
+    if (prevRoot === undefined) delete process.env.TELEGRAM_API_ROOT;
+    else process.env.TELEGRAM_API_ROOT = prevRoot;
+  });
+}
+
+// W-27, test 1/3: engine restart -> lastChatByBot di memori kosong, tapi
+// conversations.db milik bot ini masih ingat chat yang pernah membalas.
+// `reply` harus BERHASIL memakai itu, bukan menolak dengan no_known_chat.
+test("reply falls back to the latest chat_id in conversations.db when lastChatByBot is empty", async () => {
+  await withFakeTelegram(async () => {
+    const home = botFolder("bot-uji", { token: "123:fake", allowFrom: ["1"] });
+
+    // Pra-isi database SEBELUM startEngine: mensimulasikan proses yang baru
+    // lahir sesudah restart -- riwayatnya sudah ada, Map-nya belum.
+    const db = openConversationsDb(conversationsDbPathIn(home));
+    insertMessage(db, { ts: "t", bot: "bot-uji", chatId: "555", source: "user", text: "halo" });
+    db.close();
+
+    const res = startEngine(home);
+    if (!res.ok) throw new Error(res.message);
+
+    const result = await res.engine.reply("halo balik");
+    expect(result.parts).toBe(1);
+
+    res.engine.close();
+  });
+});
+
+// W-27, test 2/3: database memuat lebih dari satu chat_id -- reply harus
+// memakai yang TERBARU (id tertinggi), bukan yang pertama ditemukan atau
+// urutan lain yang kebetulan benar untuk kasus satu baris.
+test("reply uses the newest chat_id when conversations.db has more than one", async () => {
+  await withFakeTelegram(async (_baseUrl, sentTo) => {
+    const home = botFolder("bot-uji", { token: "123:fake", allowFrom: ["1"] });
+
+    const db = openConversationsDb(conversationsDbPathIn(home));
+    insertMessage(db, { ts: "t1", bot: "bot-uji", chatId: "111", source: "user", text: "lama" });
+    insertMessage(db, { ts: "t2", bot: "bot-uji", chatId: "222", source: "user", text: "baru" });
+    db.close();
+
+    const res = startEngine(home);
+    if (!res.ok) throw new Error(res.message);
+
+    await res.engine.reply("balasan");
+    expect(sentTo).toEqual(["222"]);
+
+    res.engine.close();
+  });
+});
+
+// W-27, test 3/3: database benar-benar kosong (tidak ada baris sama sekali)
+// -- reply tetap menolak, tapi assert negatif ini adalah pagar utamanya: kata
+// "Telegram" tidak boleh muncul, karena itulah kalimat yang dulu menyesatkan
+// AI untuk bilang "Telegram tidak mengizinkan bot memulai percakapan".
+test("reply still refuses when conversations.db is genuinely empty, without blaming Telegram", async () => {
+  const home = botFolder("bot-uji", { token: "123:fake", allowFrom: ["1"] });
+
+  const res = startEngine(home);
+  if (!res.ok) throw new Error(res.message);
+
+  let message = "";
+  try {
+    await res.engine.reply("halo");
+  } catch (err) {
+    message = (err as Error).message;
+  }
+
+  expect(message).toContain("no_known_chat");
+  expect(message).not.toContain("Telegram");
   res.engine.close();
 });
