@@ -173,7 +173,7 @@ sesi).
   `/clear` membuat pesan berikutnya distempel id sesi lama — terukur 2026-08-02.
 - **Slash Telegram dicegat SESUDAH dicatat, tidak sebelum.** `/rename <nama>`
   dan `/new <nama>` dari Telegram tidak lagi diteruskan ke AI: keduanya diolah
-  jadi payload dan ditulis ke `pending/` milik `cc-wrapper` (`/new` =
+  jadi payload dan ditulis ke `slash/` milik `cc-wrapper` (`/new` =
   `[/clear, /rename <nama>]`, urutannya bagian dari kontrak). Slash yang **tidak**
   dikenal tidak ditolak — ia dapat tombol **Kirim/Batal** lebih dulu, karena
   sebagian slash CC interaktif dan injeksi yang membukanya lalu berhenti
@@ -315,14 +315,27 @@ tetangga mana yang bisa dititipi pesan.
 ├── session.id         id sesi Claude Code terbaru (ditulis hook)
 ├── status.json        tangkapan statusline (ditulis bridge)
 ├── bot.pid            pemegang token
+├── wrapper.pid        satu wrapper (cc-wrapper) per folder
 ├── chained-statusline statusline pendahulu yang diteruskan bridge
 ├── data/              berkas & gambar yang dikirim user
 ├── inbox/             titipan pesan dari bot lain
+├── slash/             perintah slash untuk sesi CC ini (ditulis cc-plugin, dibaca cc-wrapper)
 └── logs/              session-hook.log
 ```
 
 Semuanya dibuat sendiri saat bot pertama kali dijalankan, kecuali `config.json`
 yang memang harus ditulis manusia.
+
+**`slash/` dan `inbox/` sengaja TIDAK digabung**, walau sama-sama "titipan
+berkas ke bot ini". `cc-wrapper` memindai `slash/` dengan polling dan
+**menghapus tiap berkas SEBELUM mem-parse-nya** (supaya crash di tengah tidak
+memproses perintah dua kali). Kalau kedua payload berbagi satu folder,
+wrapper memenangkan lomba baca, MENGHAPUS pesan antar-bot yang seharusnya
+milik `inbox/`, lalu menolaknya karena tidak ada field `command` — pesannya
+lenyap **tanpa gejala apa pun**, tidak ada error yang tercatat di mana pun.
+Dulu `slash/` tersembunyi di
+`<botHome>/.claude/channels/<nama-plugin-lama>/pending/`; sekarang alamatnya
+bisa ditebak langsung dari bentuk folder bot, tidak perlu diwariskan.
 
 Tidak ada env var untuk memindahkan state. `MIRZA_BOTS_HOME` **dibuang** —
 ia ada untuk memindahkan *state root*, dan tidak ada lagi state root.
@@ -364,6 +377,14 @@ Dua tool MCP:
 
 - **`agent_list`** — nama bot tetangga yang benar-benar ada.
 - **`agent_send`** — menitipkan `<uuid>.json` ke `../<nama-bot>/inbox/`.
+
+Satu tool lagi hidup di jalur yang berbeda arah: **`send_slash`** menitipkan
+perintah slash — atau satu batch atomik — ke `slash/` milik **sesi INI
+sendiri**, dibaca `cc-wrapper` lalu diketikkan ke Claude Code. **Self-only
+dengan sengaja**: tidak ada parameter tujuan, dan tidak akan pernah ada.
+Kalau maksudnya menyuruh bot lain melakukan sesuatu, kirim `agent_send` dan
+biarkan AI di sisi sana yang memutuskan — `send_slash` bukan jalan pintas
+untuk memerintah bot tetangga.
 
 **Pesan antar-bot tidak pernah menyentuh Telegram.** Yang membuat sesuatu
 muncul di HP user hanyalah tool `reply`. Prinsipnya: *urusan antar-bot diam di
@@ -504,6 +525,26 @@ dengan logika yang sudah dihapus dari repo. Persis itu yang terjadi 2026-08-02
 
 Pastikan dengan `claude plugin list | grep -A 2 cc-plugin` bahwa versinya
 memang yang baru.
+
+### Urutan rilis: plugin dulu, baru restart bot
+
+`cc-wrapper` dan `cc-plugin` tidak memuat kode baru dengan cara yang sama, dan
+bedanya bukan detail kecil:
+
+- **`cc-wrapper` dijalankan langsung dari repo.** `bin/mirza-bot.cmd`
+  memanggil `npx tsx src/main.ts` di folder `cc-wrapper` — begitu bot dibuka
+  ulang (`mirza-bot`), ia otomatis memakai kode terbaru di repo, tanpa
+  langkah tambahan.
+- **`cc-plugin` dimuat dari plugin cache.** Ia tetap menjalankan build lama
+  sampai `claude plugin update` dijalankan dan sesinya dibuka ulang, persis
+  seperti dijelaskan di atas.
+
+Konsekuensinya: **update plugin DULU, baru restart bot** (`mirza-bot -u`,
+atau update manual lalu `mirza-bot`). Kebalik — bot direstart lebih dulu
+sementara plugin belum di-update — berarti `cc-wrapper` yang baru mulai
+membaca `slash/`, sementara `cc-plugin` yang masih lama menulis ke jalur
+lama. Tidak ada error yang tercatat di mana pun; yang terlihat cuma slash
+Telegram yang berhenti bekerja.
 
 ### Setiap sesi
 
