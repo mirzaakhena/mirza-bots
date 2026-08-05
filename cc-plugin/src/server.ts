@@ -277,7 +277,7 @@ export function buildServer(backend: ServerBackend, botHome: string): McpServer 
       description:
         "Send a slash command -- or an atomic BATCH of them -- to THIS session's own Claude Code. " +
         "Self-only by design: there is no target parameter, and there never will be. To have another bot run something, send it an `agent_send` message and let its own AI decide. " +
-        "Only Claude Code's own commands work. Telegram-layer commands (`/new`, `/switch`, `/delete`, `/effort`) are rejected with the correct alternative named. " +
+        "Only Claude Code's own commands work. Telegram-layer commands (`/new`, `/switch`, `/delete`, `/effort`) are rejected, each with its own true reason and where to go instead. " +
         "Pass `command` for one, or `commands` for an ordered batch (max " +
         MAX_SLASH_BATCH +
         "). A batch is written as ONE file and enqueued contiguously, so no other payload can interleave between its items -- use it for sequences like a handoff self-reset: [\"/rename done-...\", \"/clear\", \"/rename idle\"]. " +

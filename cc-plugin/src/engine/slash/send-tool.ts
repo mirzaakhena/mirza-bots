@@ -19,17 +19,29 @@ import type { WrapperPayload } from "./map";
 export const MAX_SLASH_BATCH = 8;
 
 /**
- * Perintah lapisan Telegram: TIDAK ADA di Claude Code.
+ * Perintah lapisan Telegram: DITOLAK di sini, tapi masing-masing dengan
+ * kalimat lengkapnya SENDIRI -- bukan prefiks bersama + sufiks. Satu prefiks
+ * ("is a Telegram-layer command, not a Claude Code one") tidak cocok untuk
+ * keempatnya: `/effort` ADA di Claude Code (lihat `COMMAND_SPECS["/effort"]`
+ * di `cc-wrapper/src/registry.ts`), dan `/switch` punya padanan (`/resume
+ * <sessionId>`). Pesan ini dibaca AI -- "tidak ada padanan" membuatnya
+ * berhenti mencari; kalimat yang benar membuatnya tahu ini keputusan, bukan
+ * keterbatasan, dan ia bisa menyampaikannya apa adanya ke user.
  *
- * `pty_send_slash` lama menolaknya dengan alasan yang tidak berubah -- CC
- * menjawab "unknown command" di layar dan AI tidak pernah tahu perintahnya
- * menguap. `/new` punya pengganti yang sah, jadi penolakannya menunjuknya.
+ * Keputusan user 2026-08-05 (Telegram): yang benar-benar terpakai sekarang
+ * cuma /new, /rename, /context. /switch mungkin dikerjakan nanti (belum
+ * sekarang, sengaja); /effort sengaja tidak dibawa ke sistem baru sama
+ * sekali. Keempatnya tetap DITOLAK di sini -- yang berubah cuma alasannya.
  */
 const TELEGRAM_ONLY: Record<string, string> = {
-  "/new": 'Use a batch instead: ["/clear", "/rename <name>"].',
-  "/switch": "There is no Claude Code equivalent.",
-  "/delete": "There is no Claude Code equivalent.",
-  "/effort": "There is no Claude Code equivalent.",
+  "/new":
+    '"/new" is a Telegram-layer command, not a Claude Code one. Use a batch instead: ["/clear", "/rename <name>"].',
+  "/delete":
+    '"/delete" is a Telegram-layer command, not a Claude Code one -- deleting a session is the Telegram user\'s own call to make there, not something to inject from here.',
+  "/switch":
+    '"/switch" has not been brought into the new system yet -- a deliberate call, not a missing feature. The closest today is Claude Code\'s own "/resume <sessionId>".',
+  "/effort":
+    '"/effort" exists in Claude Code -- it is intentionally not carried into this system. If you want it, run "/effort" yourself in Claude Code.',
 };
 
 export type SlashSendInput = { command?: string; commands?: string[] };
@@ -38,10 +50,17 @@ export type SlashSendResult =
   | { ok: true; payload: WrapperPayload; ack: string }
   | { ok: false; message: string };
 
-/** Nama perintah = potongan sebelum spasi pertama. */
+/**
+ * Nama perintah = kata pertama, dipotong pada whitespace APA PUN (bukan cuma
+ * spasi) dan dihuruf-kecilkan. Disamakan dengan saudaranya --
+ * `classify.ts` dan `cc-wrapper/src/registry.ts` -- yang keduanya memakai
+ * bentuk ini, dan dengan pagar lama yang berkas ini gantikan. Pagar yang
+ * lebih longgar dari pagar lama adalah regresi: `/NEW sesi-x` atau
+ * `/new<TAB>sesi-x` harus tetap ditolak, bukan lolos karena hanya spasi biasa
+ * yang dicek atau huruf besar tidak dinormalkan.
+ */
 function nameOf(command: string): string {
-  const space = command.indexOf(" ");
-  return space === -1 ? command : command.slice(0, space);
+  return command.trim().split(/\s/, 1)[0]!.toLowerCase();
 }
 
 /** `null` bila sah; pesan penolakan bila tidak. */
@@ -52,9 +71,7 @@ function rejectionFor(raw: string): string | null {
   }
   if (command === "/") return `"${raw}" is not a slash command -- it has no name.`;
   const telegramOnly = TELEGRAM_ONLY[nameOf(command)];
-  if (telegramOnly !== undefined) {
-    return `"${nameOf(command)}" is a Telegram-layer command, not a Claude Code one. ${telegramOnly}`;
-  }
+  if (telegramOnly !== undefined) return telegramOnly;
   return null;
 }
 

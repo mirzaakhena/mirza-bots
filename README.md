@@ -449,7 +449,7 @@ Contoh keluaran:
   "bot": "mirza_01_bot",
   "lock": { "bot": "mirza_01_bot", "pid": 41234, "alive": true },
   "conversationsReady": true,
-  "version": "0.11.0"
+  "version": "0.13.0"
 }
 ```
 
