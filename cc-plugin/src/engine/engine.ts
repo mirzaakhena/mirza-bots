@@ -24,7 +24,12 @@ import { startInboxScanner } from "./agent/receive";
 import { sendToPeer, type SendResult } from "./agent/send";
 import { listPeers } from "./agent/peers";
 import { acquireBotLock, releaseBotLock } from "./lock";
-import { openConversationsDb, insertMessage, encodeMetadata } from "./db/conversations-schema";
+import {
+  openConversationsDb,
+  insertMessage,
+  encodeMetadata,
+  getLastChatId,
+} from "./db/conversations-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
 import { safeName, MAX_DOCUMENT_BYTES } from "./telegram/media";
@@ -676,10 +681,27 @@ export function startEngine(botHome: string): EngineStart {
         replyTo?: string,
         files?: string[]
       ): Promise<ReplyResult> {
-        const chatId = lastChatByBot.get(botName);
+        let chatId = lastChatByBot.get(botName);
+        if (!chatId) {
+          // W-27: Map ini hidup di memori proses -- restart mengosongkannya,
+          // tapi conversations.db milik bot ini sendiri masih ingat chat
+          // TERAKHIR yang benar-benar pernah membalas. Baca dari sana dulu
+          // sebelum menyerah, supaya restart tidak mematikan seluruh kelas
+          // notifikasi proaktif (termasuk notifikasi terjadwal) hanya karena
+          // Map di memori kosong padahal buktinya ada di disk.
+          const fromDb = getLastChatId(conversationsDb);
+          if (fromDb) {
+            chatId = fromDb;
+            // Ditulis balik ke Map supaya baca database ini hanya terjadi
+            // SEKALI per proses, bukan di setiap panggilan reply berikutnya.
+            lastChatByBot.set(botName, chatId);
+          }
+        }
         if (!chatId) {
           throw new Error(
-            "no_known_chat: this bot has not received a message yet, so there is nobody to reply to"
+            "no_known_chat: this bot has never received a message from anyone -- not in this " +
+              "process, and not in its conversation history either -- so there is nobody to " +
+              "reply to. Ask the user to send this bot a message first."
           );
         }
         // Dimatikan di AWAL, bukan di akhir: pengiriman berpotongan bisa makan
