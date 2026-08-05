@@ -108,8 +108,9 @@ export function inboxDirIn(botHome: string): string {
  * wrapper menang lomba, MENGHAPUS pesan antar-bot, lalu menolaknya karena
  * tidak ada field `command`. Pesannya lenyap tanpa gejala apa pun.
  *
- * Dulu <botHome>/.claude/channels/pty-controller/pending/ -- nama sebuah
- * plugin yang tidak ada lagi di sistem ini.
+ * Dulu tersembunyi di <botHome>/.claude/channels/<nama-plugin-lama>/pending/ --
+ * alamat yang harus DIWARISKAN bot berikutnya alih-alih bisa ditebak dari
+ * bentuk foldernya sendiri.
  */
 export function slashDirIn(botHome: string): string {
   return join(botHome, "slash");
