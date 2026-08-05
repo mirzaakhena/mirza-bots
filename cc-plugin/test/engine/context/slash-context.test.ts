@@ -6,6 +6,7 @@ import { classify, KNOWN_COMMANDS } from "../../../src/engine/slash/classify";
 import { COMMAND_DESCRIPTIONS, buildCommandMenu } from "../../../src/engine/slash/menu";
 import { handleSlash } from "../../../src/engine/slash";
 import { renderContext } from "../../../src/engine/context/render";
+import { slashDirIn } from "../../../src/engine/paths";
 
 describe("/context di lapisan slash", () => {
   test("dikenal, bukan lewat jalur konfirmasi", () => {
@@ -22,30 +23,29 @@ describe("/context di lapisan slash", () => {
   // Code. Ia dijawab dari data lokal.
   test("TIDAK menulis pending -- tidak pernah dikirim ke CC", () => {
     const dir = mkdtempSync(join(tmpdir(), "slash-ctx-"));
-    const out = handleSlash("/context", { projectDir: dir, newId: () => "id-1" });
+    const out = handleSlash("/context", { botHome: dir, newId: () => "id-1" });
 
     expect(out).toEqual({ kind: "local", command: "/context" });
 
     // Dua meteran: outcome-nya benar DAN tidak ada payload yang lahir. Yang
     // pertama saja tidak membedakan "tidak dikirim" dari "dikirim diam-diam".
-    const pending = join(dir, ".claude", "channels", "pty-controller", "pending");
+    const pending = slashDirIn(dir);
     expect(existsSync(pending) ? readdirSync(pending) : []).toHaveLength(0);
   });
 
   test("argumen diabaikan, tetap local", () => {
     const dir = mkdtempSync(join(tmpdir(), "slash-ctx-"));
-    expect(handleSlash("/context apa saja", { projectDir: dir, newId: () => "x" })).toEqual({
+    expect(handleSlash("/context apa saja", { botHome: dir, newId: () => "x" })).toEqual({
       kind: "local",
       command: "/context",
     });
   });
 
-  test("/rename masih menulis pending -- jalur lama tidak ikut berubah", () => {
+  test("/rename masih menulis pending -- jalur command lain tidak ikut berubah", () => {
     const dir = mkdtempSync(join(tmpdir(), "slash-ctx-"));
-    const out = handleSlash("/rename halo", { projectDir: dir, newId: () => "id-2" });
+    const out = handleSlash("/rename halo", { botHome: dir, newId: () => "id-2" });
     expect(out.kind).toBe("sent");
-    const pending = join(dir, ".claude", "channels", "pty-controller", "pending");
-    expect(readdirSync(pending)).toHaveLength(1);
+    expect(readdirSync(slashDirIn(dir))).toHaveLength(1);
   });
 });
 

@@ -1,12 +1,17 @@
 /**
  * Perakitan: hidupkan CC di PTY, pipe dua arah dengan terminal pengguna, awasi
- * folder `pending/`, dan jalankan antrean.
+ * folder `slash/`, dan jalankan antrean.
  *
  * Jalankan dengan Node, bukan Bun (Task 0 — lihat PROBE.md):
  *   npx tsx src/main.ts [flag-flag untuk claude]
  *
- * Folder state mengikuti pola wrapper lama supaya penulis yang sudah ada tetap
- * bekerja: <CLAUDE_PROJECT_DIR>/.claude/channels/pty-controller/
+ * State tinggal di folder bot itu sendiri, sejajar config.json dan inbox/:
+ *   <botHome>/slash/        perintah untuk sesi ini, ditulis cc-plugin
+ *   <botHome>/wrapper.pid   satu wrapper per folder
+ *
+ * SENGAJA bukan folder yang sama dengan inbox/. Loop scan di bawah MENGHAPUS
+ * berkas sebelum mem-parse-nya; kalau kedua payload berbagi folder, wrapper
+ * menghapus pesan antar-bot lalu menolaknya, dan pesannya lenyap tanpa gejala.
  */
 import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -25,10 +30,9 @@ import {
   shouldRetryWithoutContinue,
 } from "./startup";
 
-const PROJECT_DIR = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-const STATE_DIR = join(PROJECT_DIR, ".claude", "channels", "pty-controller");
-const PENDING_DIR = join(STATE_DIR, "pending");
-const LOCK_FILE = join(STATE_DIR, "wrapper.pid");
+const BOT_HOME = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+const SLASH_DIR = join(BOT_HOME, "slash");
+const LOCK_FILE = join(BOT_HOME, "wrapper.pid");
 const QUEUE_POLL_MS = 200;
 const INBOX_POLL_MS = 500;
 /** Sebanyak ini keluaran awal disimpan untuk mengenali gerbang trust. */
@@ -38,14 +42,14 @@ const BOOT_SNIFF_BYTES = 8_000;
 // wrapper bisa dipakai persis seperti memanggil `claude` sendiri.
 const extraArgs = process.argv.slice(2);
 
-mkdirSync(PENDING_DIR, { recursive: true });
+mkdirSync(SLASH_DIR, { recursive: true });
 
 // --- satu wrapper per folder ------------------------------------------------
 const lock = acquireWrapperLock(LOCK_FILE, process.pid);
 if (!lock.ok) {
   console.error(
     `cc-wrapper sudah berjalan untuk folder ini (PID ${lock.heldBy}).\n` +
-      `  folder: ${PROJECT_DIR}\n` +
+      `  folder: ${BOT_HOME}\n` +
       `Satu folder hanya boleh punya satu wrapper — menutup yang lama akan\n` +
       `membuang sesi Claude Code yang sedang berjalan di dalamnya.`
   );
@@ -73,7 +77,7 @@ function attach(p: IPty): void {
         trustGateReported = true;
         console.error(
           `\n[cc-wrapper] Claude Code berhenti di gerbang kepercayaan folder.\n` +
-            `  folder: ${PROJECT_DIR}\n` +
+            `  folder: ${BOT_HOME}\n` +
             `  Sesi ini TIDAK akan siap sampai gerbangnya dijawab, dan perintah\n` +
             `  yang disuntik selama itu akan hilang. Jawab sekali dari keyboard,\n` +
             `  atau buka folder ini dengan \`claude\` manual satu kali.\n`
@@ -106,7 +110,7 @@ function attach(p: IPty): void {
 function start(args: string[]): void {
   bootOutput = "";
   bootAt = Date.now();
-  pty = spawnClaude({ cwd: PROJECT_DIR, extraArgs: args });
+  pty = spawnClaude({ cwd: BOT_HOME, extraArgs: args });
   attach(pty);
 }
 
@@ -131,19 +135,19 @@ for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
 }
 process.on("exit", () => releaseWrapperLock(LOCK_FILE, process.pid));
 
-// --- membaca folder pending -------------------------------------------------
+// --- membaca folder slash ---------------------------------------------------
 // Polling, bukan fs.watch: liputan event "create" milik fs.watch di Windows
 // secara historis tidak bisa diandalkan, dan jalur ini harus andal.
 setInterval(() => {
   let files: string[];
   try {
-    files = readdirSync(PENDING_DIR);
+    files = readdirSync(SLASH_DIR);
   } catch {
     return;
   }
   for (const f of files) {
     if (!f.endsWith(".json") || f.includes(".tmp.")) continue;
-    const path = join(PENDING_DIR, f);
+    const path = join(SLASH_DIR, f);
     let raw: string;
     try {
       raw = readFileSync(path, "utf8");

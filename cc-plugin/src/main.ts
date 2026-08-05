@@ -12,7 +12,8 @@ export function resolveIdentityCwd(): string {
 }
 
 export async function main(): Promise<void> {
-  const started = startEngine(resolveIdentityCwd());
+  const botHome = resolveIdentityCwd();
+  const started = startEngine(botHome);
 
   if (!started.ok) {
     // Deliberately NOT an exit. A plugin that dies here is indistinguishable
@@ -20,14 +21,18 @@ export async function main(): Promise<void> {
     // hours on 2026-08-01 (W-16) and left nothing behind to diagnose, because a
     // process that dies before it can speak leaves no evidence. Serve the tools
     // anyway, so the reason reaches whoever calls one.
+    //
+    // botHome diteruskan di cabang ini juga: tool send_slash (Task 5) harus
+    // tetap bisa memulihkan sesi user lewat /clear atau /rename justru saat
+    // engine gagal start -- di situlah paling dibutuhkan.
     console.error(`cc-plugin: ${started.message}`);
-    const server = buildServer({ kind: "unavailable", reason: started.message });
+    const server = buildServer({ kind: "unavailable", reason: started.message }, botHome);
     await server.connect(new StdioServerTransport());
     return;
   }
 
   console.error(`cc-plugin: engine running for bot "${started.engine.bot}"`);
-  const server = buildServer(started.engine);
+  const server = buildServer(started.engine, botHome);
   await server.connect(new StdioServerTransport());
 }
 

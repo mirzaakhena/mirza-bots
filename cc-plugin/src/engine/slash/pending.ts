@@ -2,16 +2,12 @@
  * Menulis payload ke folder yang dibaca cc-wrapper. Satu-satunya berkas di
  * lapisan ini yang menyentuh disk.
  *
- * Letaknya mengikuti wrapper lama supaya penulis lain (agent-bus) tidak perlu
- * diubah: <projectDir>/.claude/channels/pty-controller/pending/
+ * Letak foldernya TIDAK diputuskan di sini: `slashDirIn` di `paths.ts` adalah
+ * satu-satunya tempat bentuk folder bot ditulis.
  */
 import { mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import type { WrapperPayload } from "./map";
-
-export function pendingDir(projectDir: string): string {
-  return join(projectDir, ".claude", "channels", "pty-controller", "pending");
-}
 
 /**
  * Tulis satu payload. Atomik: `.tmp` dulu, lalu rename -- wrapper membaca

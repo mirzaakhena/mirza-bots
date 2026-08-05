@@ -1,9 +1,18 @@
 import { describe, test, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { mkdtempSync, readdirSync, readFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 import { buildServer, TERSE_TURN_MARKER, AGENT_TURN_MARKER, markerFor } from "../src/server";
+import { slashDirIn } from "../src/engine/paths";
 import type { Engine } from "../src/engine/engine";
 import type { PushMessage } from "../src/engine/sink";
+
+// Folder bot untuk test. Sengaja nyata (tmpdir), bukan string karangan: tool
+// send_slash MENULIS ke sini, dan folder karangan akan lolos di test lalu gagal
+// di produksi.
+const testHome = () => mkdtempSync(joinPath(tmpdir(), "srv-home-"));
 
 function fakeEngine(overrides: Partial<Engine> = {}): Engine {
   return {
@@ -28,7 +37,7 @@ describe("cc-plugin MCP server", () => {
         return { chars: text.length, parts: 1, files: 0 };
       },
     });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -51,7 +60,7 @@ describe("cc-plugin MCP server", () => {
         return { chars: text.length, parts: 1, files: 0 };
       },
     });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -79,7 +88,7 @@ describe("cc-plugin MCP server", () => {
   test("a push_message from fleetd is forwarded as notifications/claude/channel with string-only meta", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
     const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -113,7 +122,7 @@ describe("cc-plugin MCP server", () => {
   test("a push_message meta containing a non-primitive value is serialized to a string before sending, never sent as an object/array", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
     const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -144,7 +153,7 @@ describe("cc-plugin MCP server", () => {
   test("a push_message meta containing genuinely non-string values (number, undefined) is coerced to strings, never passed through as-is", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
     const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -181,7 +190,7 @@ describe("cc-plugin MCP server", () => {
 
   test("the server declares MCP instructions that name the reply tool and the terse-turn marker", async () => {
     const client = fakeEngine();
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -203,7 +212,7 @@ describe("cc-plugin MCP server", () => {
   test("a pushed message is stamped with the terse-turn marker while preserving the original text verbatim", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
     const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -232,7 +241,7 @@ describe("cc-plugin MCP server", () => {
   test("a button press (kind: callback) gets the same marker -- no special case", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
     const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -265,7 +274,7 @@ describe("cc-plugin MCP server", () => {
         return [row];
       },
     });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -294,7 +303,7 @@ describe("cc-plugin MCP server", () => {
         return [];
       },
     });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -323,7 +332,7 @@ describe("cc-plugin MCP server", () => {
         throw new Error("request rejected: bad_search_query: unterminated string");
       },
     });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -350,7 +359,7 @@ describe("cc-plugin MCP server when the engine could not start", () => {
   };
 
   async function connected() {
-    const server = buildServer(unavailable);
+    const server = buildServer(unavailable, testHome());
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
     await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
@@ -367,6 +376,7 @@ describe("cc-plugin MCP server when the engine could not start", () => {
       "read_history",
       "reply",
       "search_history",
+      "send_slash",
     ]);
 
     await mcpClient.close();
@@ -439,7 +449,7 @@ test("pedomannya satu angka bernama, bukan tersebar di beberapa tempat", () => {
 // fleet.db: skema lengkap, nol baris kode memakainya).
 describe("tool antar-bot", () => {
   async function connect(engine: Engine) {
-    const server = buildServer(engine);
+    const server = buildServer(engine, testHome());
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
     await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
@@ -550,5 +560,136 @@ describe("markerFor", () => {
     // mahal di proyek ini. Salah arah sebaliknya cuma bikin guard cerewet.
     expect(markerFor({ origin: "entah-apa" })).toBe(TERSE_TURN_MARKER);
     expect(markerFor({})).toBe(TERSE_TURN_MARKER);
+  });
+});
+
+// Tanpa tool ini, memindahkan cc-wrapper ke slash/ membuka jendela di mana bot
+// baru TIDAK BISA me-/rename dirinya sendiri -- dan itu dipakai tiap handoff.
+describe("tool send_slash", () => {
+  async function connectWith(home: string, backend: any = fakeEngine()) {
+    const server = buildServer(backend, home);
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+    return { server, mcpClient };
+  }
+
+  function payloadsIn(home: string): unknown[] {
+    // Brief-verbatim helper punya satu tambahan: `slash/` hanya dibuat oleh
+    // writePending saat sukses, jadi kasus "ditolak, tidak meninggalkan
+    // berkas" bertemu folder yang belum pernah ada sama sekali. Folder yang
+    // tidak ada berarti nol payload, bukan galat -- existsSync ini tidak
+    // mengubah satu pun assertion, hanya membuat pembacaannya tahan pada
+    // keadaan itu.
+    if (!existsSync(slashDirIn(home))) return [];
+    return readdirSync(slashDirIn(home))
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => JSON.parse(readFileSync(joinPath(slashDirIn(home), f), "utf8")));
+  }
+
+  test("perintah tunggal ditulis ke <botHome>/slash", async () => {
+    const home = testHome();
+    const { server, mcpClient } = await connectWith(home);
+
+    const result: any = await mcpClient.callTool({
+      name: "send_slash",
+      arguments: { command: "/rename sesi-baru" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(payloadsIn(home)).toEqual([{ command: "/rename sesi-baru" }]);
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("batch ditulis sebagai SATU berkas array, bukan beberapa berkas", async () => {
+    const home = testHome();
+    const { server, mcpClient } = await connectWith(home);
+
+    await mcpClient.callTool({
+      name: "send_slash",
+      arguments: { commands: ["/rename done-x", "/clear", "/rename idle"] },
+    });
+
+    const payloads = payloadsIn(home);
+    // Satu berkas: itulah yang membuat batch atomik. Tiga berkas terpisah bisa
+    // diselipi payload lain di antaranya, dan urutan reset-sesi akan pecah.
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]).toEqual([
+      { command: "/rename done-x" },
+      { command: "/clear" },
+      { command: "/rename idle" },
+    ]);
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("input yang ditolak dijawab sebagai error, dan TIDAK meninggalkan berkas", async () => {
+    const home = testHome();
+    const { server, mcpClient } = await connectWith(home);
+
+    const result: any = await mcpClient.callTool({
+      name: "send_slash",
+      arguments: { command: "/new sesi-x" },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("/clear");
+    // Kalau berkasnya tetap ditulis, penolakannya bohong -- perintahnya tetap
+    // berangkat dan AI diberi tahu sebaliknya.
+    expect(payloadsIn(home)).toEqual([]);
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  // §3.3 spec. Ini kriteria yang paling mudah dilewati dan paling langsung
+  // membuktikan kenapa send_slash tidak menumpang Engine.
+  test("TETAP BEKERJA saat engine gagal start", async () => {
+    const home = testHome();
+    const { server, mcpClient } = await connectWith(home, {
+      kind: "unavailable" as const,
+      reason: "config.json tidak terbaca",
+    });
+
+    const result: any = await mcpClient.callTool({
+      name: "send_slash",
+      arguments: { command: "/clear" },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(payloadsIn(home)).toEqual([{ command: "/clear" }]);
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  test("terdaftar juga saat engine mati", async () => {
+    const { server, mcpClient } = await connectWith(testHome(), {
+      kind: "unavailable" as const,
+      reason: "apa pun",
+    });
+
+    const { tools } = await mcpClient.listTools();
+    expect(tools.map((t) => t.name)).toContain("send_slash");
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  // Keputusan user 2026-06-07 (neighbor autonomy), ditegakkan oleh BENTUK:
+  // tidak ada parameter tujuan, jadi tidak ada yang bisa dialamatkan ke luar.
+  test("self-only -- tidak ada parameter target di schema", async () => {
+    const { server, mcpClient } = await connectWith(testHome());
+
+    const { tools } = await mcpClient.listTools();
+    const tool = tools.find((t) => t.name === "send_slash")!;
+    const props = Object.keys((tool.inputSchema as any).properties ?? {});
+    expect(props.sort()).toEqual(["command", "commands"]);
+
+    await mcpClient.close();
+    await server.close();
   });
 });

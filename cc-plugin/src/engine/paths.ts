@@ -99,12 +99,35 @@ export function inboxDirIn(botHome: string): string {
   return join(botHome, "inbox");
 }
 
+/**
+ * Perintah slash untuk sesi Claude Code milik bot ini. Dibaca cc-wrapper.
+ *
+ * SENGAJA terpisah dari `inbox/`, dan pemisahannya bukan selera: cc-wrapper
+ * menghapus berkas SEBELUM mem-parse-nya (crash di tengah tidak boleh
+ * memproses perintah dua kali). Kalau kedua payload berbagi satu folder,
+ * wrapper menang lomba, MENGHAPUS pesan antar-bot, lalu menolaknya karena
+ * tidak ada field `command`. Pesannya lenyap tanpa gejala apa pun.
+ *
+ * Dulu tersembunyi di bawah `<botHome>/.claude/channels/`, di dalam folder
+ * bernama sesuai plugin lama, lalu `/pending/` -- alamat yang harus
+ * DIWARISKAN bot berikutnya (nama plugin lama tidak ditebak dari bentuk
+ * foldernya sendiri) alih-alih dibaca langsung dari sini seperti sekarang.
+ */
+export function slashDirIn(botHome: string): string {
+  return join(botHome, "slash");
+}
+
 export function logsDirIn(botHome: string): string {
   return join(botHome, "logs");
 }
 
 export function ensureBotDirs(botHome: string): void {
-  for (const dir of [dataDirIn(botHome), inboxDirIn(botHome), logsDirIn(botHome)]) {
+  for (const dir of [
+    dataDirIn(botHome),
+    inboxDirIn(botHome),
+    slashDirIn(botHome),
+    logsDirIn(botHome),
+  ]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }

@@ -31,8 +31,11 @@ yang boleh disuntik: itu kebijakan, dan kebijakan tinggal di lapisan atas.
 
 ## Cara memberi perintah
 
-Jatuhkan berkas JSON ke
-`<CLAUDE_PROJECT_DIR>/.claude/channels/pty-controller/pending/`:
+Jatuhkan berkas JSON ke `<botHome>/slash/`:
+
+Terpisah dari `<botHome>/inbox/` dengan sengaja: wrapper menghapus berkas
+SEBELUM mem-parse-nya, jadi folder bersama membuatnya menelan pesan antar-bot
+tanpa gejala apa pun -- jangan digabung lagi.
 
 | Bentuk | Artinya |
 |---|---|
@@ -50,7 +53,7 @@ polling, dan berkas setengah tertulis ditolak sebagai JSON rusak.
 | `src/typer.ts` | Rencana pengetikan: jeda ketik→Enter, potong teks panjang, Enter kedua | ✅ |
 | `src/queue.ts` | Antrean FIFO + gerbang jarak-minimum antar-**pengirim** | ✅ |
 | `src/registry.ts` | Perlakuan khusus per-command, berbentuk data | ✅ |
-| `src/inbox.ts` | Parsing payload `pending/` | ✅ |
+| `src/inbox.ts` | Parsing payload `slash/` | ✅ |
 | `src/lock.ts` | Satu wrapper per folder | ✅ |
 | `src/startup.ts` | `--continue` + fallback, deteksi gerbang kepercayaan folder | ✅ |
 | `src/pty.ts` | **Satu-satunya** yang menyentuh `node-pty` | ❌ |

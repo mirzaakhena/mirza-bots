@@ -1,6 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import type { Engine } from "./engine/engine";
+import { slashDirIn } from "./engine/paths";
+import { writePending } from "./engine/slash/pending";
+import { buildSlashPayload, MAX_SLASH_BATCH } from "./engine/slash/send-tool";
 
 /**
  * What the server is when the engine could not start.
@@ -104,7 +108,13 @@ export const SERVER_INSTRUCTIONS = [
   `When YOU send with \`expects_reply: true\`, set a one-shot schedule in your own session to notice if the answer never arrives, and cancel it when the answer lands. On timeout, tell the user -- you cannot decide alone between resending, picking another bot, and giving up. That is exactly the case that deserves their attention; nothing else about inter-bot traffic does.`,
 ].join("\n");
 
-export function buildServer(backend: ServerBackend): McpServer {
+/**
+ * `botHome` diterima terpisah dari `backend`, dan itu bukan kelebihan
+ * parameter: tool `send_slash` harus tetap bekerja saat engine GAGAL start --
+ * justru di situlah user paling butuh /clear atau /rename untuk memulihkan
+ * sesinya. Kalau ia menumpang Engine, ia ikut mati bersamanya.
+ */
+export function buildServer(backend: ServerBackend, botHome: string): McpServer {
   const server = new McpServer(
     // "version" here is the MCP protocol identity of this server, not the
     // plugin/package version -- it is deliberately independent of
@@ -255,6 +265,41 @@ export function buildServer(backend: ServerBackend): McpServer {
           ? "There are no other bots next to this one. Nothing to send to."
           : `Bots you can reach: ${peers.join(", ")}.`;
       return { content: [{ type: "text" as const, text }] };
+    }
+  );
+
+  // SENGAJA tidak menyentuh `backend`. Engine yang gagal start berarti Telegram
+  // mati; tool ini cuma butuh tahu folder botnya, dan justru saat itulah user
+  // paling butuh /clear atau /rename untuk memulihkan sesinya.
+  server.registerTool(
+    "send_slash",
+    {
+      description:
+        "Send a slash command -- or an atomic BATCH of them -- to THIS session's own Claude Code. " +
+        "Self-only by design: there is no target parameter, and there never will be. To have another bot run something, send it an `agent_send` message and let its own AI decide. " +
+        "Only Claude Code's own commands work. Telegram-layer commands (`/new`, `/switch`, `/delete`, `/effort`) are rejected, each with its own true reason and where to go instead. " +
+        "Pass `command` for one, or `commands` for an ordered batch (max " +
+        MAX_SLASH_BATCH +
+        "). A batch is written as ONE file and enqueued contiguously, so no other payload can interleave between its items -- use it for sequences like a handoff self-reset: [\"/rename done-...\", \"/clear\", \"/rename idle\"]. " +
+        "Returns as soon as the command is queued; the wrapper injects the keystrokes on its next tick. Safe to call on your own initiative.",
+      inputSchema: {
+        command: z.string().min(1).optional(),
+        commands: z.array(z.string().min(1)).optional(),
+      },
+    },
+    async ({ command, commands }) => {
+      const built = buildSlashPayload({
+        ...(command !== undefined ? { command } : {}),
+        ...(commands !== undefined ? { commands } : {}),
+      });
+      // Penolakan dijawab sebagai error, bukan sukses tanpa efek -- kalau
+      // keduanya terlihat sama, AI mengira perintahnya sedang dikerjakan
+      // padahal tidak pernah berangkat.
+      if (!built.ok) {
+        return { content: [{ type: "text" as const, text: built.message }], isError: true };
+      }
+      writePending(slashDirIn(botHome), built.payload, randomUUID());
+      return { content: [{ type: "text" as const, text: built.ack }] };
     }
   );
 
