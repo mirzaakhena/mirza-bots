@@ -103,6 +103,8 @@ export const SERVER_INSTRUCTIONS = [
   "",
   `A message prefixed with ${AGENT_TURN_MARKER} came from ANOTHER BOT, not from the user. Do NOT answer it with \`reply\` -- that tool writes to the user's Telegram chat, and inter-bot traffic must stay off it. Answer with \`agent_send\` instead, addressed back to \`from_bot\`, with \`in_reply_to\` set to the \`agent_message_id\` from the meta and \`hop_count\` one higher than the incoming one.`,
   "",
+  "This rule is not blocked at the tool level (AB-4 opsi B) -- there are legitimate cases where a bot-to-bot exchange surfaces something only the user can decide, and `reply` staying silent would be worse than it speaking up. But know the consequence before you do it: if a turn triggered by an inter-bot message calls `reply` anyway, the engine automatically prepends a visible Indonesian marker to the outgoing text naming which bot triggered it -- you cannot suppress or edit it away. So the rule above still stands as the default; only reach for `reply` here when the user genuinely needs to see this, not as a shortcut.",
+  "",
   `Only reply to an inter-bot message when its meta says \`expects_reply: true\`. Anything else is one-way -- answering it anyway costs the other bot a turn it did not ask for. And a reply may never itself ask for a reply; that rule is enforced, not merely advised.`,
 ].join("\n");
 

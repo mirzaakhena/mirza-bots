@@ -20,7 +20,7 @@ import { renderContext } from "./context/render";
 import { waitForCapture } from "./context/wait";
 import { loadConfig } from "./config";
 import { identifyBot } from "./identity";
-import { startInboxScanner } from "./agent/receive";
+import { startInboxScanner, AGENT_ORIGIN } from "./agent/receive";
 import { sendToPeer, type SendResult } from "./agent/send";
 import { listPeers } from "./agent/peers";
 import { acquireBotLock, releaseBotLock } from "./lock";
@@ -321,6 +321,76 @@ export function prepareReply(
   return { parts: planParts(text), planned };
 }
 
+/**
+ * AB-4 opsi B -- "siapa yang TERAKHIR mengirim push ke sesi ini".
+ *
+ * SENGAJA bukan flag yang sekali menyala tidak pernah padam. Sistem lama
+ * (`telegramDriven`) adalah flag begitu, dan ia nyangkut: sekali sebuah sesi
+ * pernah menyentuh Telegram, giliran yang diketik langsung di terminal pun
+ * ikut salah diklasifikasi (audit area-10 §10.2). Bentuk yang benar adalah
+ * "siapa bicara TERAKHIR", dan itu berganti tiap push masuk -- push user
+ * berikutnya SELALU mengembalikannya ke "user", apa pun yang terjadi sebelum
+ * itu. Lihat `nextPushOrigin` di bawah untuk aturan resetnya, dan komentar di
+ * `sink.push` (di dalam `startEngine`) untuk di mana ia benar-benar dipanggil.
+ */
+export type LastPushOrigin = { kind: "user" } | { kind: "agent"; fromBot: string };
+
+/**
+ * Origin BERIKUTNYA sesudah satu push baru masuk. Murni dan diekspor supaya
+ * aturan reset-nya bisa diuji tanpa menyalakan engine sama sekali.
+ *
+ * `meta.origin === AGENT_ORIGIN` adalah SATU-SATUNYA sinyal, dan itu konstanta
+ * yang sama dipakai `markerFor` di server.ts -- kedua tempat tidak bisa
+ * diam-diam berbeda pendapat soal pesan mana yang "dari bot lain".
+ *
+ * Setiap push yang BUKAN agent (termasuk yang metanya entah bagaimana rusak
+ * atau tidak lengkap) jatuh ke "user", jadi arah defaultnya adalah TIDAK
+ * menandai. Itu disengaja, dan alasannya sama persis dengan `markerFor` di
+ * server.ts: `meta.origin` ditulis oleh jalur antar-bot itu sendiri, bukan
+ * oleh siapa pun di luar, jadi "bukan agent" bukan keadaan ragu-ragu -- ia
+ * memang bukan pesan antar-bot. Menebak ke arah sebaliknya akan menandai
+ * balasan biasa milik user, dan itu kasus mayoritas mutlak; membuatnya
+ * berisik merugikan setiap hari demi kasus yang tidak pernah terjadi.
+ *
+ * Konsekuensi yang diterima sadar: kalau suatu hari `meta.origin` benar-benar
+ * hilang di jalur antar-bot, balasannya lolos TANPA penanda. Yang menjaga itu
+ * bukan default di sini melainkan `AGENT_ORIGIN` sebagai konstanta bersama --
+ * satu-satunya sumber, dipakai di kedua tempat.
+ */
+export function nextPushOrigin(meta: Record<string, string>): LastPushOrigin {
+  return meta.origin === AGENT_ORIGIN
+    ? { kind: "agent", fromBot: meta.from_bot ?? "bot lain" }
+    : { kind: "user" };
+}
+
+/**
+ * Baris penanda yang WAJIB nempel di depan `reply` ketika origin TERAKHIR
+ * sesi ini adalah bot lain -- ditegakkan di sini, di kode, bukan dititipkan ke
+ * kesopanan AI (itulah inti AB-4 opsi B: dua kejadian produksi 2026-08-05
+ * membuktikan AI SUDAH menyebut sumbernya sendiri secara sukarela, jadi yang
+ * dicabut hanya ketergantungannya pada niat baik, bukan perilakunya).
+ *
+ * Bahasa Indonesia dengan sengaja: baris ini dibaca USER di Telegram, bukan
+ * AI -- beda dari SERVER_INSTRUCTIONS (server.ts) yang bahasa Inggris (K-16).
+ *
+ * `null` untuk giliran biasa (dipicu user) -- kasus mayoritas mutlak, dan
+ * `reply` tidak boleh menambah apa pun untuknya kalau ia tidak mau jadi
+ * berisik dan merugikan justru fitur ini sendiri.
+ *
+ * ⚠️ Batas yang disadari, bukan disembunyikan: kalau user mengetik langsung
+ * di terminal sesi bot (bukan lewat Telegram) SESUDAH sebuah pesan antar-bot
+ * masuk, dan menyuruh `reply` membalas, balasan itu TETAP akan ditandai --
+ * padahal user sendiri yang meminta. Ini false positive yang TERLIHAT
+ * (bukan kegagalan diam-diam), dan arahnya dipilih begitu dengan sengaja:
+ * menandai berlebihan hanya bikin berisik, sementara gagal menandai
+ * mengembalikan persis masalah yang perubahan ini ada untuk menutupnya.
+ */
+export function buildAgentOriginMarker(origin: LastPushOrigin): string | null {
+  return origin.kind === "agent"
+    ? `🤖 Dipicu oleh bot lain (${origin.fromBot}), bukan oleh pesanmu.`
+    : null;
+}
+
 export function startEngine(botHome: string): EngineStart {
   // Identitas DULU, config belakangan. Folder yang bukan bot harus dijawab
   // "ini bukan folder bot", bukan "config tidak bisa dibaca" -- yang kedua
@@ -355,8 +425,24 @@ export function startEngine(botHome: string): EngineStart {
   // exactly like the bot ignoring the first message after startup.
   const buffered: PushMessage[] = [];
   let handler: ((msg: PushMessage) => void) | undefined;
+
+  // AB-4 opsi B: "siapa yang terakhir bicara ke sesi ini". Lihat komentar di
+  // atas nextPushOrigin/buildAgentOriginMarker untuk kenapa ia BUKAN flag.
+  let lastPushOrigin: LastPushOrigin = { kind: "user" };
+
   const sink: MessageSink = {
-    push: (msg) => (handler ? handler(msg) : buffered.push(msg)),
+    push: (msg) => {
+      // Diperbarui DI SINI, bukan di deliverIncoming: pesan antar-bot
+      // (drainInbox, agent/receive.ts) tidak pernah lewat deliverIncoming sama
+      // sekali -- ia mendorong langsung ke sink.push. `sink.push` adalah
+      // satu-satunya titik yang benar-benar dilewati SETIAP push, baik dari
+      // user (lewat poller Telegram) maupun dari bot lain (lewat inbox), jadi
+      // di sinilah "push terakhir" harus dicatat. Diperbarui SEBELUM
+      // handler/buffered supaya reply yang terjadi sebelum onPush terdaftar
+      // pun tetap melihat origin yang benar.
+      lastPushOrigin = nextPushOrigin(msg.meta);
+      return handler ? handler(msg) : buffered.push(msg);
+    },
     // Read per push, never captured: /clear replaces the session without
     // restarting this process. See session-file.ts for the measurement.
     sessionId: () => readCurrentSessionId(botHome),
@@ -710,11 +796,21 @@ export function startEngine(botHome: string): EngineStart {
         // apa pun.
         typing.stop(chatId);
 
+        // AB-4 opsi B: ditempel DI SINI, di jalur yang sama dipakai
+        // `prepareReply` -- supaya AI tidak bisa menghilangkannya (ditegakkan
+        // kode, bukan kesopanan) dan supaya chunking (planParts di bawah)
+        // menghitung penandanya sebagai bagian dari teks yang dipotong,
+        // bukan tempelan sesudahnya yang bisa merusak batas potongan.
+        const marker = buildAgentOriginMarker(lastPushOrigin);
+        const outgoingText = marker ? `${marker}\n\n${text}` : text;
+
         // Satu panggilan, di atas segalanya: pagar narasi tombol, larangan
         // buttons+files, validasi berkas, dan pemotongan teks. Kalau ada yang
         // salah, tidak ada satu pun pesan yang terlanjur berangkat -- itulah
         // kenapa keempatnya duduk di dalam SATU fungsi, bukan berjejer di sini.
-        const { parts, planned } = prepareReply(text, buttons, files, (p) => statSync(p).size);
+        const { parts, planned } = prepareReply(outgoingText, buttons, files, (p) =>
+          statSync(p).size
+        );
 
         const replyMarkup = buttons ? buildInlineKeyboard(buttons) : undefined;
 
@@ -787,6 +883,11 @@ export function startEngine(botHome: string): EngineStart {
           }
         );
 
+        // `text.length`, BUKAN `outgoingText.length`: chars di sini menjawab
+        // "berapa panjang yang AI TULIS", persis seperti sebelum AB-4 -- baris
+        // penanda ditambahkan KODE, bukan AI, dan menghitungnya ke skor
+        // "kepanjangan" AI hanya akan membuat AI mengira dirinya harus
+        // memangkas teksnya sendiri untuk sesuatu yang bukan salahnya.
         return { chars: text.length, parts: parts.length, files: filesSent };
       },
 
