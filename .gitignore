@@ -12,3 +12,6 @@ node_modules/
 
 # OS
 .DS_Store
+
+# Scratch milik subagent-driven-development (ledger, brief, review package)
+.superpowers/
