@@ -13,6 +13,7 @@ import {
   botPidPathIn,
   dataDirIn,
   inboxDirIn,
+  slashDirIn,
   logsDirIn,
   ensureBotDirs,
 } from "../../src/engine/paths";
@@ -51,6 +52,7 @@ describe("path di dalam folder bot", () => {
     expect(botPidPathIn(HOME)).toBe(join(HOME, "bot.pid"));
     expect(dataDirIn(HOME)).toBe(join(HOME, "data"));
     expect(inboxDirIn(HOME)).toBe(join(HOME, "inbox"));
+    expect(slashDirIn(HOME)).toBe(join(HOME, "slash"));
     expect(logsDirIn(HOME)).toBe(join(HOME, "logs"));
   });
 
@@ -65,6 +67,7 @@ describe("path di dalam folder bot", () => {
       botPidPathIn(HOME),
       dataDirIn(HOME),
       inboxDirIn(HOME),
+      slashDirIn(HOME),
       logsDirIn(HOME),
     ]) {
       expect(p.startsWith(HOME)).toBe(true);
@@ -79,5 +82,23 @@ describe("ensureBotDirs", () => {
     expect(existsSync(dataDirIn(home))).toBe(true);
     expect(existsSync(inboxDirIn(home))).toBe(true);
     expect(existsSync(logsDirIn(home))).toBe(true);
+  });
+});
+
+// slash/ dan inbox/ WAJIB dua folder berbeda. cc-wrapper menghapus berkas
+// SEBELUM mem-parse-nya (main.ts: rmSync lalu parsePayload), jadi kalau
+// keduanya berbagi folder, wrapper menghapus pesan antar-bot lalu menolaknya
+// karena tidak ada field `command` -- pesan lenyap tanpa gejala.
+describe("slash/ terpisah dari inbox/", () => {
+  test("keduanya bukan folder yang sama", () => {
+    expect(slashDirIn(HOME)).not.toBe(inboxDirIn(HOME));
+  });
+});
+
+describe("ensureBotDirs membuat slash/", () => {
+  test("bot baru punya slash/ sejak lahir, bukan sejak slash pertama dipakai", () => {
+    const home = mkdtempSync(join(tmpdir(), "bothome-slash-"));
+    ensureBotDirs(home);
+    expect(existsSync(slashDirIn(home))).toBe(true);
   });
 });
