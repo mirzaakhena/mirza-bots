@@ -403,15 +403,27 @@ Dua aturan yang dijaga kode, bukan ingatan:
    menyuruh berhenti me-relay. Karena aturan (1) sudah menutup kasus hariannya,
    ini jaring pengaman untuk yang tak terbayang.
 
-**Timeout tidak dilacak sistem.** Kalau kamu mengirim dengan `expects_reply`,
-pasang jadwal sekali-tembak di sesimu sendiri dan batalkan saat jawabannya
-datang; kalau timeout tercapai, **lapor ke user** — bot pengirim tidak bisa
-memutuskan sendiri antara kirim ulang, ganti bot, atau batal. Kalau bot
-penerima atau pengirim mati, ya sudah: tidak ada pemulihan, dan itu keputusan
-sadar, bukan kelalaian.
+**Timeout tidak dilacak sistem, dan tidak ada kewajiban memasangnya sendiri.**
+Versi sebelumnya menyuruh AI memasang jadwal sekali-tembak tiap mengirim
+dengan `expects_reply` lalu membatalkannya saat jawaban datang. **Dibuang
+2026-08-05 atas keputusan user**, tanpa pengganti. Alasannya diukur dari
+pemakaian, bukan dari prinsip: biayanya **dua tool call tiap kirim** dan
+terasa sebagai jeda, sementara yang dijaganya — *"tetangga tidak pernah
+menjawab"* — adalah keadaan yang sistem ini justru **rancang** (pesannya
+menunggu di `inbox/` sampai bot itu dibuka), dan lalu lintas antar-bot hari
+ini hampir selalu dimulai user, jadi **user-lah yang menunggu dan
+menyadarinya lebih dulu**.
 
-⚠️ **Belum diuji hidup.** Yang ada baru test unit; dua bot sungguhan belum
-pernah saling kirim lewat jalur ini.
+Kalau bot penerima atau pengirim mati, ya sudah: tidak ada pemulihan, dan itu
+keputusan sadar, bukan kelalaian.
+
+⚠️ **Yang TIDAK ikut dibuang, dan jangan disamakan:** dua pagar anti-loop di
+atas (balasan tidak boleh minta balasan · `hop_count` maksimum 5). Keduanya
+**ditegakkan kode**, dan merekalah yang benar-benar menahan lalu lintas
+antar-bot — bukan jadwal timeout tadi.
+
+✅ **Terverifikasi hidup 2026-08-05.** Dua bot sungguhan saling kirim dua arah,
+latency ~24 detik, `inbox/` kedua sisi terkuras bersih.
 
 ## Menjalankan
 

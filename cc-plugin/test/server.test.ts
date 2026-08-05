@@ -444,6 +444,45 @@ test("pedomannya satu angka bernama, bukan tersebar di beberapa tempat", () => {
   expect(SERVER_INSTRUCTIONS).toContain("1000");
 });
 
+// Keputusan user 2026-08-05: kewajiban memasang jadwal timeout untuk
+// `expects_reply` DIBUANG, tanpa pengganti. Biayanya dua tool call tiap kirim
+// dan terasa sebagai jeda; yang dijaganya -- "tetangga tidak pernah menjawab"
+// -- adalah keadaan yang sistem ini justru RANCANG (pesannya menunggu di
+// inbox), dan lalu lintas antar-bot hari ini hampir selalu dimulai user, jadi
+// user-lah yang menunggu dan menyadarinya lebih dulu.
+//
+// Assert NEGATIF, dan itu disengaja: yang harus dijaga bukan "aturan barunya
+// ada" melainkan "aturan lamanya TIDAK KEMBALI". Kalimat itu hidup di
+// SERVER_INSTRUCTIONS -- tidak ada kode yang gagal kalau ia muncul lagi.
+describe("kewajiban jadwal timeout expects_reply sudah dibuang", () => {
+  test("SERVER_INSTRUCTIONS tidak lagi menyuruh memasang jadwal", () => {
+    expect(SERVER_INSTRUCTIONS).not.toContain("one-shot schedule");
+    expect(SERVER_INSTRUCTIONS).not.toContain("cancel it when the answer lands");
+  });
+
+  test("deskripsi agent_send juga tidak menyuruhnya", async () => {
+    const server = buildServer(fakeEngine(), testHome());
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
+    await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
+
+    const { tools } = await mcpClient.listTools();
+    const agentSend = tools.find((t) => t.name === "agent_send")!;
+    expect(agentSend.description).not.toContain("one-shot schedule");
+
+    await mcpClient.close();
+    await server.close();
+  });
+
+  // Yang TIDAK ikut dibuang, dan sengaja dikunci di test yang sama: dua pagar
+  // anti-loop. Keduanya ditegakkan kode, dan merekalah yang benar-benar
+  // menahan lalu lintas antar-bot -- bukan jadwal timeout tadi.
+  test("pagar anti-loop tetap ada", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("a reply may never itself ask for a reply");
+    expect(SERVER_INSTRUCTIONS).toContain("enforced, not merely advised");
+  });
+});
+
 // Tanpa tool ini jalur antar-bot ada di kode tapi tidak bisa dipakai AI --
 // rumahnya dibangun, penghuninya belum ada (persis nasib tabel `handoffs` di
 // fleet.db: skema lengkap, nol baris kode memakainya).
