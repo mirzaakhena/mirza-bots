@@ -1,9 +1,17 @@
 import { describe, test, expect } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 import { buildServer, TERSE_TURN_MARKER, AGENT_TURN_MARKER, markerFor } from "../src/server";
 import type { Engine } from "../src/engine/engine";
 import type { PushMessage } from "../src/engine/sink";
+
+// Folder bot untuk test. Sengaja nyata (tmpdir), bukan string karangan: tool
+// send_slash MENULIS ke sini, dan folder karangan akan lolos di test lalu gagal
+// di produksi.
+const testHome = () => mkdtempSync(joinPath(tmpdir(), "srv-home-"));
 
 function fakeEngine(overrides: Partial<Engine> = {}): Engine {
   return {
@@ -28,7 +36,7 @@ describe("cc-plugin MCP server", () => {
         return { chars: text.length, parts: 1, files: 0 };
       },
     });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -51,7 +59,7 @@ describe("cc-plugin MCP server", () => {
         return { chars: text.length, parts: 1, files: 0 };
       },
     });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -79,7 +87,7 @@ describe("cc-plugin MCP server", () => {
   test("a push_message from fleetd is forwarded as notifications/claude/channel with string-only meta", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
     const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -113,7 +121,7 @@ describe("cc-plugin MCP server", () => {
   test("a push_message meta containing a non-primitive value is serialized to a string before sending, never sent as an object/array", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
     const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -144,7 +152,7 @@ describe("cc-plugin MCP server", () => {
   test("a push_message meta containing genuinely non-string values (number, undefined) is coerced to strings, never passed through as-is", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
     const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -181,7 +189,7 @@ describe("cc-plugin MCP server", () => {
 
   test("the server declares MCP instructions that name the reply tool and the terse-turn marker", async () => {
     const client = fakeEngine();
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -203,7 +211,7 @@ describe("cc-plugin MCP server", () => {
   test("a pushed message is stamped with the terse-turn marker while preserving the original text verbatim", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
     const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -232,7 +240,7 @@ describe("cc-plugin MCP server", () => {
   test("a button press (kind: callback) gets the same marker -- no special case", async () => {
     let capturedPushHandler: ((msg: PushMessage) => void) | undefined;
     const client = fakeEngine({ onPush: (handler) => { capturedPushHandler = handler; } });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -265,7 +273,7 @@ describe("cc-plugin MCP server", () => {
         return [row];
       },
     });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -294,7 +302,7 @@ describe("cc-plugin MCP server", () => {
         return [];
       },
     });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -323,7 +331,7 @@ describe("cc-plugin MCP server", () => {
         throw new Error("request rejected: bad_search_query: unterminated string");
       },
     });
-    const server = buildServer(client);
+    const server = buildServer(client, testHome());
 
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
@@ -350,7 +358,7 @@ describe("cc-plugin MCP server when the engine could not start", () => {
   };
 
   async function connected() {
-    const server = buildServer(unavailable);
+    const server = buildServer(unavailable, testHome());
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
     await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);
@@ -439,7 +447,7 @@ test("pedomannya satu angka bernama, bukan tersebar di beberapa tempat", () => {
 // fleet.db: skema lengkap, nol baris kode memakainya).
 describe("tool antar-bot", () => {
   async function connect(engine: Engine) {
-    const server = buildServer(engine);
+    const server = buildServer(engine, testHome());
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     const mcpClient = new Client({ name: "test-client", version: "0.1.0" });
     await Promise.all([server.connect(serverTransport), mcpClient.connect(clientTransport)]);

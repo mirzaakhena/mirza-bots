@@ -104,7 +104,13 @@ export const SERVER_INSTRUCTIONS = [
   `When YOU send with \`expects_reply: true\`, set a one-shot schedule in your own session to notice if the answer never arrives, and cancel it when the answer lands. On timeout, tell the user -- you cannot decide alone between resending, picking another bot, and giving up. That is exactly the case that deserves their attention; nothing else about inter-bot traffic does.`,
 ].join("\n");
 
-export function buildServer(backend: ServerBackend): McpServer {
+/**
+ * `botHome` diterima terpisah dari `backend`, dan itu bukan kelebihan
+ * parameter: tool `send_slash` harus tetap bekerja saat engine GAGAL start --
+ * justru di situlah user paling butuh /clear atau /rename untuk memulihkan
+ * sesinya. Kalau ia menumpang Engine, ia ikut mati bersamanya.
+ */
+export function buildServer(backend: ServerBackend, botHome: string): McpServer {
   const server = new McpServer(
     // "version" here is the MCP protocol identity of this server, not the
     // plugin/package version -- it is deliberately independent of
