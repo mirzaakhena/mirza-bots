@@ -104,8 +104,6 @@ export const SERVER_INSTRUCTIONS = [
   `A message prefixed with ${AGENT_TURN_MARKER} came from ANOTHER BOT, not from the user. Do NOT answer it with \`reply\` -- that tool writes to the user's Telegram chat, and inter-bot traffic must stay off it. Answer with \`agent_send\` instead, addressed back to \`from_bot\`, with \`in_reply_to\` set to the \`agent_message_id\` from the meta and \`hop_count\` one higher than the incoming one.`,
   "",
   `Only reply to an inter-bot message when its meta says \`expects_reply: true\`. Anything else is one-way -- answering it anyway costs the other bot a turn it did not ask for. And a reply may never itself ask for a reply; that rule is enforced, not merely advised.`,
-  "",
-  `When YOU send with \`expects_reply: true\`, set a one-shot schedule in your own session to notice if the answer never arrives, and cancel it when the answer lands. On timeout, tell the user -- you cannot decide alone between resending, picking another bot, and giving up. That is exactly the case that deserves their attention; nothing else about inter-bot traffic does.`,
 ].join("\n");
 
 /**
@@ -216,7 +214,6 @@ export function buildServer(backend: ServerBackend, botHome: string): McpServer 
         "Send a message to ANOTHER BOT on this machine. This never touches Telegram: it does not appear on the user's phone, and it costs them nothing to read. " +
         "Address it by folder name -- every bot is a sibling folder, and `agent_list` tells you which names exist. " +
         "Set `expects_reply: true` only when you genuinely need an answer back, and only on a NEW message: a reply may not itself ask for a reply, and that rule is enforced, not advised. " +
-        "When you do use it, set a one-shot schedule in your own session to notice if the answer never arrives, cancel it when the answer lands, and on timeout tell the user -- you cannot decide alone between resending, picking another bot, and giving up. " +
         "When you are ANSWERING an inter-bot message, pass `in_reply_to` set to its `agent_message_id` and `hop_count` one higher than the one it arrived with. " +
         "If the target bot is not running, the message waits in its inbox folder until it is -- nothing is lost and nothing needs retrying.",
       inputSchema: {
