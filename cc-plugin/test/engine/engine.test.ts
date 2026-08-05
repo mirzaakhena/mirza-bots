@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+﻿import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +10,9 @@ import {
   inboxDirIn,
   logsDirIn,
   conversationsDbPathIn,
+  chainedStatuslinePathIn,
 } from "../../src/engine/paths";
+import { buildBridgeCommand } from "../../src/engine/context/install";
 import { openConversationsDb, insertMessage } from "../../src/engine/db/conversations-schema";
 
 /**
@@ -259,4 +261,103 @@ test("reply still refuses when conversations.db is genuinely empty, without blam
   expect(message).toContain("no_known_chat");
   expect(message).not.toContain("Telegram");
   res.engine.close();
+});
+
+// Bug yang kambuh 2026-08-04 DAN 2026-08-05: path bridge menyematkan nomor
+// versi, jadi tiap `claude plugin update` membuatnya basi sampai kebetulan
+// ada yang menjalankan /context. startEngine sekarang menyembuhkan path-nya
+// SENDIRI tiap kali bot dibuka ulang -- lihat komentar di engine.ts.
+//
+// CLAUDE_PLUGIN_ROOT dipaksa di sini supaya bridgeCommand yang dihitung
+// startEngine (lewat pluginRootFrom) bisa diprediksi test, alih-alih
+// bergantung pada import.meta.url modul engine.
+function withFakePluginRoot<T>(root: string, fn: () => T): T {
+  const before = process.env.CLAUDE_PLUGIN_ROOT;
+  process.env.CLAUDE_PLUGIN_ROOT = root;
+  try {
+    return fn();
+  } finally {
+    if (before === undefined) delete process.env.CLAUDE_PLUGIN_ROOT;
+    else process.env.CLAUDE_PLUGIN_ROOT = before;
+  }
+}
+
+test("startEngine menyembuhkan path bridge basi, dan TIDAK menyentuh chained-statusline", () => {
+  withFakePluginRoot("C:/plugins/cc-plugin-baru", () => {
+    const home = botFolder("bot-basi", { token: "123:fake", allowFrom: ["1"] });
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const settingsPath = join(home, ".claude", "settings.json");
+
+    // Bridge kita, tapi versi LAMA -- persis gejala hari ini: installed_plugins
+    // sudah 0.16.0, settings.json masih menunjuk 0.13.0.
+    const bridgeLama = 'bun run "C:/plugins/cc-plugin/0.13.0/bin/statusline-bridge.ts"';
+    writeFileSync(settingsPath, JSON.stringify({ statusLine: { command: bridgeLama } }), "utf8");
+
+    // Rantai sudah berisi statusline user yang ASLI, tersimpan sejak
+    // pemasangan pertama. Ini yang paling penting untuk tidak hilang.
+    const chainPath = chainedStatuslinePathIn(home);
+    writeFileSync(chainPath, "C:/Users/Mirza/.claude/statusline-progress.sh", "utf8");
+
+    const res = startEngine(home);
+    if (!res.ok) throw new Error(res.message);
+    res.engine.close();
+
+    const after = JSON.parse(readFileSync(settingsPath, "utf8"));
+    expect(after.statusLine.command).toBe(buildBridgeCommand("C:/plugins/cc-plugin-baru"));
+
+    // INI yang paling penting: rantai yang tertimpa berarti statusline user
+    // hilang selamanya.
+    expect(readFileSync(chainPath, "utf8")).toBe("C:/Users/Mirza/.claude/statusline-progress.sh");
+  });
+});
+
+test("startEngine tidak menulis apa pun kalau bridge sudah terpasang benar", () => {
+  withFakePluginRoot("C:/plugins/cc-plugin-baru", () => {
+    const home = botFolder("bot-sudah-benar", { token: "123:fake", allowFrom: ["1"] });
+    mkdirSync(join(home, ".claude"), { recursive: true });
+    const settingsPath = join(home, ".claude", "settings.json");
+
+    const bridgeSekarang = buildBridgeCommand("C:/plugins/cc-plugin-baru");
+    const settingsBefore = JSON.stringify({ statusLine: { command: bridgeSekarang } });
+    writeFileSync(settingsPath, settingsBefore, "utf8");
+
+    const chainPath = chainedStatuslinePathIn(home);
+    const chainBefore = "C:/Users/Mirza/.claude/statusline-progress.sh";
+    writeFileSync(chainPath, chainBefore, "utf8");
+
+    const res = startEngine(home);
+    if (!res.ok) throw new Error(res.message);
+    res.engine.close();
+
+    // already-installed berarti TIDAK menulis apa pun -- byte demi byte sama.
+    expect(readFileSync(settingsPath, "utf8")).toBe(settingsBefore);
+    expect(readFileSync(chainPath, "utf8")).toBe(chainBefore);
+  });
+});
+
+test("installBridge yang gagal saat start tidak menggagalkan engine -- alasannya ke stderr", () => {
+  const home = botFolder("bot-settings-rusak", { token: "123:fake", allowFrom: ["1"] });
+  mkdirSync(join(home, ".claude"), { recursive: true });
+  const settingsPath = join(home, ".claude", "settings.json");
+  // Settings project tidak bisa dibaca -> installBridge menjawab "refused".
+  writeFileSync(settingsPath, "{ ini bukan json", "utf8");
+
+  const originalError = console.error;
+  const logged: string[] = [];
+  console.error = (...args: unknown[]) => {
+    logged.push(args.map(String).join(" "));
+  };
+
+  let res: ReturnType<typeof startEngine>;
+  try {
+    res = startEngine(home);
+  } finally {
+    console.error = originalError;
+  }
+
+  expect(res.ok).toBe(true);
+  if (!res.ok) throw new Error("expected success despite bridge install failure");
+  res.engine.close();
+
+  expect(logged.some((line) => line.includes("tidak bisa dibaca"))).toBe(true);
 });

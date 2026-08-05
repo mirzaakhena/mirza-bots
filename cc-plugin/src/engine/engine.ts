@@ -407,6 +407,36 @@ export function startEngine(botHome: string): EngineStart {
     return { ok: false, message: `Cannot read this bot's config: ${(err as Error).message}` };
   }
 
+  // Penyembuhan bridge SAAT START, bukan cuma saat /context dipanggil.
+  // Kambuh dua kali (2026-08-04, 2026-08-05): path bridge menyematkan nomor
+  // versi, jadi tiap `claude plugin update` membuatnya basi, dan sebelum
+  // perubahan ini path itu tetap basi sampai kebetulan ada yang menjalankan
+  // /context -- bisa berhari-hari.
+  //
+  // Deps di bawah SAMA PERSIS dengan yang dipakai replyLocalContext (lihat
+  // situ) -- disengaja, tidak disusun ulang: dua sumber untuk satu fakta yang
+  // sama selalu bisa diam-diam berbeda pendapat.
+  //
+  // Kegagalan di sini TIDAK BOLEH menggagalkan start: statusline cuma
+  // kenyamanan, Telegram adalah tugas utamanya. Kalau installBridge menjawab
+  // "refused" atau "rolled-back", alasannya dicatat ke stderr (W-16, diam-diam
+  // gagal adalah kegagalan yang paling dihukum) -- operator yang membaca log
+  // proses tahu kenapa, sementara /context tetap jadi jalur yang melapor ke
+  // USER lewat Telegram.
+  const bridgeInstall = installBridge({
+    projectDir: botHome,
+    userSettingsPath: join(homedir(), ".claude", "settings.json"),
+    bridgeCommand: buildBridgeCommand(
+      pluginRootFrom(process.env.CLAUDE_PLUGIN_ROOT, import.meta.url)
+    ),
+    chainPath: chainedStatuslinePathIn(botHome),
+  });
+  if (bridgeInstall.kind === "refused" || bridgeInstall.kind === "rolled-back") {
+    console.error(
+      `cc-plugin: bridge statusline tidak dipasang/diperbarui saat start -- ${bridgeInstall.reason}`
+    );
+  }
+
   const takeover = acquireBotLock(botPidPathIn(botHome), process.pid);
   if (takeover.previousPid !== null) {
     // Said out loud on purpose: from the older session's side this looks like
@@ -945,9 +975,19 @@ export function startEngine(botHome: string): EngineStart {
 /**
  * Menjawab /context dari data lokal. TIDAK pernah menghubungi Claude Code.
  *
- * Bridge dipasang di sini -- saat fitur benar-benar dipakai -- bukan saat
- * engine boot. Menyentuh settings.json user untuk fitur yang mungkin tidak
- * pernah dipanggil adalah biaya yang tidak perlu ditagihkan di muka.
+ * installBridge DIPANGGIL LAGI di sini, bukan cuma di startEngine. Ini bukan
+ * mubazir: dua alasan.
+ *
+ * Pertama, idempoten -- kalau startEngine sudah menyembuhkannya (atau bridge
+ * memang sudah benar), jawabannya "already-installed" dan tidak menulis apa
+ * pun; panggilan kedua ini praktis gratis.
+ *
+ * Kedua, dan ini yang penting: kalau pemasangannya ditolak atau di-rollback,
+ * /context adalah SATU-SATUNYA momen user berhak tahu ALASANNYA -- dan itu
+ * harus dilaporkan ke Telegram, bukan cuma ke stderr proses (yang tidak
+ * pernah dibaca user). startEngine sendiri hanya mencatat ke stderr karena
+ * kegagalan bridge tidak boleh menggagalkan start; jalur ini yang menutup
+ * lubang itu dengan melapor ke tempat yang user benar-benar lihat.
  *
  * Alurnya meniru sistem lama, dan alasannya terukur hidup 2026-08-04: pada
  * pemasangan pertama, berkas tangkapan BELUM ADA -- Claude Code belum sempat
