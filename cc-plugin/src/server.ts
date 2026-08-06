@@ -92,8 +92,21 @@ export function formatSendResult(result: {
 // whole session: paid once, not once per turn. English on purpose (K-16 -- this
 // is a machine-to-AI instruction, not a message to the user); the AI's `reply`
 // content still follows the user's own language.
+//
+// NO INTERNAL SHORTHAND IN HERE. This text is shipped to the AI every session,
+// and the AI cannot resolve project codes -- it has no BACKLOG to look them up
+// in. A code like "AB-4 opsi B" therefore carries zero information to its actual
+// reader while still being paid for in tokens; user caught one in this very
+// paragraph on 2026-08-06. Traceability belongs in comments like this one, next
+// to the rule, where it helps the humans who follow the trail:
+//   - the inter-bot `reply` rule below is deliberately NOT enforced at the tool
+//     level (AB-4 opsi B) -- the engine tags the outgoing message instead of
+//     blocking it, because a bot going silent is the more expensive failure.
+//   - the AFK wording in the first line duplicates hooks/reply-guard.ts on
+//     purpose: the guard says it only AFTER the rule is broken, so the same
+//     fact has to be stated up front where it can still prevent something.
 export const SERVER_INSTRUCTIONS = [
-  "Messages that arrive from Telegram appear in this session as notifications. The person who sent them is reading Telegram, not this transcript, so a `reply` tool call is the only thing that reaches them -- your transcript output does not.",
+  "Messages that arrive from Telegram appear in this session as notifications. The person who sent one is AFK -- away from this terminal, reading Telegram on their phone. They never see this transcript, so a `reply` tool call is the only thing that reaches them; your transcript output does not, however well written it is.",
   "",
   `When an incoming message is prefixed with ${TERSE_TURN_MARKER}, do not write prose in that turn. Say everything you have to say through the \`reply\` tool, then end the turn with a single "." and nothing else. Never restate, summarize, or explain in the transcript what you already sent via \`reply\` -- nobody reads it, and it keeps costing tokens on every later turn of the session.`,
   "",
@@ -103,7 +116,7 @@ export const SERVER_INSTRUCTIONS = [
   "",
   `A message prefixed with ${AGENT_TURN_MARKER} came from ANOTHER BOT, not from the user. Do NOT answer it with \`reply\` -- that tool writes to the user's Telegram chat, and inter-bot traffic must stay off it. Answer with \`agent_send\` instead, addressed back to \`from_bot\`, with \`in_reply_to\` set to the \`agent_message_id\` from the meta and \`hop_count\` one higher than the incoming one.`,
   "",
-  "This rule is not blocked at the tool level (AB-4 opsi B) -- there are legitimate cases where a bot-to-bot exchange surfaces something only the user can decide, and `reply` staying silent would be worse than it speaking up. But know the consequence before you do it: if a turn triggered by an inter-bot message calls `reply` anyway, the engine automatically prepends a visible Indonesian marker to the outgoing text naming which bot triggered it -- you cannot suppress or edit it away. So the rule above still stands as the default; only reach for `reply` here when the user genuinely needs to see this, not as a shortcut.",
+  "This rule is not blocked at the tool level -- there are legitimate cases where a bot-to-bot exchange surfaces something only the user can decide, and `reply` staying silent would be worse than it speaking up. But know the consequence before you do it: if a turn triggered by an inter-bot message calls `reply` anyway, the engine automatically prepends a visible Indonesian marker to the outgoing text naming which bot triggered it -- you cannot suppress or edit it away. So the rule above still stands as the default; only reach for `reply` here when the user genuinely needs to see this, not as a shortcut.",
   "",
   `Only reply to an inter-bot message when its meta says \`expects_reply: true\`. Anything else is one-way -- answering it anyway costs the other bot a turn it did not ask for. And a reply may never itself ask for a reply; that rule is enforced, not merely advised.`,
 ].join("\n");

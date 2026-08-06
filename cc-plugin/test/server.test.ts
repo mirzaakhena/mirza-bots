@@ -483,6 +483,28 @@ describe("kewajiban jadwal timeout expects_reply sudah dibuang", () => {
   });
 });
 
+// Dua aturan tentang teks yang dikirim ke AI, ditemukan user 2026-08-06 dan
+// dikunci di sini karena SEBELUM test ini tidak ada satu pun kode yang gagal
+// bila keduanya dilanggar -- keduanya hidup sebagai kebiasaan penulis, bukan
+// sebagai syarat. Bentuknya sengaja mengikuti tetangganya di atas: yang harus
+// dijaga bukan "kalimatnya pernah benar" melainkan "bentuk salahnya tidak
+// kembali".
+describe("SERVER_INSTRUCTIONS ditulis untuk pembacanya", () => {
+  // Regex, bukan daftar kata: yang dijaga adalah KELASnya. Menguji
+  // `not.toContain("AB-4")` hanya akan menangkap satu kasus yang kebetulan
+  // sudah diperbaiki, dan diam untuk kode berikutnya yang menyusup.
+  test("tidak memuat kode istilah internal", () => {
+    expect(SERVER_INSTRUCTIONS).not.toMatch(/\b(AB|K|W|B|TG|PTY|SCAR|SKILL)-\d+\b/);
+  });
+
+  // Fakta ini sudah ada di hooks/reply-guard.ts, tapi di sana ia baru dibaca
+  // SESUDAH aturannya dilanggar. Menyatakannya di muka adalah satu-satunya
+  // tempat ia masih bisa mencegah sesuatu.
+  test("menegaskan user sedang AFK di muka, bukan hanya saat guard menyala", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("AFK");
+  });
+});
+
 // Tanpa tool ini jalur antar-bot ada di kode tapi tidak bisa dipakai AI --
 // rumahnya dibangun, penghuninya belum ada (persis nasib tabel `handoffs` di
 // fleet.db: skema lengkap, nol baris kode memakainya).
