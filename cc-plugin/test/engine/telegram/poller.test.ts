@@ -669,3 +669,57 @@ describe("startPolling retry loop", () => {
     expect(delays).toEqual([1000, 2000]);
   });
 });
+
+// Kanal `[from: system]`: pengingat mekanis menempel pada pesan yang MEMANG
+// sudah datang, bukan di-push sendiri. Push tersendiri berarti membangunkan AI
+// tanpa ada yang berbicara -- satu giliran penuh yang tidak diminta siapa pun.
+describe("pengingat system menempel pada push", () => {
+  test("blok pengingat ikut terkirim bersama pesan user", async () => {
+    const sink = new CollectingSink();
+
+    await handleIncomingMessage(baseMsg(), {
+      config,
+      conversationsDb: openConversationsDb(":memory:"),
+      sink,
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
+      systemReminders: () => "[from: system]\nkerjakan sesuatu",
+    });
+
+    expect(sink.sent[0]?.text).toContain("halo bot");
+    expect(sink.sent[0]?.text).toContain("kerjakan sesuatu");
+  });
+
+  // Tidak ada yang menyala berarti pesannya utuh apa adanya -- bukan pesan
+  // dengan penanda kosong menempel di bawahnya.
+  test("tanpa pengingat, teksnya tidak berubah sama sekali", async () => {
+    const sink = new CollectingSink();
+
+    await handleIncomingMessage(baseMsg(), {
+      config,
+      conversationsDb: openConversationsDb(":memory:"),
+      sink,
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
+      systemReminders: () => "",
+    });
+
+    expect(sink.sent[0]?.text).toBe("halo bot");
+  });
+
+  // Yang disimpan ke conversations.db adalah apa yang USER tulis. Pengingat
+  // mesin bukan bagian dari percakapan, dan menyimpannya akan mencemari riwayat
+  // yang dibaca `read_history` dan `search_history`.
+  test("pengingat TIDAK ikut tersimpan ke riwayat percakapan", async () => {
+    const conversationsDb = openConversationsDb(":memory:");
+
+    await handleIncomingMessage(baseMsg(), {
+      config,
+      conversationsDb,
+      sink: new CollectingSink(),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
+      systemReminders: () => "[from: system]\nkerjakan sesuatu",
+    });
+
+    expect(searchMessages(conversationsDb, "kerjakan").length).toBe(0);
+    expect(searchMessages(conversationsDb, "halo").length).toBe(1);
+  });
+});

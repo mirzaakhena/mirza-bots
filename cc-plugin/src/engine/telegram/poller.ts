@@ -56,6 +56,17 @@ export type PollerDeps = {
    * .jpg sebagai payload rusak.
    */
   dataDir: string;
+  /**
+   * Blok pengingat mesin yang ikut menempel pada push ini, atau string kosong.
+   *
+   * Disuntik sebagai fungsi, bukan dirakit di sini: poller tidak perlu tahu
+   * apa-apa soal `status.json`, jumlah giliran, maupun daftar pengingatnya --
+   * dan karena itu seluruh perilakunya bisa diuji tanpa satu berkas pun.
+   *
+   * Menempel, bukan push tersendiri: push sendiri berarti membangunkan AI tanpa
+   * ada yang berbicara, yaitu satu giliran penuh yang tidak diminta siapa pun.
+   */
+  systemReminders?: (sessionId: string | undefined) => string;
 };
 
 /**
@@ -227,9 +238,16 @@ export async function handleIncomingMessage(
     sessionId,
   });
 
+  // Disusun SESUDAH insertMessage, dan itu disengaja: yang tersimpan di
+  // conversations.db adalah apa yang USER tulis. Pengingat mesin bukan bagian
+  // dari percakapan, dan menyimpannya akan mencemari riwayat yang dibaca
+  // `read_history` dan `search_history`.
+  const reminders = deps.systemReminders?.(sessionId) ?? "";
+  const pushText = finalText ?? "(media)";
+
   const pushMsg: PushMessage = {
     type: "push_message",
-    text: finalText ?? "(media)",
+    text: reminders.length > 0 ? `${pushText}\n\n${reminders}` : pushText,
     meta: {
       chat_id: msg.chatId,
       user_id: msg.userId,

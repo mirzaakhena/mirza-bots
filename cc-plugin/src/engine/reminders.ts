@@ -1,0 +1,124 @@
+/**
+ * Pengingat mekanis dari mesin ke AI — isi kanal `[from: system]`.
+ *
+ * ## Kenapa ini ada, dan kenapa BUKAN di SERVER_INSTRUCTIONS
+ *
+ * `SERVER_INSTRUCTIONS` memuat aturan yang **selalu** berlaku dan dibaca sekali
+ * di awal sesi. Berkas ini memuat keadaan yang **sedang** berlaku, dan dikirim
+ * tiap kali kondisinya terpenuhi. Memindahkan yang selalu benar ke sini cuma
+ * membuatnya dibayar berkali-kali; membiarkan yang kadang benar di sana membuat
+ * ia jadi aturan yang menunggu momen yang mungkin tidak pernah datang — dan
+ * pada sesi panjang yang konteksnya dipadatkan, ia bergeser jauh dari perhatian.
+ *
+ * ## Pemicunya KEADAAN, bukan peristiwa (keputusan user 2026-08-06)
+ *
+ * Selama kondisinya bertahan, pengingatnya ada. Yang hilang karena itu — dan
+ * inilah yang membuat desainnya lebih kecil, bukan lebih besar:
+ *
+ * - tidak ada flag "sudah pernah diingatkan"
+ * - tidak ada aturan "jangan nagih"
+ * - tidak ada logika berhenti: begitu kondisinya tidak terpenuhi, pengingatnya
+ *   lenyap sendiri
+ * - AI tidak perlu mengingat apa pun antar-giliran
+ *
+ * Efek sampingnya self-healing: giliran yang terlewat masih dibawa giliran
+ * berikutnya.
+ *
+ * ## Mesin TIDAK menyusun prioritas
+ *
+ * Semua yang terpenuhi dikirim, apa adanya, dalam urutan daftar ini. AI yang
+ * menyusun prioritasnya, dan AI boleh mengembalikan keputusannya ke user
+ * (keputusan user 2026-08-06). Alasannya bukan kemudahan: prioritas adalah
+ * penilaian, penilaian tergantung isi pekerjaan, dan mesin tidak tahu isi
+ * pekerjaan. Mesin yang mengurutkan adalah mesin mengambil keputusan yang bukan
+ * haknya — kekeliruan yang sama bentuknya dengan penanda yang menamai perilaku.
+ *
+ * ## Syarat penghuni baru
+ *
+ * Sebelum menambah entri di sini, jawab satu pertanyaan: **kapan ia TIDAK
+ * menyala?** Pengingat yang menyala terus berhenti menjadi sinyal dan menjadi
+ * latar belakang — dan yang membunuh kanal ini adalah ambang yang longgar,
+ * bukan jumlah penghuninya.
+ */
+import { SYSTEM_TURN_MARKER } from "../server";
+import type { CapturedStatus } from "./context/render";
+
+export interface ReminderContext {
+  /** `null` berarti sesi ini belum punya nama sama sekali. */
+  sessionName: string | null;
+  /** Giliran = pesan MASUK dari user di sesi ini; balasan bot tidak dihitung. */
+  turnCount: number;
+  /** `false` berarti tangkapan statusline milik sesi LAIN — jangan bertindak. */
+  statusFresh: boolean;
+}
+
+export interface Reminder {
+  id: string;
+  /** Murni: seluruh matriks keputusannya bisa diuji tanpa satu berkas pun. */
+  applies: (c: ReminderContext) => boolean;
+  text: string;
+}
+
+/** Ambang giliran sebelum penamaan mulai ditagih. Ditetapkan user 2026-08-06. */
+export const MIN_TURNS_BEFORE_NAMING = 2;
+
+export const REMINDERS: Reminder[] = [
+  {
+    id: "name-session",
+    // Tiga syarat, dan yang ketiga yang paling mudah dilupakan: data segar.
+    // Tanpa itu pengingat ini bisa menilai sesi yang sudah mati.
+    applies: (c) =>
+      c.statusFresh && c.sessionName === null && c.turnCount >= MIN_TURNS_BEFORE_NAMING,
+    // Kalimat PERINTAH, kata per kata dari user 2026-08-06. Bukan pernyataan
+    // keadaan ("sesi ini belum bernama"): kalimat yang cuma menyatakan keadaan
+    // akan dikarang maksudnya oleh pembacanya, dan di sini pembacanya AI.
+    // Syarat penilaiannya tetap milik AI lewat anak kalimat terakhir.
+    text: "segera beri nama session ini jika context yang dibicarakan sudah jelas",
+  },
+];
+
+/**
+ * Menyusun konteks dari bahan yang sudah ada di disk, dan MENJAGA KESEGARANNYA.
+ *
+ * `status.json` hanya diperbarui saat statusline digambar ulang. Tepat setelah
+ * sebuah sesi baru lahir, berkas itu masih memuat sesi SEBELUMNYA — lengkap
+ * dengan namanya. Bertindak atas data itu berarti menilai sesi yang salah, dan
+ * kegagalannya tidak terlihat: yang keluar adalah pengingat yang MASUK AKAL,
+ * cuma untuk sesi yang keliru.
+ *
+ * Karena itu nama sesi hanya dipakai bila `session_id` di dalam tangkapan sama
+ * dengan sesi yang sedang berjalan. Kalau tidak — atau kalau id sesi sekarang
+ * tidak diketahui sama sekali — jawabannya "tidak segar", dan seluruh pengingat
+ * yang bergantung padanya diam. Diam, bukan menebak.
+ */
+export function buildReminderContext(
+  captured: CapturedStatus | null,
+  currentSessionId: string | undefined,
+  turnCount: number
+): ReminderContext {
+  const capturedSessionId = captured?.payload?.session_id;
+  const fresh =
+    typeof currentSessionId === "string" &&
+    currentSessionId.length > 0 &&
+    capturedSessionId === currentSessionId;
+
+  const name = fresh && typeof captured?.payload?.session_name === "string"
+    ? captured.payload.session_name
+    : null;
+
+  return { sessionName: name, turnCount, statusFresh: fresh };
+}
+
+export function collectReminders(c: ReminderContext, list: Reminder[] = REMINDERS): Reminder[] {
+  return list.filter((r) => r.applies(c));
+}
+
+/**
+ * Blok yang ditempelkan ke push. String kosong berarti tidak ada yang ditempel —
+ * bukan blok kosong, karena penanda tanpa isi tetap dibayar tokennya dan
+ * mengajari AI bahwa penanda itu kadang tidak berarti apa-apa.
+ */
+export function renderReminders(rs: Reminder[]): string {
+  if (rs.length === 0) return "";
+  return [SYSTEM_TURN_MARKER, ...rs.map((r) => r.text)].join("\n");
+}

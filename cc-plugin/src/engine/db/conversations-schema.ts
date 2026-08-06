@@ -212,6 +212,25 @@ export function getMessagesAround(
  * lebih dari satu berarti menebak, dan salah kirim ke orang lain lebih buruk
  * daripada menolak mengirim sama sekali.
  */
+/**
+ * Berapa giliran user sudah berjalan di sebuah sesi Claude Code.
+ *
+ * Dibaca dari database yang sudah ada, bukan dari penghitung tersendiri.
+ * Penghitung terpisah adalah state kedua untuk satu fakta, dan menyimpangnya
+ * tidak akan terlihat oleh siapa pun sampai keputusan yang bergantung padanya
+ * salah.
+ *
+ * `source = 'user'` bukan detail: satu pertanyaan yang dijawab tiga pesan bukan
+ * tiga giliran percakapan, dan pengingat yang menghitung balasan bot akan
+ * menyala jauh lebih cepat daripada yang dimaksudkan.
+ */
+export function countUserTurns(db: Database, sessionId: string): number {
+  const row = db
+    .query("SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND source = 'user'")
+    .get(sessionId) as { n: number } | null;
+  return row ? row.n : 0;
+}
+
 export function getLastChatId(db: Database): string | null {
   const row = db.query("SELECT chat_id FROM messages ORDER BY id DESC LIMIT 1").get() as
     | { chat_id: string }

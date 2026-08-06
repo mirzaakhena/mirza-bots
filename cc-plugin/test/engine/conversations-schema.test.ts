@@ -4,6 +4,7 @@ import {
   insertMessage,
   searchMessages,
   getMessagesAround,
+  countUserTurns,
 } from "../../src/engine/db/conversations-schema";
 import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
@@ -225,5 +226,37 @@ describe("history queries", () => {
     // SQLiteError "unterminated string". The AI supplies these keywords, so this
     // WILL happen -- main.ts turns it into an error response (see below).
     expect(() => searchMessages(seed(), 'backup"')).toThrow();
+  });
+});
+
+// Penghitung giliran untuk kanal `[from: system]`. Dibaca dari database yang
+// sudah ada, bukan dari penghitung baru: penghitung terpisah adalah state kedua
+// yang bisa menyimpang dari kenyataan, dan menyimpangnya tidak akan terlihat.
+describe("countUserTurns", () => {
+  const row = (over: Record<string, unknown>) => ({
+    ts: "2026-08-06T00:00:00Z",
+    bot: "bot-01",
+    chatId: "999",
+    source: "user" as const,
+    text: "halo",
+    ...over,
+  });
+
+  test("menghitung hanya pesan MASUK di sesi yang diminta", () => {
+    const db = openConversationsDb(":memory:");
+    insertMessage(db, row({ sessionId: "S1" }));
+    insertMessage(db, row({ sessionId: "S1" }));
+    // Balasan bot tidak dihitung: satu pertanyaan yang dijawab tiga pesan
+    // bukan tiga giliran percakapan.
+    insertMessage(db, row({ sessionId: "S1", source: "assistant" }));
+    // Sesi lain tidak boleh ikut terbawa.
+    insertMessage(db, row({ sessionId: "S2" }));
+
+    expect(countUserTurns(db, "S1")).toBe(2);
+  });
+
+  test("sesi yang belum punya pesan menjawab nol, bukan gagal", () => {
+    const db = openConversationsDb(":memory:");
+    expect(countUserTurns(db, "belum-ada")).toBe(0);
   });
 });
