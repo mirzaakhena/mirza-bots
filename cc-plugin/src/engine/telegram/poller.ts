@@ -238,11 +238,25 @@ export async function handleIncomingMessage(
     sessionId,
   });
 
-  // Disusun SESUDAH insertMessage, dan itu disengaja: yang tersimpan di
-  // conversations.db adalah apa yang USER tulis. Pengingat mesin bukan bagian
-  // dari percakapan, dan menyimpannya akan mencemari riwayat yang dibaca
-  // `read_history` dan `search_history`.
+  // Disusun SESUDAH pesan user tersimpan: urutan barisnya di database harus
+  // sama dengan urutan kejadiannya, karena pengingat ini dipicu OLEH pesan itu.
+  //
+  // Ia ikut disimpan (source='system'), dan itu keputusan user 2026-08-06 yang
+  // MEMBALIK rancangan awal. Alasannya: yang tidak meninggalkan jejak tidak bisa
+  // diukur (AB-1), dan spec kanal ini sendiri menuntut angka "berapa sering
+  // sebuah pengingat menyala". Supaya tetap bukan percakapan, penyaringnya ada
+  // di tempat AI membacanya -- getMessagesAround dan searchMessages.
   const reminders = deps.systemReminders?.(sessionId) ?? "";
+  if (reminders.length > 0) {
+    insertMessage(deps.conversationsDb, {
+      ts: new Date().toISOString(),
+      bot: msg.bot,
+      chatId: msg.chatId,
+      source: "system",
+      text: reminders,
+      sessionId,
+    });
+  }
   const pushText = finalText ?? "(media)";
 
   const pushMsg: PushMessage = {

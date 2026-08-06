@@ -260,3 +260,74 @@ describe("countUserTurns", () => {
     expect(countUserTurns(db, "belum-ada")).toBe(0);
   });
 });
+
+// Pengingat mesin DISIMPAN (keputusan user 2026-08-06, mencabut keputusan
+// bot-02 beberapa jam sebelumnya) tapi TIDAK ikut terbaca sebagai percakapan.
+//
+// Kenapa keputusan lamanya dicabut: "tidak disimpan" adalah pola AB-1, yang
+// BACKLOG hukum berulang -- pesan yang tidak meninggalkan jejak tidak bisa
+// DIUKUR, dan spec kanal ini sendiri menuntut satu angka ("rata-rata pengingat
+// menyala per pesan") yang rancangan lamanya membuat mustahil. Data yang tidak
+// dicatat tidak bisa diperbaiki belakangan; penyaringan bisa.
+describe("baris source='system' tercatat tapi tidak muncul sebagai percakapan", () => {
+  const seed = (db: ReturnType<typeof openConversationsDb>) => {
+    insertMessage(db, {
+      ts: "2026-08-06T00:00:00Z",
+      bot: "bot-01",
+      chatId: "999",
+      messageId: "10",
+      source: "user",
+      text: "halo dunia",
+    });
+    insertMessage(db, {
+      ts: "2026-08-06T00:00:01Z",
+      bot: "bot-01",
+      chatId: "999",
+      source: "system",
+      text: "segera beri nama session ini",
+    });
+  };
+
+  test("tersimpan, sehingga bisa dihitung nanti", () => {
+    const db = openConversationsDb(":memory:");
+    seed(db);
+
+    const row = db.query("SELECT COUNT(*) AS n FROM messages WHERE source = 'system'").get() as {
+      n: number;
+    };
+    expect(row.n).toBe(1);
+  });
+
+  test("tidak ikut terbawa saat AI membaca riwayat di sekitar sebuah pesan", () => {
+    const db = openConversationsDb(":memory:");
+    seed(db);
+
+    const around = getMessagesAround(db, { messageId: "10", before: 5, after: 5 });
+    expect(around.some((m) => m.source === "system")).toBe(false);
+  });
+
+  test("tidak ikut muncul saat AI mencari riwayat", () => {
+    const db = openConversationsDb(":memory:");
+    seed(db);
+
+    expect(searchMessages(db, "session").length).toBe(0);
+    expect(searchMessages(db, "halo").length).toBe(1);
+  });
+
+  // Giliran dihitung dari pesan user; pengingat tidak boleh ikut menggeser
+  // angkanya, karena itu akan membuat pengingat memicu dirinya sendiri lebih
+  // cepat pada tiap sesi.
+  test("tidak ikut terhitung sebagai giliran user", () => {
+    const db = openConversationsDb(":memory:");
+    insertMessage(db, {
+      ts: "2026-08-06T00:00:00Z",
+      bot: "bot-01",
+      chatId: "999",
+      source: "system",
+      text: "pengingat",
+      sessionId: "S1",
+    });
+
+    expect(countUserTurns(db, "S1")).toBe(0);
+  });
+});

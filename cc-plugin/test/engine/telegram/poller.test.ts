@@ -705,10 +705,37 @@ describe("pengingat system menempel pada push", () => {
     expect(sink.sent[0]?.text).toBe("halo bot");
   });
 
-  // Yang disimpan ke conversations.db adalah apa yang USER tulis. Pengingat
-  // mesin bukan bagian dari percakapan, dan menyimpannya akan mencemari riwayat
-  // yang dibaca `read_history` dan `search_history`.
-  test("pengingat TIDAK ikut tersimpan ke riwayat percakapan", async () => {
+  // ⚠️ MEMBALIK keputusan bot-02 beberapa jam sebelumnya, atas pertanyaan user:
+  // "apakah pesan dari system itu tidak tercatat di conversations.db?"
+  //
+  // Keputusan lamanya -- tidak disimpan, supaya riwayat bersih -- adalah pola
+  // AB-1 yang BACKLOG hukum berulang: yang tidak meninggalkan jejak tidak bisa
+  // DIUKUR. Dan spec kanal ini sendiri menuntut satu angka ("rata-rata
+  // pengingat menyala per pesan") yang rancangan lamanya membuat mustahil:
+  // kontradiksi di dalam dua berkas yang ditulis di hari yang sama.
+  //
+  // Sekarang: DISIMPAN sebagai source='system', dan disaring di tempat AI
+  // membacanya (getMessagesAround + searchMessages). Arah galatnya berbeda
+  // jauh -- penyaring yang lupa bisa diperbaiki kapan saja, data yang tidak
+  // pernah dicatat tidak bisa.
+  test("pengingat tersimpan sebagai source='system', bukan hilang", async () => {
+    const conversationsDb = openConversationsDb(":memory:");
+
+    await handleIncomingMessage(baseMsg(), {
+      config,
+      conversationsDb,
+      sink: new CollectingSink(),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
+      systemReminders: () => "[from: system]\nkerjakan sesuatu",
+    });
+
+    const row = conversationsDb
+      .query("SELECT COUNT(*) AS n FROM messages WHERE source = 'system'")
+      .get() as { n: number };
+    expect(row.n).toBe(1);
+  });
+
+  test("pengingat yang tersimpan tetap tidak muncul saat AI mencari riwayat", async () => {
     const conversationsDb = openConversationsDb(":memory:");
 
     await handleIncomingMessage(baseMsg(), {
@@ -721,5 +748,22 @@ describe("pengingat system menempel pada push", () => {
 
     expect(searchMessages(conversationsDb, "kerjakan").length).toBe(0);
     expect(searchMessages(conversationsDb, "halo").length).toBe(1);
+  });
+
+  test("tanpa pengingat, tidak ada baris system yang lahir", async () => {
+    const conversationsDb = openConversationsDb(":memory:");
+
+    await handleIncomingMessage(baseMsg(), {
+      config,
+      conversationsDb,
+      sink: new CollectingSink(),
+      dataDir: mkdtempSync(join(tmpdir(), "poller-test-")),
+      systemReminders: () => "",
+    });
+
+    const row = conversationsDb
+      .query("SELECT COUNT(*) AS n FROM messages WHERE source = 'system'")
+      .get() as { n: number };
+    expect(row.n).toBe(0);
   });
 });

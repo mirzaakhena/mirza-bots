@@ -159,6 +159,21 @@ const HISTORY_COLUMNS = `m.id AS id, m.ts AS ts, m.bot AS bot, m.chat_id AS chat
  * messages", which would let the AI answer confidently about a message that was
  * never found.
  */
+/**
+ * ⚠️ `m.source <> 'system'` di bawah bukan detail, dan ia ada di TIGA tempat:
+ * dua di sini, satu di `searchMessages`.
+ *
+ * Baris `system` adalah pengingat mesin (kanal `[from: system]`). Ia DISIMPAN
+ * supaya bisa dihitung — "berapa sering sebuah pengingat menyala" adalah angka
+ * yang spec kanal itu sendiri tuntut, dan pesan yang tidak meninggalkan jejak
+ * tidak bisa diukur belakangan (pelajaran AB-1). Tapi ia BUKAN percakapan:
+ * memunculkannya di `read_history`/`search_history` akan membuat AI membaca
+ * ulang perintah mesin sebagai sesuatu yang pernah dikatakan seseorang.
+ *
+ * Menyimpan-lalu-menyaring dipilih di atas tidak-menyimpan karena arah galatnya
+ * berbeda jauh: penyaring yang lupa dipasang bisa diperbaiki kapan saja, data
+ * yang tidak pernah dicatat tidak bisa.
+ */
 export function getMessagesAround(
   db: Database,
   opts: { messageId: string; before: number; after: number }
@@ -172,7 +187,7 @@ export function getMessagesAround(
     opts.before > 0
       ? (db
           .query(
-            `SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.id < ? ORDER BY m.id DESC LIMIT ?`
+            `SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.id < ? AND m.source <> 'system' ORDER BY m.id DESC LIMIT ?`
           )
           .all(anchor.id, opts.before) as HistoryMessage[])
       : []
@@ -186,7 +201,7 @@ export function getMessagesAround(
     opts.after > 0
       ? (db
           .query(
-            `SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.id > ? ORDER BY m.id ASC LIMIT ?`
+            `SELECT ${HISTORY_COLUMNS} FROM messages m WHERE m.id > ? AND m.source <> 'system' ORDER BY m.id ASC LIMIT ?`
           )
           .all(anchor.id, opts.after) as HistoryMessage[])
       : [];
@@ -254,7 +269,7 @@ export function searchMessages(
   return db
     .query(
       `SELECT ${HISTORY_COLUMNS} FROM messages_fts f JOIN messages m ON m.id = f.rowid
-       WHERE messages_fts MATCH ? ORDER BY m.id DESC LIMIT ?`
+       WHERE messages_fts MATCH ? AND m.source <> 'system' ORDER BY m.id DESC LIMIT ?`
     )
     .all(query, opts.limit ?? 20) as HistoryMessage[];
 }
