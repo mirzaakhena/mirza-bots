@@ -30,7 +30,7 @@ const REPLY_TOOL = `mcp__plugin_${PLUGIN_ID}_${PLUGIN_ID}__reply`;
  * keduanya, bukan sebuah import. Dua literal yang harus sama akan menyimpang
  * diam-diam kalau tidak ada yang memeriksanya (K-15).
  */
-export const AGENT_TURN_MARKER = "[protocol: agent-turn]";
+export const AGENT_TURN_MARKER = "[from: agent]";
 
 export interface TranscriptAnalysis {
   channelDriven: boolean;

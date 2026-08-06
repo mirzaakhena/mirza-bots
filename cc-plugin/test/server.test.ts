@@ -4,7 +4,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { mkdtempSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
-import { buildServer, TERSE_TURN_MARKER, AGENT_TURN_MARKER, markerFor } from "../src/server";
+import { buildServer, USER_TURN_MARKER, AGENT_TURN_MARKER, markerFor } from "../src/server";
 import { slashDirIn } from "../src/engine/paths";
 import type { Engine } from "../src/engine/engine";
 import type { PushMessage } from "../src/engine/sink";
@@ -110,7 +110,7 @@ describe("cc-plugin MCP server", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(received.method).toBe("notifications/claude/channel");
-    expect(received.params.content).toBe(`${TERSE_TURN_MARKER}\npesan baru dari Telegram`);
+    expect(received.params.content).toBe(`${USER_TURN_MARKER}\npesan baru dari Telegram`);
     for (const value of Object.values(received.params.meta)) {
       expect(typeof value).toBe("string"); // SCAR-056: every meta value must be a string
     }
@@ -202,7 +202,7 @@ describe("cc-plugin MCP server", () => {
     // every push. If this is ever dropped, the per-turn marker becomes a
     // meaningless string the AI has no definition for.
     expect(instructions).toBeTruthy();
-    expect(instructions).toContain(TERSE_TURN_MARKER);
+    expect(instructions).toContain(USER_TURN_MARKER);
     expect(instructions).toContain("reply");
 
     await mcpClient.close();
@@ -228,7 +228,7 @@ describe("cc-plugin MCP server", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     // The marker leads so the AI reads it before the message itself.
-    expect(received.params.content.startsWith(TERSE_TURN_MARKER)).toBe(true);
+    expect(received.params.content.startsWith(USER_TURN_MARKER)).toBe(true);
     // The user's own words must survive untouched -- the marker is additive.
     expect(received.params.content).toContain("tolong cek status deployment");
     // Structured fields keep travelling in meta, not in the text (SCAR-056).
@@ -256,7 +256,7 @@ describe("cc-plugin MCP server", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    expect(received.params.content).toBe(`${TERSE_TURN_MARKER}\nconfirm_yes`);
+    expect(received.params.content).toBe(`${USER_TURN_MARKER}\nconfirm_yes`);
 
     await mcpClient.close();
     await server.close();
@@ -613,15 +613,15 @@ describe("markerFor", () => {
   });
 
   test("push dari Telegram memakai penanda terse-turn", () => {
-    expect(markerFor({ chat_id: "111", kind: "message" })).toBe(TERSE_TURN_MARKER);
+    expect(markerFor({ chat_id: "111", kind: "message" })).toBe(USER_TURN_MARKER);
   });
 
   test("origin yang tidak dikenal diperlakukan sebagai Telegram, bukan sebaliknya", () => {
     // Arah default-nya penting: salah menandai pesan Telegram sebagai antar-bot
     // MEMATIKAN reply-guard dan membuat user tidak dijawab -- kegagalan paling
     // mahal di proyek ini. Salah arah sebaliknya cuma bikin guard cerewet.
-    expect(markerFor({ origin: "entah-apa" })).toBe(TERSE_TURN_MARKER);
-    expect(markerFor({})).toBe(TERSE_TURN_MARKER);
+    expect(markerFor({ origin: "entah-apa" })).toBe(USER_TURN_MARKER);
+    expect(markerFor({})).toBe(USER_TURN_MARKER);
   });
 });
 
@@ -788,4 +788,45 @@ describe("kewajiban ack sebelum tool call pertama", () => {
   test("punya pengecualian eksplisit untuk giliran tanpa tool", () => {
     expect(SERVER_INSTRUCTIONS).toContain("no tool calls at all");
   });
+});
+
+// Keputusan user 2026-08-06: penanda menamai SUMBER, bukan perilaku.
+//
+// Sebelumnya keduanya memakai awalan `protocol:` yang sama padahal berada di
+// sumbu berbeda -- `agent-turn` menyebut siapa pengirimnya, `terse-turn`
+// menyebut apa yang harus dilakukan. Ketidakkonsistenan itu tidak menggigit
+// selama cuma ada dua; ia menggigit saat penulis KETIGA (mesin) butuh nama,
+// karena nama apa pun yang dipilih akan miring ke salah satu sumbu.
+//
+// Alasan memilih sumbu SUMBER, dan ini bukan soal kerapian: mesin TAHU PASTI
+// dari mana sebuah pesan masuk, dan TIDAK tahu perilaku apa yang pantas -- itu
+// tergantung isi pesannya, yang wilayah AI. Penanda yang menyebut perilaku
+// adalah mesin mengambil keputusan yang bukan haknya.
+//
+// Nilainya sebelum ini tidak dijaga apa pun: mengganti isi kedua konstanta
+// tidak membuat satu test pun merah.
+describe("penanda menamai sumber, bukan perilaku", () => {
+  test("penanda user menyebut pengirimnya", () => {
+    expect(USER_TURN_MARKER).toBe("[from: user]");
+  });
+
+  test("penanda antar-bot menyebut pengirimnya", () => {
+    expect(AGENT_TURN_MARKER).toBe("[from: agent]");
+  });
+
+  // Yang dijaga bukan dua kata itu, melainkan bahwa keduanya tetap berada di
+  // SATU sumbu. Penanda berikutnya yang menyusul pola lama akan merah di sini.
+  test("keduanya berbentuk sama, supaya penanda berikutnya punya cetakan", () => {
+    for (const m of [USER_TURN_MARKER, AGENT_TURN_MARKER]) {
+      expect(m).toMatch(/^\[from: [a-z]+\]$/);
+    }
+  });
+});
+
+// Konsekuensi langsung dari memilih sumbu SUMBER: nama penanda tidak lagi
+// memberi tahu apa yang harus dilakukan, jadi hubungan sumber -> perilaku harus
+// dinyatakan. Tanpa kalimat ini, `[from: user]` cuma label tanpa akibat -- dan
+// aturan yang tidak menyebut akibatnya akan dikarang lengkap oleh pembacanya.
+test("SERVER_INSTRUCTIONS menjelaskan bahwa penanda menyebut asal, bukan perintah", () => {
+  expect(SERVER_INSTRUCTIONS).toContain("names where it came from");
 });
