@@ -5,6 +5,7 @@ import type { Engine } from "./engine/engine";
 import { slashDirIn } from "./engine/paths";
 import { writePending } from "./engine/slash/pending";
 import { buildSlashPayload, MAX_SLASH_BATCH } from "./engine/slash/send-tool";
+import { renderPeerStatuses } from "./engine/agent/status";
 
 /**
  * What the server is when the engine could not start.
@@ -257,6 +258,27 @@ export function buildServer(backend: ServerBackend, botHome: string): McpServer 
       return {
         content: [
           { type: "text" as const, text: `titipan ${result.id} sudah masuk inbox ${to}` },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "agent_status",
+    {
+      description:
+        "Report what each other bot on this machine is doing right now: online or not, the name of the session it is on, how full its context is, and HOW OLD that reading is. " +
+        "Use it before handing work to another bot, so you pick one that can actually take it. " +
+        "It answers with facts, not a verdict -- there is no `ready` flag, because whether a bot can take your work depends on what the work is, and you are the one who knows that. " +
+        "Read the age of each reading before trusting it: the numbers come from the last time that bot's status line was drawn, so a quiet bot's reading can be hours old. " +
+        "Everything is read from files. No other bot is contacted, interrupted, or woken up by this.",
+      inputSchema: {},
+    },
+    async () => {
+      if (isUnavailable(backend)) return unavailableAnswer(backend);
+      return {
+        content: [
+          { type: "text" as const, text: renderPeerStatuses(backend.agentStatuses(), Date.now()) },
         ],
       };
     }

@@ -1,10 +1,10 @@
 import type { Context, Filter, InlineKeyboard } from "grammy";
 import { InputFile } from "grammy";
 import type { Database } from "bun:sqlite";
-import { statSync, existsSync } from "node:fs";
+import { statSync, existsSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import {
   ensureBotDirs,
   configPathIn,
@@ -23,6 +23,7 @@ import { identifyBot } from "./identity";
 import { startInboxScanner, AGENT_ORIGIN } from "./agent/receive";
 import { sendToPeer, type SendResult } from "./agent/send";
 import { listPeers } from "./agent/peers";
+import { summarizePeer, pidFrom, type PeerStatus } from "./agent/status";
 import { acquireBotLock, releaseBotLock } from "./lock";
 import {
   openConversationsDb,
@@ -105,6 +106,8 @@ export type Engine = {
   ): SendResult;
   /** Nama bot tetangga yang benar-benar ada, dibaca dari folder induk. */
   agentPeers(): string[];
+  /** Keadaan tiap tetangga: fakta dari berkasnya, tanpa penilaian siap/tidak. */
+  agentStatuses(): PeerStatus[];
   onPush(handler: (msg: PushMessage) => void): void;
   close(): void;
 };
@@ -953,6 +956,43 @@ export function startEngine(botHome: string): EngineStart {
 
       agentPeers(): string[] {
         return listPeers(botHome);
+      },
+
+      /**
+       * Semuanya dibaca dari BERKAS tetangga, tidak satu pun proses disapa.
+       *
+       * Itu bukan kebetulan: menjalankan apa pun terhadap folder bot yang hidup
+       * pernah MEREBUT token Telegram-nya (`lock.ts` memang dirancang membunuh
+       * pemegang lock lama, dan itu terjadi sungguhan 2026-08-05). Membaca
+       * berkas tidak punya efek samping apa pun terhadap bot yang sedang
+       * bekerja, dan itulah satu-satunya cara yang aman untuk bertanya.
+       *
+       * `process.kill(pid, 0)` tidak mengirim sinyal apa pun -- ia hanya
+       * bertanya apakah PID itu ada, dan itu pengecualian yang disengaja.
+       */
+      agentStatuses(): PeerStatus[] {
+        const parent = dirname(botHome);
+        return listPeers(botHome).map((name) => {
+          const home = join(parent, name);
+          let pidText: string | null = null;
+          try {
+            pidText = readFileSync(botPidPathIn(home), "utf8");
+          } catch {
+            // Belum pernah dijalankan, atau berkasnya dihapus. Bukan kesalahan
+            // yang perlu dilaporkan -- jawabannya cuma "tidak hidup".
+          }
+          const pid = pidFrom(pidText);
+          let alive = false;
+          if (pid !== null) {
+            try {
+              process.kill(pid, 0);
+              alive = true;
+            } catch {
+              alive = false;
+            }
+          }
+          return summarizePeer(name, readCapturedStatus(statusPathIn(home)), alive);
+        });
       },
 
       onPush(fn: (msg: PushMessage) => void): void {
