@@ -229,3 +229,56 @@ describe("pesan antar-bot bukan inbound Telegram", () => {
     expect(decision.block).toBe(false);
   });
 });
+
+// Keputusan user 2026-08-06: pelanggaran terse-turn "langsung tegakkan", bukan
+// diukur dulu. Yang ditegakkan bukan kesunyian (itu tetangga di atas) melainkan
+// kebalikannya -- giliran yang SUDAH membalas lewat `reply` tapi tetap menulis
+// prosa di transcript, yang tidak dibaca siapa pun dan terus dibayar tokennya di
+// tiap giliran berikutnya.
+const proseTurn = (text: string) =>
+  JSON.stringify({
+    type: "assistant",
+    message: { role: "assistant", content: [{ type: "text", text }] },
+  });
+
+describe("pelanggaran terse-turn", () => {
+  test("prosa sesudah inbound tercatat posisinya", () => {
+    const a = analyzeTranscript([inbound("32"), replyTurn(), proseTurn("Jadi begini penjelasannya")]);
+
+    expect(a.latestProseIdx).toBe(2);
+  });
+
+  test("titik tunggal adalah kepatuhan, bukan prosa", () => {
+    const a = analyzeTranscript([inbound("32"), replyTurn(), proseTurn(".")]);
+
+    expect(a.latestProseIdx).toBe(-1);
+  });
+
+  test("giliran yang sudah membalas TAPI menulis prosa diblokir", () => {
+    const decision = decideStop(
+      analyzeTranscript([inbound("32"), replyTurn(), proseTurn("Jadi begini penjelasannya")]),
+      false
+    );
+
+    expect(decision.block).toBe(true);
+    expect(decision.reason).toContain("terse-turn");
+  });
+
+  test("prosa dari giliran LAMA tidak menghukum giliran sekarang", () => {
+    const decision = decideStop(
+      analyzeTranscript([proseTurn("giliran terminal biasa"), inbound("32"), replyTurn()]),
+      false
+    );
+
+    expect(decision.block).toBe(false);
+  });
+
+  test("tidak diblokir dua kali -- stopHookActive memutus loop", () => {
+    const decision = decideStop(
+      analyzeTranscript([inbound("32"), replyTurn(), proseTurn("Jadi begini penjelasannya")]),
+      true
+    );
+
+    expect(decision.block).toBe(false);
+  });
+});
