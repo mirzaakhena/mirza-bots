@@ -112,6 +112,8 @@ export const SERVER_INSTRUCTIONS = [
   "",
   "This applies only to turns carrying that prefix. Turns the user types directly into this terminal are ordinary turns -- answer those in full, as usual.",
   "",
+  "Send a short `reply` saying what you are about to do BEFORE your first tool call of the turn, and keep it to one line. They are AFK: while you work they see nothing at all, so they cannot tell whether you are working or hung, and the wait feels identical either way. Skip this only when your whole answer is text with no tool calls at all.",
+  "",
   `Keep replies short: aim for about ${REPLY_LENGTH_GUIDELINE} characters. This is a chat on someone's phone, not a document. If a topic needs more room, send several focused \`reply\` calls that each stand on their own rather than one long block. Nothing is ever rejected for being long -- a reply past Telegram's hard limit is split into several messages automatically -- so this is about what is worth reading, not about what fits.`,
   "",
   `A message prefixed with ${AGENT_TURN_MARKER} came from ANOTHER BOT, not from the user. Do NOT answer it with \`reply\` -- that tool writes to the user's Telegram chat, and inter-bot traffic must stay off it. Answer with \`agent_send\` instead, addressed back to \`from_bot\`, with \`in_reply_to\` set to the \`agent_message_id\` from the meta and \`hop_count\` one higher than the incoming one.`,
