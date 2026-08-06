@@ -13,6 +13,7 @@ const ctx = (over: Partial<ReminderContext> = {}): ReminderContext => ({
   sessionName: null,
   turnCount: 2,
   statusFresh: true,
+  contextRemaining: null,
   ...over,
 });
 
@@ -128,5 +129,107 @@ describe("buildReminderContext", () => {
   // "segar" di situ persis kesalahan yang guard ini ada untuk mencegah.
   test("tanpa id sesi sekarang, jawabannya tidak segar", () => {
     expect(buildReminderContext(cap("abc", "x"), undefined, 2).statusFresh).toBe(false);
+  });
+});
+
+// Penghuni KEDUA kanal, dan sekaligus ujian apakah kanalnya benar-benar mudah
+// ditambah. Ambangnya DIUKUR, bukan diwarisi: 30 sesi nyata menunjukkan biaya
+// penyerahan (dari mulai menulis berkas handoff sampai sesi berakhir) bermedian
+// 17k token, maksimum 29k pada kelompok yang benar-benar berhenti sesudahnya.
+//
+// 100k dipilih = ~6x biaya itu, karena pengingat ini bukan alarm kebakaran
+// melainkan peringatan dini: saat ia menyala, bot masih harus MENYELESAIKAN
+// pekerjaan yang sedang berjalan sebelum menyerahkannya.
+//
+// Ambang ABSOLUT, bukan persentase. Yang dijaga adalah "masih cukup untuk
+// menyelesaikan dan menyerahkan", dan angka itu tidak berubah saat ukuran
+// window berubah. Aturan lama (35% untuk 1M, 75% untuk 200k) menjawab
+// pertanyaan yang sama dengan dua sisa yang berjarak 13x -- 650k vs 50k.
+describe("pengingat handoff saat context menipis", () => {
+  const c = (over: Partial<ReminderContext> = {}): ReminderContext => ({
+    sessionName: "task-x",
+    turnCount: 5,
+    statusFresh: true,
+    contextRemaining: null,
+    ...over,
+  });
+
+  test("menyala saat sisa di bawah ambang", () => {
+    expect(collectReminders(c({ contextRemaining: 80_000 })).map((r) => r.id)).toContain(
+      "context-low"
+    );
+  });
+
+  test("diam saat ruangnya masih lega", () => {
+    expect(collectReminders(c({ contextRemaining: 400_000 })).map((r) => r.id)).not.toContain(
+      "context-low"
+    );
+  });
+
+  // Tidak tahu sisanya BUKAN alasan untuk menyala. Pengingat yang berbunyi
+  // karena datanya tidak ada akan berbunyi di setiap bot yang statuslinenya
+  // belum sempat digambar -- yaitu tepat di awal tiap sesi.
+  test("diam saat sisanya tidak diketahui", () => {
+    expect(collectReminders(c({ contextRemaining: null })).map((r) => r.id)).not.toContain(
+      "context-low"
+    );
+  });
+
+  test("tidak bergantung pada nama sesi maupun jumlah giliran", () => {
+    const ids = collectReminders(
+      c({ contextRemaining: 50_000, sessionName: null, turnCount: 0 })
+    ).map((r) => r.id);
+
+    expect(ids).toContain("context-low");
+  });
+
+  test("kalimatnya perintah, dan menyebut apa yang harus dilakukan", () => {
+    const r = REMINDERS.find((x) => x.id === "context-low")!;
+    expect(r.text).toContain("handoff");
+  });
+
+  // Bukti bahwa keputusan user "kirim semua" benar-benar berlaku: dua kondisi
+  // terpenuhi sekaligus, dan dua-duanya ikut. Mesin tidak memilih.
+  test("dua pengingat bisa menyala bersamaan, dan keduanya ikut", () => {
+    const ids = collectReminders(
+      c({ contextRemaining: 50_000, sessionName: null, turnCount: 3 })
+    ).map((r) => r.id);
+
+    expect(ids).toContain("name-session");
+    expect(ids).toContain("context-low");
+  });
+});
+
+describe("buildReminderContext: sisa context", () => {
+  test("dihitung dari ukuran window dikurangi yang sudah terpakai", () => {
+    const captured = {
+      captured_at_ms: 1,
+      payload: {
+        session_id: "abc",
+        context_window: { context_window_size: 1_000_000, total_input_tokens: 940_000 },
+      },
+    };
+
+    expect(buildReminderContext(captured, "abc", 1).contextRemaining).toBe(60_000);
+  });
+
+  test("payload tanpa angka context menjawab null, bukan nol", () => {
+    const captured = { captured_at_ms: 1, payload: { session_id: "abc" } };
+
+    expect(buildReminderContext(captured, "abc", 1).contextRemaining).toBeNull();
+  });
+
+  // Data basi tidak boleh dipakai untuk apa pun, termasuk angka context -- ia
+  // milik sesi yang lain.
+  test("data basi tidak menyumbang angka context", () => {
+    const captured = {
+      captured_at_ms: 1,
+      payload: {
+        session_id: "lama",
+        context_window: { context_window_size: 1_000_000, total_input_tokens: 990_000 },
+      },
+    };
+
+    expect(buildReminderContext(captured, "baru", 1).contextRemaining).toBeNull();
   });
 });

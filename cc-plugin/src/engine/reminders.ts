@@ -50,6 +50,8 @@ export interface ReminderContext {
   turnCount: number;
   /** `false` berarti tangkapan statusline milik sesi LAIN — jangan bertindak. */
   statusFresh: boolean;
+  /** Sisa ruang context dalam token. `null` = tidak diketahui, bukan nol. */
+  contextRemaining: number | null;
 }
 
 export interface Reminder {
@@ -61,6 +63,14 @@ export interface Reminder {
 
 /** Ambang giliran sebelum penamaan mulai ditagih. Ditetapkan user 2026-08-06. */
 export const MIN_TURNS_BEFORE_NAMING = 2;
+
+/**
+ * Sisa ruang context (token) yang di bawahnya pengingat handoff menyala.
+ *
+ * DIUKUR, bukan diwarisi — alasan lengkapnya di entri `context-low` di bawah.
+ * Ditetapkan user 2026-08-06 sesudah angka ukurnya disodorkan.
+ */
+export const MIN_CONTEXT_REMAINING = 100_000;
 
 export const REMINDERS: Reminder[] = [
   {
@@ -74,6 +84,32 @@ export const REMINDERS: Reminder[] = [
     // akan dikarang maksudnya oleh pembacanya, dan di sini pembacanya AI.
     // Syarat penilaiannya tetap milik AI lewat anak kalimat terakhir.
     text: "segera beri nama session ini jika context yang dibicarakan sudah jelas",
+  },
+  {
+    id: "context-low",
+    // Ambang ABSOLUT, dan itu keputusan yang diambil DARI UKURAN. 30 sesi nyata
+    // (transcript Claude Code, 2026-08-06) menunjukkan biaya penyerahan -- dari
+    // saat sebuah sesi mulai menulis berkas handoff sampai ia berakhir --
+    // bermedian 17k token, maksimum 29k pada kelompok yang benar-benar berhenti
+    // sesudahnya. MIN_CONTEXT_REMAINING = ~6x angka itu, karena saat pengingat
+    // ini menyala bot masih harus MENYELESAIKAN pekerjaan yang sedang berjalan
+    // sebelum menyerahkannya.
+    //
+    // Kenapa bukan persentase, seperti aturan lama (35% untuk window 1M, 75%
+    // untuk 200k): yang dijaga adalah "masih cukup untuk menyelesaikan dan
+    // menyerahkan", dan biaya itu TIDAK berubah saat ukuran window berubah.
+    // Aturan lama menjawab satu pertanyaan dengan dua sisa yang berjarak 13x --
+    // 650k token untuk model 1M, 50k untuk 200k. Ukurannya sendiri menunjukkan
+    // yang pertama menyala 38x lebih awal daripada yang dibutuhkan, dan bot-bot
+    // itu dalam praktik memang baru menyerahkan di sekitar 504k (median).
+    //
+    // `null` TIDAK menyalakannya: pengingat yang berbunyi karena datanya tidak
+    // ada akan berbunyi di tiap bot yang statuslinenya belum sempat digambar,
+    // yaitu tepat di awal setiap sesi.
+    applies: (c) => c.contextRemaining !== null && c.contextRemaining < MIN_CONTEXT_REMAINING,
+    text:
+      "ruang context tinggal sedikit -- rapikan pekerjaan yang sedang berjalan lalu serahkan lewat handoff, " +
+      "atau tutup pekerjaannya, sebelum ruangnya habis di tengah jalan",
   },
 ];
 
@@ -106,7 +142,16 @@ export function buildReminderContext(
     ? captured.payload.session_name
     : null;
 
-  return { sessionName: name, turnCount, statusFresh: fresh };
+  // Sisa context ikut digerbangi kesegaran: angka dari sesi lain bukan cuma
+  // tidak berguna, ia menyesatkan -- sesi yang baru lahir akan mewarisi
+  // "hampir penuh" milik sesi sebelumnya.
+  const cw = fresh ? captured?.payload?.context_window : undefined;
+  const size = cw?.context_window_size;
+  const used = cw?.total_input_tokens;
+  const remaining =
+    typeof size === "number" && typeof used === "number" ? Math.max(0, size - used) : null;
+
+  return { sessionName: name, turnCount, statusFresh: fresh, contextRemaining: remaining };
 }
 
 export function collectReminders(c: ReminderContext, list: Reminder[] = REMINDERS): Reminder[] {
