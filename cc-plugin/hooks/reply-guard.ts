@@ -36,6 +36,14 @@ export interface TranscriptAnalysis {
   channelDriven: boolean;
   latestInboundIdx: number;
   latestReplyIdx: number;
+  /**
+   * Posisi giliran assistant terakhir yang menulis PROSA ke transcript.
+   *
+   * Bukan "punya text part": protokol terse-turn justru menyuruh mengakhiri
+   * giliran dengan satu titik, jadi `.` adalah kepatuhan dan tidak boleh
+   * dihitung sebagai pelanggaran.
+   */
+  latestProseIdx: number;
 }
 
 /**
@@ -59,6 +67,7 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
   let channelDriven = false;
   let latestInboundIdx = -1;
   let latestReplyIdx = -1;
+  let latestProseIdx = -1;
 
   lines.forEach((line, idx) => {
     if (!line.trim()) return;
@@ -110,11 +119,18 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
       if (!Array.isArray(content)) return;
       for (const part of content) {
         if (part?.type === "tool_use" && part.name === REPLY_TOOL) latestReplyIdx = idx;
+        // `thinking` sengaja tidak dihitung: ia tidak pernah dikirim ke user
+        // maupun dibayar ulang di giliran berikutnya, jadi ia bukan hal yang
+        // protokol ini larang.
+        if (part?.type === "text" && typeof part.text === "string") {
+          const t = part.text.trim();
+          if (t.length > 0 && t !== ".") latestProseIdx = idx;
+        }
       }
     }
   });
 
-  return { channelDriven, latestInboundIdx, latestReplyIdx };
+  return { channelDriven, latestInboundIdx, latestReplyIdx, latestProseIdx };
 }
 
 export function decideStop(
@@ -127,7 +143,29 @@ export function decideStop(
   if (!a.channelDriven || a.latestInboundIdx === -1) return { block: false };
   // Positions, not a boolean: answering the first message and then going quiet
   // on the second is the exact failure worth catching.
-  if (a.latestReplyIdx > a.latestInboundIdx) return { block: false };
+  // Sudah membalas -- kewajiban utamanya terpenuhi. Tersisa satu pelanggaran
+  // yang bentuknya justru KEBALIKAN dari kesunyian: giliran yang membalas TAPI
+  // tetap menulis prosa ke transcript. Nobody reads it, dan ia terus dibayar di
+  // tiap giliran berikutnya sesi ini.
+  //
+  // Kenapa ditegakkan di sini dan bukan dicegah: saat hook `Stop` berjalan,
+  // prosanya sudah tertulis -- memblokir tidak menghapusnya. Yang dipotong
+  // adalah PENGULANGANNYA, dan `stopHookActive` di atas menjamin teguran ini
+  // datang paling banyak sekali per giliran.
+  if (a.latestReplyIdx > a.latestInboundIdx) {
+    if (a.latestProseIdx > a.latestInboundIdx) {
+      return {
+        block: true,
+        reason:
+          "This turn is under the terse-turn protocol and you already answered via " +
+          `\`reply\` (${REPLY_TOOL}) -- but you also wrote prose into the transcript. ` +
+          "Nobody reads it: the person is on Telegram, and every later turn of this " +
+          'session keeps paying for those tokens. End the turn with a single "." and ' +
+          "nothing else. Do NOT explain this, and do NOT send another `reply` about it.",
+      };
+    }
+    return { block: false };
+  }
 
   return {
     block: true,
