@@ -373,6 +373,7 @@ describe("cc-plugin MCP server when the engine could not start", () => {
     expect(tools.map((t) => t.name).sort()).toEqual([
       "agent_list",
       "agent_send",
+      "agent_status",
       "read_history",
       "reply",
       "search_history",
