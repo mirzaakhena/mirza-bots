@@ -14,6 +14,7 @@ const ctx = (over: Partial<ReminderContext> = {}): ReminderContext => ({
   turnCount: 2,
   statusFresh: true,
   contextRemaining: null,
+  renamedInThisSession: false,
   ...over,
 });
 
@@ -27,8 +28,25 @@ describe("pengingat penamaan sesi", () => {
     expect(collectReminders(ctx()).map((r) => r.id)).toContain("name-session");
   });
 
-  test("mati begitu sesi punya nama -- tanpa ada yang mematikannya", () => {
-    expect(collectReminders(ctx({ sessionName: "task-audit" })).map((r) => r.id)).not.toContain(
+  // ⚠️ DIUBAH 2026-08-06 oleh uji hidup, bukan dihapus diam-diam.
+  //
+  // Versi lamanya berbunyi "mati begitu sesi PUNYA NAMA" dan meng-assert
+  // `sessionName: "task-audit"` cukup untuk mematikannya. Itu terbukti SALAH:
+  // sesudah `/clear`, sesi baru lahir MEMBAWA nama sesi sebelumnya, jadi
+  // "punya nama" selalu benar dan pengingatnya tidak pernah menyala lagi.
+  //
+  // Yang mematikannya sekarang bukan keberadaan nama, melainkan nama yang
+  // BERGERAK sejak sesi ini lahir.
+  test("mati begitu ada yang me-rename di sesi ini -- tanpa ada yang mematikannya", () => {
+    expect(
+      collectReminders(ctx({ sessionName: "task-audit", renamedInThisSession: true })).map(
+        (r) => r.id
+      )
+    ).not.toContain("name-session");
+  });
+
+  test("punya nama saja TIDAK cukup mematikannya -- itu bisa nama warisan", () => {
+    expect(collectReminders(ctx({ sessionName: "task-audit" })).map((r) => r.id)).toContain(
       "name-session"
     );
   });
@@ -151,6 +169,7 @@ describe("pengingat handoff saat context menipis", () => {
     turnCount: 5,
     statusFresh: true,
     contextRemaining: null,
+    renamedInThisSession: false,
     ...over,
   });
 
@@ -231,5 +250,78 @@ describe("buildReminderContext: sisa context", () => {
     };
 
     expect(buildReminderContext(captured, "baru", 1).contextRemaining).toBeNull();
+  });
+});
+
+// PERBAIKAN dari uji hidup 2026-08-06. Pertanyaannya diganti: bukan lagi "sesi
+// ini punya nama?" melainkan "namanya BERUBAH sejak sesi ini lahir?".
+//
+// Sebabnya terukur: sesudah `/clear`, sesi baru LAHIR membawa nama sesi
+// sebelumnya -- transcriptnya sendiri menulis customTitle lama dengan sessionId
+// baru. Kondisi lama (`sessionName === null`) karena itu TIDAK PERNAH terpenuhi
+// lagi sesudah sebuah jendela pernah dinamai sekali, dan fiturnya mati tanpa
+// satu pun error.
+describe("pengingat penamaan sesudah perbaikan nama-warisan", () => {
+  const c = (over: Partial<ReminderContext> = {}): ReminderContext => ({
+    sessionName: "uji-engine-mati",
+    turnCount: 2,
+    statusFresh: true,
+    contextRemaining: null,
+    renamedInThisSession: false,
+    ...over,
+  });
+
+  // Ini SKENARIO NYATA yang ditemukan uji hidup, dan alasan rilis ini ada.
+  test("sesi baru yang lahir membawa nama lama TETAP ditagih namanya", () => {
+    expect(collectReminders(c()).map((r) => r.id)).toContain("name-session");
+  });
+
+  test("berhenti begitu ada yang me-rename di sesi ini", () => {
+    expect(collectReminders(c({ renamedInThisSession: true })).map((r) => r.id)).not.toContain(
+      "name-session"
+    );
+  });
+
+  test("tetap diam sebelum giliran kedua", () => {
+    expect(collectReminders(c({ turnCount: 1 })).map((r) => r.id)).not.toContain("name-session");
+  });
+
+  test("tetap diam saat datanya basi", () => {
+    expect(collectReminders(c({ statusFresh: false })).map((r) => r.id)).not.toContain(
+      "name-session"
+    );
+  });
+});
+
+describe("buildReminderContext: rename di sesi ini", () => {
+  const cap = (sessionId: string, name: string) => ({
+    captured_at_ms: 1,
+    payload: { session_id: sessionId, session_name: name },
+  });
+
+  test("nama sekarang sama dengan nama saat lahir berarti BELUM di-rename", () => {
+    const ctx = buildReminderContext(cap("S1", "uji-engine-mati"), "S1", 2, "uji-engine-mati");
+
+    expect(ctx.renamedInThisSession).toBe(false);
+  });
+
+  test("nama sekarang berbeda berarti SUDAH di-rename, siapa pun pelakunya", () => {
+    const ctx = buildReminderContext(cap("S1", "belajar-koding"), "S1", 2, "uji-engine-mati");
+
+    expect(ctx.renamedInThisSession).toBe(true);
+  });
+
+  // Sesi pertama sebuah bot: lahir tanpa nama, lalu dinamai. Nama kosong harus
+  // bisa jadi pembanding yang sah, bukan diperlakukan sebagai "tidak tahu".
+  test("lahir tanpa nama lalu dinamai juga terbaca sebagai sudah di-rename", () => {
+    const ctx = buildReminderContext(cap("S1", "topik-baru"), "S1", 2, "");
+
+    expect(ctx.renamedInThisSession).toBe(true);
+  });
+
+  test("belum ada catatan nama-lahir berarti belum di-rename", () => {
+    const ctx = buildReminderContext(cap("S1", "apa-saja"), "S1", 2, null);
+
+    expect(ctx.renamedInThisSession).toBe(false);
   });
 });

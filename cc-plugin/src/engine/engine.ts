@@ -32,6 +32,8 @@ import {
   encodeMetadata,
   getLastChatId,
   countUserTurns,
+  rememberFirstSessionName,
+  getFirstSessionName,
 } from "./db/conversations-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
@@ -517,10 +519,22 @@ export function startEngine(botHome: string): EngineStart {
     systemReminders: (sessionId) => {
       if (sessionId === undefined) return "";
       try {
+        const captured = readCapturedStatus(statusPathIn(botHome));
+
+        // Nama saat sesi ini LAHIR dicatat sekali, dan hanya dari tangkapan
+        // yang benar-benar milik sesi ini. Kalau tangkapannya masih milik sesi
+        // sebelumnya, mencatatnya berarti mengabadikan nama yang salah sebagai
+        // pembanding -- dan pembanding yang salah tidak akan pernah ketahuan,
+        // karena hasilnya tetap terlihat masuk akal.
+        if (captured?.payload?.session_id === sessionId) {
+          rememberFirstSessionName(conversationsDb, sessionId, captured.payload.session_name ?? "");
+        }
+
         const ctx = buildReminderContext(
-          readCapturedStatus(statusPathIn(botHome)),
+          captured,
           sessionId,
-          countUserTurns(conversationsDb, sessionId)
+          countUserTurns(conversationsDb, sessionId),
+          getFirstSessionName(conversationsDb, sessionId)
         );
         return renderReminders(collectReminders(ctx));
       } catch (err) {
