@@ -22,6 +22,17 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 `;
 
+// Tabelnya sendiri, bukan kolom di `messages`: yang disimpan adalah fakta
+// tentang SESI, bukan tentang sebuah pesan. Menempelkannya ke messages berarti
+// mengulang nilai yang sama di tiap baris dan membuat "mana yang pertama"
+// bergantung pada urutan id -- pertanyaan yang tidak perlu ada.
+const SESSION_FIRST_NAME = `
+CREATE TABLE IF NOT EXISTS session_first_name (
+  session_id TEXT PRIMARY KEY,
+  first_name TEXT NOT NULL
+);
+`;
+
 const INDEXES_AND_FTS = `
 CREATE INDEX IF NOT EXISTS idx_messages_bot ON messages(bot);
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(bot, chat_id);
@@ -72,6 +83,7 @@ export function openConversationsDb(path: string): Database {
   // SQLITE_BUSY surfaces as a random, hard-to-trace error at the call site.
   db.exec("PRAGMA busy_timeout = 5000;");
   db.exec(TABLE);
+  db.exec(SESSION_FIRST_NAME);
   addMissingColumns(db);
   db.exec(INDEXES_AND_FTS);
   return db;
@@ -239,6 +251,46 @@ export function getMessagesAround(
  * tiga giliran percakapan, dan pengingat yang menghitung balasan bot akan
  * menyala jauh lebih cepat daripada yang dimaksudkan.
  */
+/**
+ * Nama sesi yang PERTAMA terlihat untuk sebuah `session_id`.
+ *
+ * ## Kenapa tabel ini ada
+ *
+ * Uji hidup 2026-08-06 membatalkan asumsi dasar fitur penamaan: di Claude Code,
+ * nama sesi adalah milik JENDELANYA, bukan milik percakapannya. Sesudah
+ * `/clear`, sesi baru LAHIR dengan nama lama sudah menempel -- baris pertama
+ * transcriptnya sendiri berbunyi
+ * `{"type":"custom-title","customTitle":"uji-engine-mati","sessionId":"<id BARU>"}`.
+ *
+ * Ketiganya sepakat menyebut nama lama: judul tab, `status.json`, dan
+ * transcript. Jadi TIDAK ADA satu pun tempat yang bisa ditanya "sesi ini belum
+ * bernama?" -- pertanyaan itu tidak punya jawaban di sistem.
+ *
+ * Yang punya jawaban adalah pertanyaan lain: **"namanya berubah sejak sesi ini
+ * lahir?"**. Tabel ini menyimpan pembandingnya.
+ *
+ * ## Kenapa `INSERT OR IGNORE`, bukan upsert
+ *
+ * Yang dicatat adalah nama SAAT LAHIR, dan itu tidak boleh bergeser. Kalau tiap
+ * pemanggilan menimpanya, pembandingnya ikut bergerak mengikuti nama sekarang
+ * dan perbandingannya selalu menjawab "sama" -- guard yang selalu mengatakan
+ * ya adalah guard yang tidak menjaga apa pun.
+ */
+export function rememberFirstSessionName(db: Database, sessionId: string, name: string): void {
+  db.query("INSERT OR IGNORE INTO session_first_name (session_id, first_name) VALUES (?, ?)").run(
+    sessionId,
+    name
+  );
+}
+
+/** `null` = sesi ini belum pernah tercatat. String kosong = sesi lahir tanpa nama. */
+export function getFirstSessionName(db: Database, sessionId: string): string | null {
+  const row = db
+    .query("SELECT first_name FROM session_first_name WHERE session_id = ?")
+    .get(sessionId) as { first_name: string } | null;
+  return row ? row.first_name : null;
+}
+
 export function countUserTurns(db: Database, sessionId: string): number {
   const row = db
     .query("SELECT COUNT(*) AS n FROM messages WHERE session_id = ? AND source = 'user'")

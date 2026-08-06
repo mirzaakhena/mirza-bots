@@ -52,6 +52,16 @@ export interface ReminderContext {
   statusFresh: boolean;
   /** Sisa ruang context dalam token. `null` = tidak diketahui, bukan nol. */
   contextRemaining: number | null;
+  /**
+   * Apakah nama sesi BERUBAH sejak sesi ini lahir.
+   *
+   * Menggantikan pemeriksaan "sessionName === null", yang uji hidup 2026-08-06
+   * buktikan tidak pernah terpenuhi lagi: sesudah `/clear`, sesi baru lahir
+   * membawa nama sesi sebelumnya, dan ketiga sumber (judul tab, status.json,
+   * transcript) sepakat menyebut nama lama. Tidak ada tempat yang bisa ditanya
+   * "sesi ini belum bernama?" -- pertanyaannya sendiri yang harus diganti.
+   */
+  renamedInThisSession: boolean;
 }
 
 export interface Reminder {
@@ -78,7 +88,7 @@ export const REMINDERS: Reminder[] = [
     // Tiga syarat, dan yang ketiga yang paling mudah dilupakan: data segar.
     // Tanpa itu pengingat ini bisa menilai sesi yang sudah mati.
     applies: (c) =>
-      c.statusFresh && c.sessionName === null && c.turnCount >= MIN_TURNS_BEFORE_NAMING,
+      c.statusFresh && !c.renamedInThisSession && c.turnCount >= MIN_TURNS_BEFORE_NAMING,
     // Kalimat PERINTAH, kata per kata dari user 2026-08-06. Bukan pernyataan
     // keadaan ("sesi ini belum bernama"): kalimat yang cuma menyatakan keadaan
     // akan dikarang maksudnya oleh pembacanya, dan di sini pembacanya AI.
@@ -130,7 +140,13 @@ export const REMINDERS: Reminder[] = [
 export function buildReminderContext(
   captured: CapturedStatus | null,
   currentSessionId: string | undefined,
-  turnCount: number
+  turnCount: number,
+  /**
+   * Nama yang tercatat saat `session_id` ini pertama terlihat, atau `null` bila
+   * belum pernah tercatat. String KOSONG adalah nilai yang sah — itu sesi yang
+   * benar-benar lahir tanpa nama, dan harus bisa dibedakan dari "belum tahu".
+   */
+  firstNameOfSession: string | null = null
 ): ReminderContext {
   const capturedSessionId = captured?.payload?.session_id;
   const fresh =
@@ -151,7 +167,24 @@ export function buildReminderContext(
   const remaining =
     typeof size === "number" && typeof used === "number" ? Math.max(0, size - used) : null;
 
-  return { sessionName: name, turnCount, statusFresh: fresh, contextRemaining: remaining };
+  // Perbandingan nama, bukan pemeriksaan "ada nama atau tidak". Yang penting
+  // bukan SIAPA yang me-rename — user dari terminal, bot lewat send_slash, atau
+  // siapa pun — melainkan bahwa namanya sudah bergerak sejak sesi ini lahir.
+  //
+  // `null` (belum tercatat) sengaja dibaca sebagai "belum di-rename": pada
+  // pemanggilan pertama sebuah sesi, catatannya baru saja dibuat dan nilainya
+  // pasti sama dengan nama sekarang. Menganggapnya "sudah di-rename" akan
+  // membuat pengingat ini diam pada sesi yang justru paling membutuhkannya.
+  const currentName = fresh ? (captured?.payload?.session_name ?? "") : "";
+  const renamed = fresh && firstNameOfSession !== null && currentName !== firstNameOfSession;
+
+  return {
+    sessionName: name,
+    turnCount,
+    statusFresh: fresh,
+    contextRemaining: remaining,
+    renamedInThisSession: renamed,
+  };
 }
 
 export function collectReminders(c: ReminderContext, list: Reminder[] = REMINDERS): Reminder[] {

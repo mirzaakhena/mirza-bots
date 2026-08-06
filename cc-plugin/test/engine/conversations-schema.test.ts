@@ -5,6 +5,8 @@ import {
   searchMessages,
   getMessagesAround,
   countUserTurns,
+  rememberFirstSessionName,
+  getFirstSessionName,
 } from "../../src/engine/db/conversations-schema";
 import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
@@ -329,5 +331,52 @@ describe("baris source='system' tercatat tapi tidak muncul sebagai percakapan", 
     });
 
     expect(countUserTurns(db, "S1")).toBe(0);
+  });
+});
+
+// TEMUAN UJI HIDUP 2026-08-06, dan ia membatalkan asumsi dasar fitur penamaan:
+// di Claude Code, nama sesi milik JENDELANYA, bukan milik percakapannya.
+//
+// Terukur: sesudah `/clear`, transcript sesi BARU lahir dengan baris pertama
+//   {"type":"custom-title","customTitle":"uji-engine-mati","sessionId":"c297d40a…"}
+// -- session id baru, nama lama. Ketiga sumber (judul tab, status.json,
+// transcript) sepakat menyebut nama lama, jadi TIDAK ADA tempat yang bilang
+// "sesi ini belum bernama".
+//
+// Jadi pertanyaannya diganti: bukan "sesi ini punya nama?" melainkan "namanya
+// BERUBAH sejak sesi ini lahir?". Tabel ini yang menyimpan jawabannya.
+describe("nama sesi yang pertama terlihat", () => {
+  test("dicatat sekali, dan pemanggilan berikutnya TIDAK menimpanya", () => {
+    const db = openConversationsDb(":memory:");
+    rememberFirstSessionName(db, "S1", "uji-engine-mati");
+    // Sesudah bot me-rename, nama sekarang berubah -- tapi yang tercatat harus
+    // tetap nama saat sesi lahir, kalau tidak pembandingnya ikut bergeser dan
+    // perbandingannya selalu menjawab "sama".
+    rememberFirstSessionName(db, "S1", "nama-baru");
+
+    expect(getFirstSessionName(db, "S1")).toBe("uji-engine-mati");
+  });
+
+  test("sesi yang belum pernah dicatat menjawab null", () => {
+    const db = openConversationsDb(":memory:");
+    expect(getFirstSessionName(db, "belum-ada")).toBeNull();
+  });
+
+  // Sesi pertama sebuah bot memang belum punya nama sama sekali. String kosong
+  // adalah jawaban yang sah dan harus bisa dibedakan dari "belum dicatat".
+  test("nama kosong tetap tercatat, dan bukan null", () => {
+    const db = openConversationsDb(":memory:");
+    rememberFirstSessionName(db, "S2", "");
+
+    expect(getFirstSessionName(db, "S2")).toBe("");
+  });
+
+  test("dua sesi berbeda tidak saling menimpa", () => {
+    const db = openConversationsDb(":memory:");
+    rememberFirstSessionName(db, "S1", "satu");
+    rememberFirstSessionName(db, "S2", "dua");
+
+    expect(getFirstSessionName(db, "S1")).toBe("satu");
+    expect(getFirstSessionName(db, "S2")).toBe("dua");
   });
 });
