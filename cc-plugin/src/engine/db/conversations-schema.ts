@@ -33,6 +33,18 @@ CREATE TABLE IF NOT EXISTS session_first_name (
 );
 `;
 
+// Satu baris, dan `CHECK (id = 1)` yang menjaminnya. Berkas database ini memang
+// milik SATU bot, jadi pertanyaannya bukan "sesi ini sudah diumumkan?" (yang
+// akan butuh satu baris per sesi) melainkan "nama terakhir yang kuumumkan apa?".
+// Pertanyaan itu melintasi sesi: sesudah `/clear` nama warisannya sama persis,
+// dan mengumumkannya lagi berarti mengumumkan sesuatu yang tidak berubah.
+const NOTIFIED_SESSION_NAME = `
+CREATE TABLE IF NOT EXISTS notified_session_name (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  name TEXT NOT NULL
+);
+`;
+
 const INDEXES_AND_FTS = `
 CREATE INDEX IF NOT EXISTS idx_messages_bot ON messages(bot);
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(bot, chat_id);
@@ -84,6 +96,7 @@ export function openConversationsDb(path: string): Database {
   db.exec("PRAGMA busy_timeout = 5000;");
   db.exec(TABLE);
   db.exec(SESSION_FIRST_NAME);
+  db.exec(NOTIFIED_SESSION_NAME);
   addMissingColumns(db);
   db.exec(INDEXES_AND_FTS);
   return db;
@@ -289,6 +302,26 @@ export function getFirstSessionName(db: Database, sessionId: string): string | n
     .query("SELECT first_name FROM session_first_name WHERE session_id = ?")
     .get(sessionId) as { first_name: string } | null;
   return row ? row.first_name : null;
+}
+
+/**
+ * Mencatat nama sesi yang BARU SAJA diumumkan ke Telegram.
+ *
+ * `INSERT OR REPLACE`, kebalikan dari `rememberFirstSessionName` — dan
+ * perbedaan itu disengaja. Yang di sana adalah patokan yang tidak boleh
+ * bergerak; yang di sini adalah "terakhir kali", yang justru harus selalu
+ * mengikuti kenyataan.
+ */
+export function rememberNotifiedSessionName(db: Database, name: string): void {
+  db.query("INSERT OR REPLACE INTO notified_session_name (id, name) VALUES (1, ?)").run(name);
+}
+
+/** `null` = bot ini belum pernah mengumumkan nama sesi apa pun. */
+export function getNotifiedSessionName(db: Database): string | null {
+  const row = db.query("SELECT name FROM notified_session_name WHERE id = 1").get() as
+    | { name: string }
+    | null;
+  return row ? row.name : null;
 }
 
 export function countUserTurns(db: Database, sessionId: string): number {

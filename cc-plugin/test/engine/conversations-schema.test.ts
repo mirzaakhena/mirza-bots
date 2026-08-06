@@ -7,6 +7,8 @@ import {
   countUserTurns,
   rememberFirstSessionName,
   getFirstSessionName,
+  rememberNotifiedSessionName,
+  getNotifiedSessionName,
 } from "../../src/engine/db/conversations-schema";
 import { Database } from "bun:sqlite";
 import { mkdtempSync } from "node:fs";
@@ -378,5 +380,32 @@ describe("nama sesi yang pertama terlihat", () => {
 
     expect(getFirstSessionName(db, "S1")).toBe("satu");
     expect(getFirstSessionName(db, "S2")).toBe("dua");
+  });
+});
+
+// Nama sesi yang TERAKHIR sudah diumumkan ke Telegram. Satu baris per bot --
+// berkas database ini memang milik satu bot -- karena yang ditanyakan bukan
+// "sesi ini sudah diumumkan?" melainkan "yang terakhir kuumumkan apa?".
+// Pertanyaan itu melintasi sesi: sesudah /clear, nama warisannya sama, dan
+// mengumumkannya lagi berarti mengumumkan sesuatu yang tidak berubah.
+describe("nama sesi yang terakhir diumumkan", () => {
+  test("belum pernah mengumumkan apa pun menjawab null", () => {
+    const db = openConversationsDb(":memory:");
+    expect(getNotifiedSessionName(db)).toBeNull();
+  });
+
+  test("yang tercatat adalah yang TERAKHIR, bukan yang pertama", () => {
+    const db = openConversationsDb(":memory:");
+    rememberNotifiedSessionName(db, "satu");
+    rememberNotifiedSessionName(db, "dua");
+
+    expect(getNotifiedSessionName(db)).toBe("dua");
+  });
+
+  test("nama kosong tetap tercatat, dan bukan null", () => {
+    const db = openConversationsDb(":memory:");
+    rememberNotifiedSessionName(db, "");
+
+    expect(getNotifiedSessionName(db)).toBe("");
   });
 });
