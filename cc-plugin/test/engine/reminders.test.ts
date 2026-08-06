@@ -325,3 +325,20 @@ describe("buildReminderContext: rename di sesi ini", () => {
     expect(ctx.renamedInThisSession).toBe(false);
   });
 });
+
+// ⚠️ MEMBALIK keputusan user 2026-08-06 pagi, atas bukti dari uji hidup sore
+// harinya. Waktu itu bot-02 mengusulkan menyebut nama tool dan user memilih
+// kalimatnya apa adanya; risikonya dicatat sadar di spec, kata demi kata:
+// "kalau uji hidup nanti menunjukkan AI menyala tapi tidak tahu caranya,
+// penyebabnya sudah tertulis dan tidak perlu dicari."
+//
+// Terjadi. Transcript mirza_01_bot sesi c24c1ba5 merekam botnya MEMBACA SOURCE
+// CODE REPO (grep `WrapperPayload`, `renameSync`) sebelum akhirnya menemukan
+// `send_slash` lewat ToolSearch, baru bisa menamai sesinya.
+//
+// Yang dijaga di sini bukan kalimatnya, melainkan bahwa pengingat yang menyuruh
+// sebuah tindakan ikut menyebut ALAT untuk melakukannya.
+test("pengingat penamaan menyebut alat yang dipakai, bukan cuma tindakannya", () => {
+  const r = REMINDERS.find((x) => x.id === "name-session")!;
+  expect(r.text).toContain("send_slash");
+});

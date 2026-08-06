@@ -93,7 +93,24 @@ export const REMINDERS: Reminder[] = [
     // keadaan ("sesi ini belum bernama"): kalimat yang cuma menyatakan keadaan
     // akan dikarang maksudnya oleh pembacanya, dan di sini pembacanya AI.
     // Syarat penilaiannya tetap milik AI lewat anak kalimat terakhir.
-    text: "segera beri nama session ini jika context yang dibicarakan sudah jelas",
+    // Nama tool ikut disebut sejak 0.27.0, dan itu MEMBALIK keputusan user
+    // pagi 2026-08-06 -- atas bukti dari uji hidup sore harinya, bukan atas
+    // argumen yang sama diulang.
+    //
+    // Risikonya sudah dicatat sadar di spec saat keputusan pertama diambil:
+    // "kalau uji hidup nanti menunjukkan AI menyala tapi tidak tahu caranya,
+    // penyebabnya sudah tertulis dan tidak perlu dicari." Terjadi. Transcript
+    // mirza_01_bot sesi c24c1ba5 merekam botnya MEMBACA SOURCE CODE REPO
+    // (grep WrapperPayload, renameSync) sebelum menemukan `send_slash` lewat
+    // ToolSearch.
+    //
+    // Pelajarannya lebih luas dari satu kalimat: pengingat yang menyuruh sebuah
+    // TINDAKAN harus ikut menyebut ALATnya. Bot uji sengaja telanjang -- tidak
+    // ada skill yang mengajarkan caranya -- jadi "AI pasti tahu" adalah asumsi
+    // yang tidak berlaku di sini.
+    text:
+      'segera beri nama session ini dengan send_slash "/rename <nama>" ' +
+      "jika context yang dibicarakan sudah jelas",
   },
   {
     id: "context-low",
