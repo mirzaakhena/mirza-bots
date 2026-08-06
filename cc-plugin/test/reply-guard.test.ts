@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { analyzeTranscript, decideStop, parseHookInput } from "../hooks/reply-guard";
-import { TERSE_TURN_MARKER, AGENT_TURN_MARKER } from "../src/server";
+import { USER_TURN_MARKER, AGENT_TURN_MARKER } from "../src/server";
 import { AGENT_TURN_MARKER as GUARD_AGENT_MARKER } from "../hooks/reply-guard";
 
 // Shapes below are copied from a REAL transcript
@@ -16,7 +16,7 @@ const inbound = (messageId: string) =>
       role: "user",
       content:
         `<channel source="plugin:cc-plugin:cc-plugin" chat_id="111" user_id="111" ` +
-        `kind="message" message_id="${messageId}">\n${TERSE_TURN_MARKER}\nhalo\n</channel>`,
+        `kind="message" message_id="${messageId}">\n${USER_TURN_MARKER}\nhalo\n</channel>`,
     },
     isMeta: true,
     origin: { kind: "channel", server: "plugin:cc-plugin:cc-plugin" },
@@ -70,7 +70,7 @@ describe("analyzeTranscript", () => {
       type: "user",
       message: {
         role: "user",
-        content: `<channel source="plugin:telegram:telegram" chat_id="111">\n${TERSE_TURN_MARKER}\nhalo\n</channel>`,
+        content: `<channel source="plugin:telegram:telegram" chat_id="111">\n${USER_TURN_MARKER}\nhalo\n</channel>`,
       },
       origin: { kind: "channel", server: "plugin:telegram:telegram" },
     });

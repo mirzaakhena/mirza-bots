@@ -33,7 +33,16 @@ function unavailableAnswer(b: Unavailable) {
 // onto Telegram-triggered turns, and the marker SERVER_INSTRUCTIONS teaches the
 // AI to recognize. Two literals would drift apart silently -- the AI would keep
 // looking for a marker that no longer arrives, and nothing anywhere would error.
-export const TERSE_TURN_MARKER = "[protocol: terse-turn]";
+//
+// Penandanya menamai SUMBER, bukan perilaku (keputusan user 2026-08-06).
+// Sebelumnya bentuknya `[protocol: terse-turn]` -- satu-satunya penanda yang
+// menyebut apa yang harus dilakukan, sementara tetangganya menyebut siapa
+// pengirimnya. Ketidakkonsistenan itu tidak menggigit selama cuma ada dua; ia
+// menggigit saat penulis ketiga (mesin) butuh nama, karena nama apa pun akan
+// miring ke salah satu sumbu. Sumbu SUMBER yang dipilih karena mesin TAHU PASTI
+// dari mana pesan datang dan TIDAK tahu perilaku apa yang pantas -- itu
+// tergantung isi pesannya, dan itu wilayah AI.
+export const USER_TURN_MARKER = "[from: user]";
 
 /**
  * Penanda untuk turn yang dipicu BOT LAIN, bukan Telegram.
@@ -50,14 +59,14 @@ export const TERSE_TURN_MARKER = "[protocol: terse-turn]";
  * yang sudah bisa dipalsukan sejak semula; konsekuensinya ringan, dan
  * dinyatakan di sini alih-alih disembunyikan.
  */
-export const AGENT_TURN_MARKER = "[protocol: agent-turn]";
+export const AGENT_TURN_MARKER = "[from: agent]";
 
 /**
  * Penanda mana yang dipasang di depan sebuah push. Murni, diekspor supaya bisa
  * diuji tanpa menyalakan server MCP.
  */
 export function markerFor(meta: Record<string, string>): string {
-  return meta.origin === "agent" ? AGENT_TURN_MARKER : TERSE_TURN_MARKER;
+  return meta.origin === "agent" ? AGENT_TURN_MARKER : USER_TURN_MARKER;
 }
 
 /**
@@ -107,9 +116,11 @@ export function formatSendResult(result: {
 //     purpose: the guard says it only AFTER the rule is broken, so the same
 //     fact has to be stated up front where it can still prevent something.
 export const SERVER_INSTRUCTIONS = [
+  `Every message pushed into this session starts with a marker that names where it came from -- ${USER_TURN_MARKER} or ${AGENT_TURN_MARKER}. The marker says who sent it, never what to do about it; the rules below are what each source means. A turn with no marker at all was typed by the user directly into this terminal, and is an ordinary turn.`,
+  "",
   "Messages that arrive from Telegram appear in this session as notifications. The person who sent one is AFK -- away from this terminal, reading Telegram on their phone. They never see this transcript, so a `reply` tool call is the only thing that reaches them; your transcript output does not, however well written it is.",
   "",
-  `When an incoming message is prefixed with ${TERSE_TURN_MARKER}, do not write prose in that turn. Say everything you have to say through the \`reply\` tool, then end the turn with a single "." and nothing else. Never restate, summarize, or explain in the transcript what you already sent via \`reply\` -- nobody reads it, and it keeps costing tokens on every later turn of the session.`,
+  `When an incoming message is prefixed with ${USER_TURN_MARKER}, do not write prose in that turn. Say everything you have to say through the \`reply\` tool, then end the turn with a single "." and nothing else. Never restate, summarize, or explain in the transcript what you already sent via \`reply\` -- nobody reads it, and it keeps costing tokens on every later turn of the session.`,
   "",
   "This applies only to turns carrying that prefix. Turns the user types directly into this terminal are ordinary turns -- answer those in full, as usual.",
   "",
