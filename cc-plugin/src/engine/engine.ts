@@ -33,6 +33,8 @@ import {
   getLastChatId,
   countUserTurns,
   rememberFirstSessionName,
+  rememberNotifiedSessionName,
+  getNotifiedSessionName,
   getFirstSessionName,
 } from "./db/conversations-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
@@ -67,6 +69,7 @@ import {
 } from "./messages";
 import type { MessageSink, PushMessage } from "./sink";
 import { readCurrentSessionId } from "./session-file";
+import { renderSessionNotice, shouldNotifyRename, type SessionNotice } from "./session-notice";
 import type { ButtonRow, HistoryMessage } from "./types";
 import { planParts, type OutboundPart } from "./chunk";
 import { planAttachments, type PlannedAttachment } from "./attach";
@@ -834,10 +837,8 @@ export function startEngine(botHome: string): EngineStart {
     },
   });
 
-  return {
-    ok: true,
-    engine: {
-      bot: botName,
+  const engine: Engine = {
+    bot: botName,
 
       async reply(
         text: string,
@@ -1045,16 +1046,79 @@ export function startEngine(botHome: string): EngineStart {
         while (buffered.length > 0) fn(buffered.shift()!);
       },
 
-      close(): void {
-        typing.stopAll();
-        // Sebelum db ditutup: pemindai yang masih berjalan akan mendorong ke
-        // sink yang tujuannya sudah pergi.
-        stopInboxScanner();
-        releaseBotLock(botPidPathIn(botHome), process.pid);
-        conversationsDb.close();
-      },
+    close(): void {
+      typing.stopAll();
+      stopSessionAnnouncer();
+      // Sebelum db ditutup: pemindai yang masih berjalan akan mendorong ke
+      // sink yang tujuannya sudah pergi.
+      stopInboxScanner();
+      releaseBotLock(botPidPathIn(botHome), process.pid);
+      conversationsDb.close();
     },
   };
+
+  /**
+   * Nama sesi yang benar-benar milik sesi INI, atau `null`.
+   *
+   * Penjagaan `session_id` bukan kehati-hatian berlebih: `status.json` cuma
+   * diperbarui saat statusline digambar, jadi tepat sesudah sebuah sesi lahir
+   * ia masih memuat sesi SEBELUMNYA lengkap dengan namanya. Mengumumkan nama
+   * itu berarti memberi tahu user nama yang salah, dan tidak ada yang akan
+   * terlihat gagal.
+   */
+  const currentSessionName = (): string | null => {
+    const captured = readCapturedStatus(statusPathIn(botHome));
+    const sid = readCurrentSessionId(botHome);
+    if (!captured || sid === undefined || captured.payload?.session_id !== sid) return null;
+    return captured.payload?.session_name ?? null;
+  };
+
+  const announce = async (notice: SessionNotice): Promise<void> => {
+    try {
+      await engine.reply(renderSessionNotice(notice, botName));
+    } catch (err) {
+      // Bot yang belum pernah disapa siapa pun memang tidak punya tujuan
+      // (no_known_chat). Itu keadaan sah, bukan kerusakan -- dan pengumuman
+      // yang gagal tidak boleh menjatuhkan apa pun.
+      console.error(`cc-plugin: pengumuman sesi tidak terkirim: ${err}`);
+    }
+  };
+
+  // --- Pengumuman START -------------------------------------------------
+  //
+  // Menunggu tangkapan statusline milik sesi ini lebih dulu, karena di detik
+  // engine lahir statuslinenya biasanya belum sempat digambar. Kalau sesudah
+  // ditunggu ia tetap tidak datang, yang dikirim mengatakan "belum terbaca" --
+  // BUKAN nama dari tangkapan lama.
+  void (async () => {
+    const name = await waitForCapture(currentSessionName, {
+      attempts: 20,
+      delayMs: 500,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    });
+    if (name !== null) rememberNotifiedSessionName(conversationsDb, name);
+    await announce({ kind: "start", name });
+  })();
+
+  // --- Pengumuman NAMA BERUBAH ------------------------------------------
+  //
+  // Polling, bukan fs.watch: `status.json` ditulis dengan rename atomik, dan
+  // watcher pada berkas yang di-rename kehilangan targetnya diam-diam di
+  // Windows. Pemindai inbox memakai pola yang sama dengan alasan sejenis.
+  const announcerTimer = setInterval(() => {
+    try {
+      const name = currentSessionName();
+      if (!shouldNotifyRename(name, getNotifiedSessionName(conversationsDb))) return;
+      rememberNotifiedSessionName(conversationsDb, name!);
+      void announce({ kind: "renamed", name: name! });
+    } catch (err) {
+      console.error(`cc-plugin: pemantau nama sesi gagal: ${err}`);
+    }
+  }, 5000);
+  announcerTimer.unref?.();
+  const stopSessionAnnouncer = (): void => clearInterval(announcerTimer);
+
+  return { ok: true, engine };
 }
 
 /**
