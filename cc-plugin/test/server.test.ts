@@ -754,3 +754,37 @@ describe("tool send_slash", () => {
     await server.close();
   });
 });
+
+// Barang terlupa keempat (2026-08-06): sistem lama punya skill `immediate-reply`
+// yang mewajibkan ack sebelum tool call pertama; sistem baru tidak punya apa pun
+// soal itu -- `grep` "immediate|acknowledge|before.*tool call" = nol. Ditemukan
+// karena user menanyakannya, bukan oleh audit: ack bukan sesuatu yang user
+// KETIK, jadi ia tidak berjejak di `messages.db` maupun `wrapper.log`.
+//
+// reply-guard TIDAK menutup celah ini: ia menjaga UJUNG giliran (harus ada
+// `reply` sebelum berakhir), bukan awalnya. Giliran lima menit lolos dengan
+// mulus asal akhirnya membalas -- dan lima menit sunyi itu, dari sisi user,
+// tidak bisa dibedakan dari bot yang menggantung.
+describe("kewajiban ack sebelum tool call pertama", () => {
+  test("SERVER_INSTRUCTIONS menyuruh mengirim ack lebih dulu", () => {
+    // Case-insensitive dengan sengaja: kapitalisasi "BEFORE" adalah penekanan
+    // untuk pembacanya, bukan bagian dari aturan. Test yang mengunci huruf
+    // besar akan merah karena hal yang tidak ia maksudkan jaga.
+    expect(SERVER_INSTRUCTIONS).toMatch(/before your first tool call/i);
+  });
+
+  // Kalimat perintah, bukan pernyataan keadaan (keputusan user 2026-08-06):
+  // kalimat yang cuma menyatakan keadaan akan dikarang maksudnya oleh AI.
+  // Yang dijaga di sini bukan kata "AFK"-nya -- itu tetangga di atas -- tapi
+  // bahwa aturannya menyebut AKIBAT kalau diabaikan, bukan cuma menyuruh.
+  test("menyebut akibatnya, bukan cuma perintahnya", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("cannot tell whether you are working or hung");
+  });
+
+  // Tanpa jalan keluar yang eksplisit, aturan mekanis begini akan ditaati
+  // secara harfiah pada giliran yang cuma membaca satu berkas -- dan berubah
+  // jadi spam yang user sendiri harus matikan.
+  test("punya pengecualian eksplisit untuk giliran tanpa tool", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("no tool calls at all");
+  });
+});
