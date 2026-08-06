@@ -23,6 +23,7 @@ import { identifyBot } from "./identity";
 import { startInboxScanner, AGENT_ORIGIN } from "./agent/receive";
 import { sendToPeer, type SendResult } from "./agent/send";
 import { listPeers } from "./agent/peers";
+import { buildReminderContext, collectReminders, renderReminders } from "./reminders";
 import { summarizePeer, pidFrom, type PeerStatus } from "./agent/status";
 import { acquireBotLock, releaseBotLock } from "./lock";
 import {
@@ -30,6 +31,7 @@ import {
   insertMessage,
   encodeMetadata,
   getLastChatId,
+  countUserTurns,
 } from "./db/conversations-schema";
 import { AlbumBuffer } from "./telegram/album-buffer";
 import { extractQuote } from "./telegram/quote";
@@ -500,7 +502,36 @@ export function startEngine(botHome: string): EngineStart {
     },
   });
 
-  const deps: PollerDeps = { config, conversationsDb, sink, dataDir: dataDirIn(botHome) };
+  const deps: PollerDeps = {
+    config,
+    conversationsDb,
+    sink,
+    dataDir: dataDirIn(botHome),
+    // Dirakit di sini, bukan di poller: seluruh pengetahuan tentang berkas
+    // tinggal di satu tempat, dan poller tetap bisa diuji tanpa disk.
+    //
+    // Dibaca ULANG tiap pesan, bukan sekali saat start. Itu inti dari "pemicu
+    // adalah keadaan": nama sesi dan jumlah giliran berubah SELAMA sesi hidup,
+    // dan nilai yang diambil sekali di awal akan menjawab pertanyaan hari ini
+    // dengan keadaan kemarin.
+    systemReminders: (sessionId) => {
+      if (sessionId === undefined) return "";
+      try {
+        const ctx = buildReminderContext(
+          readCapturedStatus(statusPathIn(botHome)),
+          sessionId,
+          countUserTurns(conversationsDb, sessionId)
+        );
+        return renderReminders(collectReminders(ctx));
+      } catch (err) {
+        // Pengingat tidak boleh pernah menjadi alasan sebuah pesan tidak
+        // sampai. Yang hilang cuma pengingatnya, dan giliran berikutnya
+        // membawanya lagi.
+        console.error(`cc-plugin: gagal menyusun pengingat: ${err}`);
+        return "";
+      }
+    },
+  };
 
   // Tracks the chat `reply` answers. Written ONLY by deliverIncoming, strictly
   // after the allowlist gate accepted the message -- writing it before the gate

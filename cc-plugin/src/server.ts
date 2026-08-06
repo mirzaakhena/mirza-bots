@@ -62,6 +62,16 @@ export const USER_TURN_MARKER = "[from: user]";
 export const AGENT_TURN_MARKER = "[from: agent]";
 
 /**
+ * Penanda untuk pengingat yang datang dari MESIN, bukan dari manusia maupun bot.
+ *
+ * Penulis ketiga (user 2026-08-06: *"mekanis mesin (system)"*). Ia tidak pernah
+ * berdiri sendiri sebagai push: blok bertanda ini menempel pada pesan yang memang
+ * sudah datang, karena mem-push pengingat sendirian berarti membangunkan AI tanpa
+ * ada yang berbicara -- satu giliran penuh yang tidak diminta siapa pun.
+ */
+export const SYSTEM_TURN_MARKER = "[from: system]";
+
+/**
  * Penanda mana yang dipasang di depan sebuah push. Murni, diekspor supaya bisa
  * diuji tanpa menyalakan server MCP.
  */
