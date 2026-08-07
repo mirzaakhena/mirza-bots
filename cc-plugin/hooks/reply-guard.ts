@@ -35,6 +35,21 @@ export const AGENT_TURN_MARKER = "[from: agent]";
 export interface TranscriptAnalysis {
   channelDriven: boolean;
   latestInboundIdx: number;
+  /**
+   * Posisi pesan terakhir yang datang dari BOT LAIN.
+   *
+   * Ada karena mengecualikan pesan antar-bot dari `latestInboundIdx` saja
+   * TIDAK CUKUP, dan itu terukur: 2026-08-07 06:54 sebuah giliran antar-bot
+   * menulis prosa, `latestProseIdx` ikut bergerak, `latestInboundIdx` tidak --
+   * jadi prosa milik giliran antar-bot ditimpakan ke giliran Telegram
+   * sebelumnya. Guard menuduh "kamu sudah membalas lewat reply" untuk giliran
+   * yang tidak memanggil `reply` sama sekali, lalu menyuruhnya DIAM.
+   *
+   * Penolakan bot itu akhirnya tidak sampai ke siapa pun, dan tidak ada yang
+   * terlihat gagal. **Pengecualian yang dipasang di satu penanda saja adalah
+   * pengecualian yang menjaga pintu sambil membuka jendela.**
+   */
+  latestAgentInboundIdx: number;
   latestReplyIdx: number;
   /**
    * Posisi giliran assistant terakhir yang menulis PROSA ke transcript.
@@ -66,6 +81,7 @@ function textOf(content: unknown): string {
 export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
   let channelDriven = false;
   let latestInboundIdx = -1;
+  let latestAgentInboundIdx = -1;
   let latestReplyIdx = -1;
   let latestProseIdx = -1;
 
@@ -90,7 +106,16 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
       //
       // Diperiksa SEBELUM viaOrigin/viaTag, karena keduanya akan berkata "ya"
       // untuk pesan ini: transportnya memang plugin yang sama.
-      if (content.includes(AGENT_TURN_MARKER)) return;
+      //
+      // DICATAT, lalu dikecualikan -- bukan sekadar dikecualikan. Sebelum
+      // 2026-08-07 baris ini hanya `return`, dan giliran antar-bot jadi
+      // SETENGAH terlihat: tidak menggeser `latestInboundIdx`, tapi prosanya
+      // tetap menggeser `latestProseIdx`. Yang setengah terlihat lebih
+      // berbahaya daripada yang tidak terlihat sama sekali.
+      if (content.includes(AGENT_TURN_MARKER)) {
+        latestAgentInboundIdx = idx;
+        return;
+      }
 
       // Both signals must name THIS plugin, not merely "some channel".
       //
@@ -130,7 +155,13 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
     }
   });
 
-  return { channelDriven, latestInboundIdx, latestReplyIdx, latestProseIdx };
+  return {
+    channelDriven,
+    latestInboundIdx,
+    latestAgentInboundIdx,
+    latestReplyIdx,
+    latestProseIdx,
+  };
 }
 
 export function decideStop(
@@ -141,6 +172,20 @@ export function decideStop(
   // the session in a loop it has no way out of.
   if (stopHookActive) return { block: false };
   if (!a.channelDriven || a.latestInboundIdx === -1) return { block: false };
+  // Prosa itu milik giliran ANTAR-BOT, bukan lanjutan giliran Telegram.
+  //
+  // Sengaja SEMPIT, dan kesempitannya dibayar dengan satu test merah: versi
+  // pertama perbaikan ini memulangkan `block:false` untuk SELURUH giliran
+  // antar-bot, dan test yang sudah ada langsung menangkapnya -- pesan Telegram
+  // yang BELUM dijawab lalu disusul pesan dari bot lain akan lolos tanpa
+  // ditagih. Kewajiban membalas orang yang AFK tidak boleh gugur hanya karena
+  // ada bot lain yang menyela.
+  //
+  // Yang dikecualikan cuma satu hal: LARANGAN PROSA-nya. Giliran antar-bot
+  // memang dilarang menjawab dengan `reply`, jadi transcript adalah
+  // satu-satunya tempat isinya boleh mendarat.
+  const proseMilikGiliranAgent =
+    a.latestAgentInboundIdx > a.latestInboundIdx && a.latestProseIdx > a.latestAgentInboundIdx;
   // Positions, not a boolean: answering the first message and then going quiet
   // on the second is the exact failure worth catching.
   // Sudah membalas -- kewajiban utamanya terpenuhi. Tersisa satu pelanggaran
@@ -153,7 +198,7 @@ export function decideStop(
   // adalah PENGULANGANNYA, dan `stopHookActive` di atas menjamin teguran ini
   // datang paling banyak sekali per giliran.
   if (a.latestReplyIdx > a.latestInboundIdx) {
-    if (a.latestProseIdx > a.latestInboundIdx) {
+    if (a.latestProseIdx > a.latestInboundIdx && !proseMilikGiliranAgent) {
       return {
         block: true,
         reason:
