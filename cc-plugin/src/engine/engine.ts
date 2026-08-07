@@ -17,6 +17,7 @@ import {
 import { installBridge, buildBridgeCommand, pluginRootFrom } from "./context/install";
 import { readCapturedStatus } from "./context/status-file";
 import { readSessionNameFromTranscript } from "./context/session-title";
+import { replyStored, type ReplyableCtx } from "./reply-stored";
 import { renderContext } from "./context/render";
 import { waitForCapture } from "./context/wait";
 import { loadConfig } from "./config";
@@ -601,6 +602,26 @@ export function startEngine(botHome: string): EngineStart {
     10
   );
 
+  /**
+   * Pencatat untuk pesan yang lahir di LAPISAN INI, bukan dari AI: ack slash,
+   * pesan error, prompt konfirmasi, jawaban `/context`.
+   *
+   * Bentuknya sengaja sebuah fungsi yang menghasilkan fungsi supaya `chatId`
+   * dikunci di tempat pesannya dikirim. `sessionId` diambil saat mencatat, bukan
+   * saat dibuat -- sesi bisa berganti di antara keduanya.
+   */
+  const storeCtxReply =
+    (chatId: string) =>
+    (messageId: string, text: string): void => {
+      storeOutgoing(conversationsDb, {
+        bot: botName,
+        chatId,
+        messageId,
+        text,
+        sessionId: sink.sessionId(),
+      });
+    };
+
   bot.on("message:text", async (ctx) => {
     const quote = extractQuote(ctx.message);
 
@@ -640,19 +661,20 @@ export function startEngine(botHome: string): EngineStart {
       newId: () => randomUUID(),
     });
     if (outcome.kind === "passthrough") return;
+    const store = storeCtxReply(String(ctx.chat.id));
     if (outcome.kind === "error") {
-      await ctx.reply(outcome.message);
+      await replyStored(ctx, store, outcome.message);
       return;
     }
     if (outcome.kind === "sent") {
-      await ctx.reply(outcome.ack);
+      await replyStored(ctx, store, outcome.ack);
       return;
     }
     if (outcome.kind === "local") {
-      await replyLocalContext(ctx, botHome);
+      await replyLocalContext(ctx, botHome, store);
       return;
     }
-    await ctx.reply(outcome.prompt, {
+    await replyStored(ctx, store, outcome.prompt, {
       reply_markup: {
         inline_keyboard: [
           [
@@ -781,14 +803,15 @@ export function startEngine(botHome: string): EngineStart {
     );
 
     if (accepted && slashTap !== null) {
+      const store = storeCtxReply(String(ctx.callbackQuery.message?.chat.id ?? ctx.from.id));
       if (slashTap.kind === "go") {
         const outcome = handleConfirm(slashTap.command, {
           botHome,
           newId: () => randomUUID(),
         });
-        if (outcome.kind === "sent") await ctx.reply(outcome.ack);
+        if (outcome.kind === "sent") await replyStored(ctx, store, outcome.ack);
       } else {
-        await ctx.reply("❌ Dibatalkan.");
+        await replyStored(ctx, store, "❌ Dibatalkan.");
       }
     }
 
@@ -1158,8 +1181,15 @@ export function startEngine(botHome: string): EngineStart {
  * mengatakan kenapa ia mengalah, bukan diam-diam gagal.
  */
 async function replyLocalContext(
-  ctx: { reply: (text: string) => Promise<unknown> },
-  botHome: string
+  ctx: ReplyableCtx,
+  botHome: string,
+  /**
+   * Pencatatnya dilewatkan, tidak diambil sendiri: fungsi ini di luar
+   * `startEngine` dan tidak punya db maupun identitas bot. Sebelum 2026-08-07 ia
+   * memang tidak mencatat apa pun -- SETIAP jawaban /context yang pernah dikirim
+   * hilang dari riwayat percakapan botnya sendiri.
+   */
+  store: (messageId: string, text: string) => void
 ): Promise<void> {
   const install = installBridge({
     // Folder bot ADALAH project dir-nya. Dulu keduanya dilewatkan terpisah
@@ -1174,7 +1204,9 @@ async function replyLocalContext(
   });
 
   if (install.kind === "refused" || install.kind === "rolled-back") {
-    await ctx.reply(
+    await replyStored(
+      ctx,
+      store,
       `Jembatan statusline TIDAK dipasang, dan itu disengaja.
 
 ` +
@@ -1190,14 +1222,16 @@ async function replyLocalContext(
   const path = statusPathIn(botHome);
   const ready = readCapturedStatus(path);
   if (ready !== null) {
-    await ctx.reply(renderContext(ready, Date.now()));
+    await replyStored(ctx, store, renderContext(ready, Date.now()));
     return;
   }
 
   // Sampai di sini berarti bridge-nya baru saja dipasang dan CC belum sempat
   // menggambar baris status. Beri tahu dulu, baru tunggu -- diam belasan detik
   // tidak bisa dibedakan user dari bot yang mati.
-  await ctx.reply(
+  await replyStored(
+    ctx,
+    store,
     install.kind === "installed"
       ? `⏳ Jembatan statusline baru dipasang. Menunggu Claude Code menggambar baris status...`
       : `⏳ Menunggu data statusline...`
@@ -1210,7 +1244,9 @@ async function replyLocalContext(
   });
 
   if (got === null) {
-    await ctx.reply(
+    await replyStored(
+      ctx,
+      store,
       `Masih belum ada data statusline sesudah menunggu.
 
 ` +
@@ -1223,5 +1259,5 @@ async function replyLocalContext(
   // sessionName sengaja tidak dilewatkan: payload statusline sudah memuat
   // session_name-nya sendiri, ditulis Claude Code. Sumber kedua hanya akan
   // menambah kemungkinan keduanya berbeda.
-  await ctx.reply(renderContext(got, Date.now()));
+  await replyStored(ctx, store, renderContext(got, Date.now()));
 }
