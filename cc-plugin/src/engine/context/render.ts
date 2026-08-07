@@ -19,6 +19,13 @@ export type StatusLinePayload = {
    * itu kebutuhan /switch, dan cakupannya terpisah.
    */
   session_name?: string;
+  /**
+   * Berkas transcript sesi ini menurut Claude Code sendiri. Isinya boleh
+   * menunjuk sesi yang sudah lewat -- yang dipakai hanya DIREKTORInya, dan
+   * direktori itu tetap benar. Ia ada di sini supaya letak transcript tidak
+   * perlu ditebak dari encoding nama folder milik CC.
+   */
+  transcript_path?: string;
   cwd?: string;
   model?: { display_name?: string };
   context_window?: {
