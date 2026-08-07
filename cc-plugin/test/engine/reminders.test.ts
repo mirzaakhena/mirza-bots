@@ -13,7 +13,7 @@ const ctx = (over: Partial<ReminderContext> = {}): ReminderContext => ({
   sessionName: null,
   turnCount: 2,
   statusFresh: true,
-  contextRemaining: null,
+  contextUsed: null,
   renamedInThisSession: false,
   ...over,
 });
@@ -151,53 +151,70 @@ describe("buildReminderContext", () => {
 });
 
 // Penghuni KEDUA kanal, dan sekaligus ujian apakah kanalnya benar-benar mudah
-// ditambah. Ambangnya DIUKUR, bukan diwarisi: 30 sesi nyata menunjukkan biaya
-// penyerahan (dari mulai menulis berkas handoff sampai sesi berakhir) bermedian
-// 17k token, maksimum 29k pada kelompok yang benar-benar berhenti sesudahnya.
+// ditambah.
 //
-// 100k dipilih = ~6x biaya itu, karena pengingat ini bukan alarm kebakaran
-// melainkan peringatan dini: saat ia menyala, bot masih harus MENYELESAIKAN
-// pekerjaan yang sedang berjalan sebelum menyerahkannya.
+// PERTANYAANNYA DIGANTI USER 2026-08-07, bukan angkanya yang digeser. Ambang
+// lama "sisa <100k" menjawab "apakah masih CUKUP RUANG untuk menyerahkan?" --
+// diukur dari 30 sesi nyata (biaya penyerahan bermedian 17k, maksimum 29k),
+// dan 100k = ~6x angka itu. Benar untuk pertanyaan ITU.
 //
-// Ambang ABSOLUT, bukan persentase. Yang dijaga adalah "masih cukup untuk
-// menyelesaikan dan menyerahkan", dan angka itu tidak berubah saat ukuran
-// window berubah. Aturan lama (35% untuk 1M, 75% untuk 200k) menjawab
-// pertanyaan yang sama dengan dua sisa yang berjarak 13x -- 650k vs 50k.
-describe("pengingat handoff saat context menipis", () => {
+// Yang user jaga ternyata lain: "kapan KUALITAS BERPIKIR mulai turun?". Dua
+// pertanyaan itu terlihat seperti satu, karena pada window 1M "sisa <100k"
+// ADALAH "90% terpakai". Maka ambangnya PINDAH ke 400k TERPAKAI -- bukan
+// bertambah: tidak ada lagi garis merah "wajib serahkan". Murni imbauan.
+//
+// Bentuknya tetap ABSOLUT (keputusan user, sadar; rekomendasi bot-03 adalah
+// persentase). Untuk armada yang seluruhnya 1M hasilnya identik, dan kodenya
+// tidak perlu tahu ukuran window sama sekali.
+describe("pengingat handoff saat context sudah banyak terpakai", () => {
   const c = (over: Partial<ReminderContext> = {}): ReminderContext => ({
     sessionName: "task-x",
     turnCount: 5,
     statusFresh: true,
-    contextRemaining: null,
+    contextUsed: null,
     renamedInThisSession: false,
     ...over,
   });
 
-  test("menyala saat sisa di bawah ambang", () => {
-    expect(collectReminders(c({ contextRemaining: 80_000 })).map((r) => r.id)).toContain(
+  test("menyala saat terpakai di atas ambang", () => {
+    expect(collectReminders(c({ contextUsed: 450_000 })).map((r) => r.id)).toContain("context-low");
+  });
+
+  test("diam saat pemakaiannya masih rendah", () => {
+    expect(collectReminders(c({ contextUsed: 200_000 })).map((r) => r.id)).not.toContain(
       "context-low"
     );
   });
 
-  test("diam saat ruangnya masih lega", () => {
-    expect(collectReminders(c({ contextRemaining: 400_000 })).map((r) => r.id)).not.toContain(
+  // Batasnya `>`, bukan `>=`: tepat DI 400k belum menyala. Diuji supaya
+  // pergeseran satu tanda tidak lolos diam-diam.
+  test("diam tepat di ambang, menyala satu token di atasnya", () => {
+    expect(collectReminders(c({ contextUsed: 400_000 })).map((r) => r.id)).not.toContain(
       "context-low"
     );
+    expect(collectReminders(c({ contextUsed: 400_001 })).map((r) => r.id)).toContain("context-low");
   });
 
-  // Tidak tahu sisanya BUKAN alasan untuk menyala. Pengingat yang berbunyi
+  // Yang lama menyala di sini (sisa 60k); yang baru juga -- tapi lewat jalan
+  // yang lain. Dipertahankan supaya jelas ambang baru TIDAK melepaskan kasus
+  // yang dulu dijaga: 400k terpakai selalu tercapai sebelum 90% terpakai.
+  test("tetap menyala di kondisi yang dulu dijaga ambang lama", () => {
+    expect(collectReminders(c({ contextUsed: 940_000 })).map((r) => r.id)).toContain("context-low");
+  });
+
+  // Tidak tahu pemakaiannya BUKAN alasan untuk menyala. Pengingat yang berbunyi
   // karena datanya tidak ada akan berbunyi di setiap bot yang statuslinenya
   // belum sempat digambar -- yaitu tepat di awal tiap sesi.
-  test("diam saat sisanya tidak diketahui", () => {
-    expect(collectReminders(c({ contextRemaining: null })).map((r) => r.id)).not.toContain(
+  test("diam saat pemakaiannya tidak diketahui", () => {
+    expect(collectReminders(c({ contextUsed: null })).map((r) => r.id)).not.toContain(
       "context-low"
     );
   });
 
   test("tidak bergantung pada nama sesi maupun jumlah giliran", () => {
-    const ids = collectReminders(
-      c({ contextRemaining: 50_000, sessionName: null, turnCount: 0 })
-    ).map((r) => r.id);
+    const ids = collectReminders(c({ contextUsed: 950_000, sessionName: null, turnCount: 0 })).map(
+      (r) => r.id
+    );
 
     expect(ids).toContain("context-low");
   });
@@ -207,20 +224,38 @@ describe("pengingat handoff saat context menipis", () => {
     expect(r.text).toContain("handoff");
   });
 
+  // Kalimatnya ikut berpindah bersama ambangnya. Teks lama ("ruang context
+  // tinggal sedikit") akan menjadi TIDAK BENAR di 400k terpakai -- sisanya
+  // masih 600k -- dan yang membacanya adalah AI, setiap giliran.
+  test("kalimatnya tidak lagi mengklaim ruangnya hampir habis", () => {
+    const r = REMINDERS.find((x) => x.id === "context-low")!;
+    expect(r.text).not.toContain("tinggal sedikit");
+    expect(r.text).not.toContain("habis");
+  });
+
+  // Keputusan user: murni imbauan, tidak ada handoff otomatis. Kalimatnya
+  // harus mengembalikan keputusannya ke user, bukan menyuruh bot menyerahkan.
+  test("kalimatnya mengembalikan keputusan ke user", () => {
+    const r = REMINDERS.find((x) => x.id === "context-low")!;
+    expect(r.text).toContain("user");
+  });
+
   // Bukti bahwa keputusan user "kirim semua" benar-benar berlaku: dua kondisi
   // terpenuhi sekaligus, dan dua-duanya ikut. Mesin tidak memilih.
   test("dua pengingat bisa menyala bersamaan, dan keduanya ikut", () => {
-    const ids = collectReminders(
-      c({ contextRemaining: 50_000, sessionName: null, turnCount: 3 })
-    ).map((r) => r.id);
+    const ids = collectReminders(c({ contextUsed: 950_000, sessionName: null, turnCount: 3 })).map(
+      (r) => r.id
+    );
 
     expect(ids).toContain("name-session");
     expect(ids).toContain("context-low");
   });
 });
 
-describe("buildReminderContext: sisa context", () => {
-  test("dihitung dari ukuran window dikurangi yang sudah terpakai", () => {
+describe("buildReminderContext: context terpakai", () => {
+  // Dibaca LANGSUNG dari `total_input_tokens`. `context_window_size` tidak lagi
+  // dibutuhkan sejak ambangnya absolut atas jumlah terpakai.
+  test("dibaca langsung dari total_input_tokens", () => {
     const captured = {
       captured_at_ms: 1,
       payload: {
@@ -229,13 +264,23 @@ describe("buildReminderContext: sisa context", () => {
       },
     };
 
-    expect(buildReminderContext(captured, "abc", 1).contextRemaining).toBe(60_000);
+    expect(buildReminderContext(captured, "abc", 1).contextUsed).toBe(940_000);
+  });
+
+  // Angka terpakai berdiri sendiri: tanpa ukuran window pun ia tetap terbaca.
+  test("tetap terbaca meski ukuran window tidak ada", () => {
+    const captured = {
+      captured_at_ms: 1,
+      payload: { session_id: "abc", context_window: { total_input_tokens: 500_000 } },
+    };
+
+    expect(buildReminderContext(captured, "abc", 1).contextUsed).toBe(500_000);
   });
 
   test("payload tanpa angka context menjawab null, bukan nol", () => {
     const captured = { captured_at_ms: 1, payload: { session_id: "abc" } };
 
-    expect(buildReminderContext(captured, "abc", 1).contextRemaining).toBeNull();
+    expect(buildReminderContext(captured, "abc", 1).contextUsed).toBeNull();
   });
 
   // Data basi tidak boleh dipakai untuk apa pun, termasuk angka context -- ia
@@ -249,7 +294,7 @@ describe("buildReminderContext: sisa context", () => {
       },
     };
 
-    expect(buildReminderContext(captured, "baru", 1).contextRemaining).toBeNull();
+    expect(buildReminderContext(captured, "baru", 1).contextUsed).toBeNull();
   });
 });
 
@@ -266,7 +311,7 @@ describe("pengingat penamaan sesudah perbaikan nama-warisan", () => {
     sessionName: "uji-engine-mati",
     turnCount: 2,
     statusFresh: true,
-    contextRemaining: null,
+    contextUsed: null,
     renamedInThisSession: false,
     ...over,
   });

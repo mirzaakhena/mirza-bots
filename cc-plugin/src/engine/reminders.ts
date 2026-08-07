@@ -50,8 +50,8 @@ export interface ReminderContext {
   turnCount: number;
   /** `false` berarti tangkapan statusline milik sesi LAIN — jangan bertindak. */
   statusFresh: boolean;
-  /** Sisa ruang context dalam token. `null` = tidak diketahui, bukan nol. */
-  contextRemaining: number | null;
+  /** Context TERPAKAI dalam token. `null` = tidak diketahui, bukan nol. */
+  contextUsed: number | null;
   /**
    * Apakah nama sesi BERUBAH sejak sesi ini lahir.
    *
@@ -75,12 +75,12 @@ export interface Reminder {
 export const MIN_TURNS_BEFORE_NAMING = 2;
 
 /**
- * Sisa ruang context (token) yang di bawahnya pengingat handoff menyala.
+ * Context TERPAKAI (token) yang di atasnya pengingat handoff menyala.
  *
- * DIUKUR, bukan diwarisi — alasan lengkapnya di entri `context-low` di bawah.
- * Ditetapkan user 2026-08-06 sesudah angka ukurnya disodorkan.
+ * Ditetapkan user 2026-08-07 — dan angka ini menjawab pertanyaan yang BERBEDA
+ * dari pendahulunya. Alasan lengkapnya di entri `context-low` di bawah.
  */
-export const MIN_CONTEXT_REMAINING = 100_000;
+export const MAX_CONTEXT_USED = 400_000;
 
 export const REMINDERS: Reminder[] = [
   {
@@ -114,29 +114,51 @@ export const REMINDERS: Reminder[] = [
   },
   {
     id: "context-low",
-    // Ambang ABSOLUT, dan itu keputusan yang diambil DARI UKURAN. 30 sesi nyata
-    // (transcript Claude Code, 2026-08-06) menunjukkan biaya penyerahan -- dari
-    // saat sebuah sesi mulai menulis berkas handoff sampai ia berakhir --
-    // bermedian 17k token, maksimum 29k pada kelompok yang benar-benar berhenti
-    // sesudahnya. MIN_CONTEXT_REMAINING = ~6x angka itu, karena saat pengingat
-    // ini menyala bot masih harus MENYELESAIKAN pekerjaan yang sedang berjalan
-    // sebelum menyerahkannya.
+    // PERTANYAANNYA DIGANTI USER 2026-08-07 -- bukan angkanya yang digeser.
     //
-    // Kenapa bukan persentase, seperti aturan lama (35% untuk window 1M, 75%
-    // untuk 200k): yang dijaga adalah "masih cukup untuk menyelesaikan dan
-    // menyerahkan", dan biaya itu TIDAK berubah saat ukuran window berubah.
-    // Aturan lama menjawab satu pertanyaan dengan dua sisa yang berjarak 13x --
-    // 650k token untuk model 1M, 50k untuk 200k. Ukurannya sendiri menunjukkan
-    // yang pertama menyala 38x lebih awal daripada yang dibutuhkan, dan bot-bot
-    // itu dalam praktik memang baru menyerahkan di sekitar 504k (median).
+    // Sampai 0.32.0 ambangnya "sisa < 100k" dan ia menjawab: "apakah masih
+    // CUKUP RUANG untuk menyerahkan?". Itu diukur, dan ukurannya benar: 30 sesi
+    // nyata (transcript Claude Code, 2026-08-06) memberi biaya penyerahan
+    // bermedian 17k token, maksimum 29k; 100k = ~6x angka itu, karena saat
+    // pengingat menyala bot masih harus MENYELESAIKAN pekerjaan berjalan.
+    // Karena biaya menyerahkan tidak ikut membesar saat window membesar,
+    // bentuk absolut memang tepat untuk pertanyaan ITU.
+    //
+    // Yang user jaga ternyata pertanyaan lain: "kapan KUALITAS BERPIKIR mulai
+    // turun?" -- "konteks yang membengkak hingga di atas 50% akan menurunkan
+    // kualitas jawaban model. Model jadi sering lupa dan enggak nyambung."
+    // Dan dua pertanyaan itu selama ini terlihat seperti satu, karena pada
+    // window 1M "sisa <100k" ADALAH "90% terpakai" -- persis garis merah user.
+    // Angka lama mendarat di tempat yang masuk akal, dan justru karena itu
+    // tidak ada yang sadar ambang KEDUA tidak pernah ada.
+    //
+    // Maka 400k TERPAKAI, dan pengingat ini PINDAH, bukan bertambah: tidak ada
+    // lagi "garis merah wajib serahkan". Ia MURNI IMBAUAN -- tidak ada handoff
+    // otomatis, keputusannya tetap milik user (keputusan user 2026-08-07).
+    //
+    // Bentuknya tetap ABSOLUT meski pertanyaan barunya berskala terhadap window
+    // (kualitas turun di ~40-50% window). Rekomendasi bot-03 adalah persentase;
+    // user memilih absolut, sadar. Untuk armada yang seluruhnya 1M hasilnya
+    // identik, dan kodenya tidak perlu tahu ukuran window sama sekali.
+    //
+    // Harga yang diterima sadar: pengingat ini kini menyala ~6x lebih lama
+    // (400k..penuh, bukan 900k..penuh). Syarat masuk berkas ini -- "kapan ia
+    // TIDAK menyala?" -- masih terjawab (di bawah 400k), tapi marginnya menipis.
+    // Penangkalnya bukan mekanisme baru: AI mengingat penolakan user di dalam
+    // sesi itu.
     //
     // `null` TIDAK menyalakannya: pengingat yang berbunyi karena datanya tidak
     // ada akan berbunyi di tiap bot yang statuslinenya belum sempat digambar,
     // yaitu tepat di awal setiap sesi.
-    applies: (c) => c.contextRemaining !== null && c.contextRemaining < MIN_CONTEXT_REMAINING,
+    applies: (c) => c.contextUsed !== null && c.contextUsed > MAX_CONTEXT_USED,
+    // Kalimatnya WAJIB ikut berubah bersama ambangnya. Teks lama berbunyi
+    // "ruang context tinggal sedikit" -- pada 400k terpakai sisanya masih 600k,
+    // jadi kalimat itu akan menjadi TIDAK BENAR, dan yang membacanya adalah AI,
+    // setiap giliran. Pengingat yang salah bicara mengajarkan hal yang salah.
     text:
-      "ruang context tinggal sedikit -- rapikan pekerjaan yang sedang berjalan lalu serahkan lewat handoff, " +
-      "atau tutup pekerjaannya, sebelum ruangnya habis di tengah jalan",
+      "context terpakai sudah cukup banyak dan kualitas berpikir mulai menurun -- " +
+      "tawarkan ke user apakah pekerjaan ini diserahkan lewat handoff atau ditutup; " +
+      "keputusannya milik user, jangan putuskan sendiri",
   },
 ];
 
@@ -175,14 +197,16 @@ export function buildReminderContext(
     ? captured.payload.session_name
     : null;
 
-  // Sisa context ikut digerbangi kesegaran: angka dari sesi lain bukan cuma
+  // Context terpakai ikut digerbangi kesegaran: angka dari sesi lain bukan cuma
   // tidak berguna, ia menyesatkan -- sesi yang baru lahir akan mewarisi
   // "hampir penuh" milik sesi sebelumnya.
+  //
+  // Sejak 2026-08-07 yang dibaca adalah TERPAKAI, bukan sisa. `context_window_size`
+  // tidak lagi dibutuhkan: ambangnya absolut atas jumlah terpakai (lihat
+  // `context-low`), jadi ukuran window tidak ikut menentukan.
   const cw = fresh ? captured?.payload?.context_window : undefined;
-  const size = cw?.context_window_size;
-  const used = cw?.total_input_tokens;
-  const remaining =
-    typeof size === "number" && typeof used === "number" ? Math.max(0, size - used) : null;
+  const rawUsed = cw?.total_input_tokens;
+  const used = typeof rawUsed === "number" ? Math.max(0, rawUsed) : null;
 
   // Perbandingan nama, bukan pemeriksaan "ada nama atau tidak". Yang penting
   // bukan SIAPA yang me-rename — user dari terminal, bot lewat send_slash, atau
@@ -199,7 +223,7 @@ export function buildReminderContext(
     sessionName: name,
     turnCount,
     statusFresh: fresh,
-    contextRemaining: remaining,
+    contextUsed: used,
     renamedInThisSession: renamed,
   };
 }
