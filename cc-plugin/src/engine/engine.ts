@@ -16,6 +16,7 @@ import {
 } from "./paths";
 import { installBridge, buildBridgeCommand, pluginRootFrom } from "./context/install";
 import { readCapturedStatus } from "./context/status-file";
+import { readSessionNameFromTranscript } from "./context/session-title";
 import { renderContext } from "./context/render";
 import { waitForCapture } from "./context/wait";
 import { loadConfig } from "./config";
@@ -1060,17 +1061,24 @@ export function startEngine(botHome: string): EngineStart {
   /**
    * Nama sesi yang benar-benar milik sesi INI, atau `null`.
    *
-   * Penjagaan `session_id` bukan kehati-hatian berlebih: `status.json` cuma
-   * diperbarui saat statusline digambar, jadi tepat sesudah sebuah sesi lahir
-   * ia masih memuat sesi SEBELUMNYA lengkap dengan namanya. Mengumumkan nama
-   * itu berarti memberi tahu user nama yang salah, dan tidak ada yang akan
-   * terlihat gagal.
+   * Dibaca dari transcript Claude Code, BUKAN dari `session_name` di
+   * `status.json`. Alasannya lengkap di `context/session-title.ts`; ringkasnya:
+   * `status.json` cuma ditulis saat statusline digambar ulang, dan `/rename`
+   * tidak menggambar ulang apa pun -- terukur 59 menit telat pada
+   * `mirza_02_bot` 2026-08-07.
+   *
+   * `status.json` masih dipakai untuk satu hal saja: memberi tahu DI MANA
+   * transcript CC disimpan. Isinya boleh basi; direktorinya tidak.
+   *
+   * Perbandingan `session_id` yang dulu ada di sini ikut hilang, dan itu bukan
+   * kelalaian: identitas sesi sekarang dijamin nama berkas `<session.id>.jsonl`
+   * yang dibuka, bukan oleh dua field yang dicocokkan.
    */
   const currentSessionName = (): string | null => {
     const captured = readCapturedStatus(statusPathIn(botHome));
     const sid = readCurrentSessionId(botHome);
-    if (!captured || sid === undefined || captured.payload?.session_id !== sid) return null;
-    return captured.payload?.session_name ?? null;
+    if (!captured || sid === undefined) return null;
+    return readSessionNameFromTranscript(captured.payload?.transcript_path, sid);
   };
 
   const announce = async (notice: SessionNotice): Promise<void> => {
