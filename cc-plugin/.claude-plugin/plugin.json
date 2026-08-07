@@ -1,7 +1,7 @@
 {
   "name": "cc-plugin",
   "description": "Claude Code plugin for the mirza-bots fleet: contains the whole engine -- it polls this session's bot on Telegram, stores the fleet's shared history, and exposes reply/read_history/search_history as MCP tools. No daemon.",
-  "version": "0.29.0",
+  "version": "0.30.0",
   "mcpServers": {
     "cc-plugin": {
       "command": "bun",
