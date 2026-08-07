@@ -11,15 +11,30 @@
  * Pembagian perannya sama dengan yang berlaku di seluruh sistem baru: mesin
  * menyediakan fakta, AI yang membacanya memutuskan artinya.
  */
-import type { CapturedStatus } from "../context/render";
+import { formatTokens, type CapturedStatus } from "../context/render";
 
 export interface PeerStatus {
   bot: string;
   /** Dari proses, bukan dari data. Lihat catatan di `summarizePeer`. */
   online: boolean;
   sessionName: string | null;
+  /**
+   * Dua sesi boleh bernama sama; idnya tidak. Tanpa ini "sesi task-audit"
+   * tidak bisa dibedakan dari "sesi task-audit yang lain".
+   */
+  sessionId: string | null;
   contextUsedPercent: number | null;
+  /**
+   * Persen saja TIDAK cukup untuk menjawab ambang <100k, dan itu bukan
+   * kehati-hatian berlebih: 5% dari 1M menyisakan 950k, 5% dari 200k
+   * menyisakan 190k. Menyamakan keduanya persis kekeliruan yang membuat
+   * ambang warisan meleset 38x.
+   */
+  contextUsedTokens: number | null;
+  contextWindowTokens: number | null;
   model: string | null;
+  effortLevel: string | null;
+  costUsd: number | null;
   /** `null` berarti bot itu belum pernah menggambar statusline. */
   capturedAtMs: number | null;
 }
@@ -42,14 +57,25 @@ export function summarizePeer(
   alive: boolean
 ): PeerStatus {
   const p = captured?.payload;
-  const pct = p?.context_window?.used_percentage;
+  const cw = p?.context_window;
+  // Satu penyaring untuk semua angka: yang bukan angka menjadi `null`, tidak
+  // menjadi nol. Nol yang dikarang untuk data yang tidak ada adalah kebohongan
+  // yang terlihat meyakinkan -- kekeliruan yang sama dengan kontrak lama
+  // "null berarti ~0%", yang dibatalkan pada hari yang sama.
+  const num = (v: unknown): number | null => (typeof v === "number" ? v : null);
+  const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
   return {
     bot,
     online: alive,
-    sessionName: typeof p?.session_name === "string" ? p.session_name : null,
-    contextUsedPercent: typeof pct === "number" ? pct : null,
-    model: typeof p?.model?.display_name === "string" ? p.model.display_name : null,
-    capturedAtMs: typeof captured?.captured_at_ms === "number" ? captured.captured_at_ms : null,
+    sessionName: str(p?.session_name),
+    sessionId: str(p?.session_id),
+    contextUsedPercent: num(cw?.used_percentage),
+    contextUsedTokens: num(cw?.total_input_tokens),
+    contextWindowTokens: num(cw?.context_window_size),
+    model: str(p?.model?.display_name),
+    effortLevel: str(p?.effort?.level),
+    costUsd: num(p?.cost?.total_cost_usd),
+    capturedAtMs: num(captured?.captured_at_ms),
   };
 }
 
@@ -94,9 +120,21 @@ export function renderPeerStatuses(list: PeerStatus[], nowMs: number): string {
       if (s.capturedAtMs === null) return `${head} · belum ada data statusline`;
 
       const bits: string[] = [];
-      bits.push(s.sessionName ? `sesi "${s.sessionName}"` : "sesi tanpa nama");
-      if (s.contextUsedPercent !== null) bits.push(`ctx ${Math.round(s.contextUsedPercent)}%`);
+      const named = s.sessionName ? `sesi "${s.sessionName}"` : "sesi tanpa nama";
+      // Id sesi menempel pada namanya, bukan jadi potongan sendiri: ia menjawab
+      // "yang MANA", bukan fakta terpisah. Delapan hex sudah cukup membedakan.
+      bits.push(s.sessionId ? `${named} (${s.sessionId.slice(0, 8)})` : named);
+      if (s.contextUsedPercent !== null) {
+        const pct = `ctx ${Math.round(s.contextUsedPercent)}%`;
+        bits.push(
+          s.contextUsedTokens !== null && s.contextWindowTokens !== null
+            ? `${pct} (${formatTokens(s.contextUsedTokens)}/${formatTokens(s.contextWindowTokens)})`
+            : pct
+        );
+      }
       if (s.model) bits.push(s.model);
+      if (s.effortLevel) bits.push(`effort ${s.effortLevel}`);
+      if (s.costUsd !== null) bits.push(`$${s.costUsd.toFixed(2)}`);
       bits.push(`data ${ageOf(s.capturedAtMs, nowMs)} lalu`);
       return `${head} · ${bits.join(" · ")}`;
     })

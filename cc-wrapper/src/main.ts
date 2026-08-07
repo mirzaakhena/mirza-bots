@@ -22,6 +22,7 @@ import { InjectionQueue } from "./queue";
 import { planCommand, planDurationMs } from "./typer";
 import { specFor } from "./registry";
 import { parsePayload } from "./inbox";
+import { describeDispatchFailure } from "./report";
 import { acquireWrapperLock, releaseWrapperLock } from "./lock";
 import {
   firstAttemptArgs,
@@ -188,7 +189,16 @@ setInterval(() => {
     confirmAfterMs: item.confirmAfterMs ?? spec.confirmAfterMs,
   });
   queue.markDispatched(planDurationMs(steps), now);
-  void runPlan((s) => pty.write(s), steps, sleep).finally(() => {
-    dispatching = false;
-  });
+  // `.catch` DAN `.finally`, dan keduanya wajib -- masing-masing menjaga hal
+  // yang berbeda. `.finally` menjaga ANTREAN: dispatch yang gagal tidak boleh
+  // mengunci `dispatching` selamanya (PTY-063). `.catch` menjaga JEJAKNYA:
+  // sebelum 2026-08-07 hanya `.finally` yang ada, jadi antreannya memang
+  // selamat -- tapi `pty.write()` yang melempar membuat perintah slash user
+  // lenyap TANPA SATU BARIS LOG PUN. Pagar untuk pasangan ini ada di
+  // `test/dispatch-failure.test.ts`.
+  void runPlan((s) => pty.write(s), steps, sleep)
+    .catch((err) => console.error(describeDispatchFailure(item.command, err)))
+    .finally(() => {
+      dispatching = false;
+    });
 }, QUEUE_POLL_MS);
