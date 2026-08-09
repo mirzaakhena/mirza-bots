@@ -125,8 +125,22 @@ export function formatSendResult(result: {
 //   - the AFK wording in the first line duplicates hooks/reply-guard.ts on
 //     purpose: the guard says it only AFTER the rule is broken, so the same
 //     fact has to be stated up front where it can still prevent something.
+//   - the third author (SYSTEM_TURN_MARKER) is named here as of 2026-08-09,
+//     and it was missing from the day the marker was created. Nothing lied:
+//     the opening sentence describes what LEADS a message, and only user and
+//     agent ever lead one. What was wrong is the sentence right after it --
+//     "the rules below are what each source means" -- while a third source
+//     shipped with no meaning stated anywhere the AI could read. Two costs
+//     followed, and both were paid silently:
+//       * reminders.ts decided "mesin TIDAK menyusun prioritas, AI yang
+//         menyusun, dan AI boleh mengembalikan keputusannya ke user". That is
+//         an obligation placed ON the AI, and it lived only in a source
+//         comment the AI never sees. Honoured by luck, not by design.
+//       * the AI could not calibrate trust on a marker it was never told
+//         exists. For the other two it at least knows the string means
+//         something and can be sceptical when a user types one by hand.
 export const SERVER_INSTRUCTIONS = [
-  `Every message pushed into this session starts with a marker that names where it came from -- ${USER_TURN_MARKER} or ${AGENT_TURN_MARKER}. The marker says who sent it, never what to do about it; the rules below are what each source means. A turn with no marker at all was typed by the user directly into this terminal, and is an ordinary turn.`,
+  `Every message pushed into this session starts with a marker that names where it came from -- ${USER_TURN_MARKER} or ${AGENT_TURN_MARKER}. A third marker, ${SYSTEM_TURN_MARKER}, never leads a message but can appear inside one. The marker says who sent it, never what to do about it; the rules below are what each source means. A turn with no marker at all was typed by the user directly into this terminal, and is an ordinary turn.`,
   "",
   "Messages that arrive from Telegram appear in this session as notifications. The person who sent one is AFK -- away from this terminal, reading Telegram on their phone. They never see this transcript, so a `reply` tool call is the only thing that reaches them; your transcript output does not, however well written it is.",
   "",
@@ -143,6 +157,8 @@ export const SERVER_INSTRUCTIONS = [
   "This rule is not blocked at the tool level -- there are legitimate cases where a bot-to-bot exchange surfaces something only the user can decide, and `reply` staying silent would be worse than it speaking up. But know the consequence before you do it: if a turn triggered by an inter-bot message calls `reply` anyway, the engine automatically prepends a visible Indonesian marker to the outgoing text naming which bot triggered it -- you cannot suppress or edit it away. So the rule above still stands as the default; only reach for `reply` here when the user genuinely needs to see this, not as a shortcut.",
   "",
   `Only reply to an inter-bot message when its meta says \`expects_reply: true\`. Anything else is one-way -- answering it anyway costs the other bot a turn it did not ask for. And a reply may never itself ask for a reply; that rule is enforced, not merely advised.`,
+  "",
+  `A block marked ${SYSTEM_TURN_MARKER} is written by the machine -- never by a person, never by another bot. It never arrives on its own: it is attached to a message that was already coming. It states a condition that is true RIGHT NOW rather than something that happened, so it stops appearing by itself once the condition no longer holds -- there is nothing to remember between turns. It does NOT rank what to do first: that judgment is yours, and you may hand it back to the user.`,
 ].join("\n");
 
 /**

@@ -4,7 +4,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { mkdtempSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as joinPath } from "node:path";
-import { buildServer, USER_TURN_MARKER, AGENT_TURN_MARKER, markerFor } from "../src/server";
+import {
+  buildServer,
+  USER_TURN_MARKER,
+  AGENT_TURN_MARKER,
+  SYSTEM_TURN_MARKER,
+  markerFor,
+} from "../src/server";
 import { slashDirIn } from "../src/engine/paths";
 import type { Engine } from "../src/engine/engine";
 import type { PushMessage } from "../src/engine/sink";
@@ -814,10 +820,20 @@ describe("penanda menamai sumber, bukan perilaku", () => {
     expect(AGENT_TURN_MARKER).toBe("[from: agent]");
   });
 
-  // Yang dijaga bukan dua kata itu, melainkan bahwa keduanya tetap berada di
+  test("penanda mesin menyebut pengirimnya", () => {
+    expect(SYSTEM_TURN_MARKER).toBe("[from: system]");
+  });
+
+  // Yang dijaga bukan tiga kata itu, melainkan bahwa ketiganya tetap berada di
   // SATU sumbu. Penanda berikutnya yang menyusul pola lama akan merah di sini.
-  test("keduanya berbentuk sama, supaya penanda berikutnya punya cetakan", () => {
-    for (const m of [USER_TURN_MARKER, AGENT_TURN_MARKER]) {
+  //
+  // Penanda mesin ikut di sini sejak 2026-08-09. Sebelumnya loop ini cuma
+  // memuat dua, dan pengecualiannya tidak disengaja -- ia lahir dari test yang
+  // ditulis saat penanda ketiga belum ada, lalu tidak ikut tumbuh. Daftar yang
+  // ditulis tangan selalu punya kegagalan berbentuk ini: yang hilang tidak
+  // membuat apa pun merah.
+  test("ketiganya berbentuk sama, supaya penanda berikutnya punya cetakan", () => {
+    for (const m of [USER_TURN_MARKER, AGENT_TURN_MARKER, SYSTEM_TURN_MARKER]) {
       expect(m).toMatch(/^\[from: [a-z]+\]$/);
     }
   });
@@ -829,4 +845,43 @@ describe("penanda menamai sumber, bukan perilaku", () => {
 // aturan yang tidak menyebut akibatnya akan dikarang lengkap oleh pembacanya.
 test("SERVER_INSTRUCTIONS menjelaskan bahwa penanda menyebut asal, bukan perintah", () => {
   expect(SERVER_INSTRUCTIONS).toContain("names where it came from");
+});
+
+// Sebuah penanda yang dikirim ke AI tanpa pernah dijelaskan ke AI adalah
+// setengah kontrak: mesinnya memenuhi bagiannya, pembacanya tidak pernah
+// diberi bagiannya. Sampai 2026-08-09 `[from: system]` persis begitu -- ia
+// menempel di setiap push yang pengingatnya menyala, dan tidak ada satu
+// kalimat pun di seluruh instructions yang menyebutnya.
+//
+// Yang membuatnya bertahan lama: tidak ada yang gagal. Kalimat pembuka
+// instructions tetap BENAR (hanya user dan agent yang pernah MEMIMPIN pesan),
+// jadi tidak ada pernyataan salah yang bisa ditangkap. Yang bolong adalah
+// janji di kalimat sesudahnya -- "the rules below are what each source means".
+describe("SERVER_INSTRUCTIONS memperkenalkan penulis ketiga", () => {
+  test("penanda mesin disebut, bukan cuma dikirim", () => {
+    expect(SERVER_INSTRUCTIONS).toContain(SYSTEM_TURN_MARKER);
+  });
+
+  // Bukan sekadar "ada namanya". Yang harus sampai adalah SIAPA penulisnya,
+  // karena tanpa itu AI tidak punya dasar untuk curiga saat user mengetik
+  // string ini sendiri -- batas yang sudah disadari sejak penanda antar-bot.
+  test("penulisnya dinyatakan mesin, bukan manusia dan bukan bot", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/written by the machine/i);
+  });
+
+  // Kalimat ini menjaga kalimat pembuka tetap koheren. Tanpa "never leads",
+  // pembaca yang menemukan penanda ini di tengah badan pesan punya alasan
+  // menyangka daftar di kalimat pembuka sudah lengkap dan ia salah baca.
+  test("dinyatakan tidak pernah memimpin pesan", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/never leads a message/i);
+  });
+
+  // Kewajiban yang dulu cuma hidup di komentar `reminders.ts`. Keputusan user
+  // 2026-08-06: mesin tidak menyusun prioritas, AI yang menyusun, dan AI boleh
+  // mengembalikan keputusannya ke user. Aturan yang tidak pernah sampai ke
+  // pelaksananya bukan aturan -- ia keberuntungan yang kebetulan berulang.
+  test("kontrak prioritas diserahkan ke AI, dan boleh dikembalikan ke user", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/does NOT rank what to do first/);
+    expect(SERVER_INSTRUCTIONS).toContain("hand it back to the user");
+  });
 });
