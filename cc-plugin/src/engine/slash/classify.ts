@@ -14,7 +14,7 @@
 // jadi yang di depan muncul paling atas di HP user. /context ditaruh pertama
 // atas permintaan user -- ia yang paling sering dilihat sekilas, dan tidak
 // menuntut argumen apa pun.
-export const KNOWN_COMMANDS = ["/context", "/rename", "/new"] as const;
+export const KNOWN_COMMANDS = ["/context", "/rename", "/new", "/branch"] as const;
 
 export type Classified =
   | { kind: "known"; name: string; arg: string }

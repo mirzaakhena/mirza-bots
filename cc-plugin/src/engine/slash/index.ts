@@ -8,6 +8,7 @@
  */
 import { classify } from "./classify";
 import { mapKnown } from "./map";
+import { validateSessionName } from "./session-name";
 import { writePending } from "./pending";
 import { slashDirIn } from "../paths";
 
@@ -26,7 +27,20 @@ export type SlashOutcome =
   /** Slash tak dikenal: minta konfirmasi sebelum disuntik. */
   | { kind: "confirm"; command: string; prompt: string };
 
-export type SlashDeps = { botHome: string; newId: () => string };
+export type SlashDeps = {
+  botHome: string;
+  newId: () => string;
+  /**
+   * Nama sesi yang sudah dipakai -- dipakai `/branch` untuk menolak nama
+   * bentrok. Sebuah FUNGSI, bukan array: daftarnya dibaca dari disk dan hanya
+   * satu cabang di sini yang membutuhkannya, jadi jalur lain tidak boleh ikut
+   * membayar pembacaan itu.
+   */
+  sessionTitles: () => string[];
+};
+
+/** `handleConfirm` tidak pernah butuh daftar sesi -- ia meneruskan apa adanya. */
+export type ConfirmDeps = Pick<SlashDeps, "botHome" | "newId">;
 
 /** Prefiks tombol "Kirim". Dihitung: 9 byte. */
 export const SLASH_CALLBACK_GO = "slash:go:";
@@ -91,6 +105,36 @@ export function handleSlash(text: string, deps: SlashDeps): SlashOutcome {
   // pemetaan, dan pagar itu harus tetap berlaku untuk yang lain.
   if (c.name === "/context") return { kind: "local", command: "/context" };
 
+  // `/branch` juga duduk di sini, bukan di mapKnown, karena dua cabangnya
+  // butuh hal yang mapKnown sengaja tidak punya: bentuk polosnya dijawab dari
+  // disk (pohon sesi), dan bentuk bernamanya perlu tahu nama apa saja yang
+  // sudah dipakai. mapKnown murni dan harus tetap begitu.
+  if (c.name === "/branch") {
+    // Polos BUKAN kesalahan: itu pertanyaan "saya di mana, ada cabang apa?",
+    // dan pertanyaan itu justru paling sering muncul tepat saat orang
+    // mengetik /branch. Dijawab, bukan dimarahi.
+    if (c.arg === "") return { kind: "local", command: "/branch" };
+
+    const v = validateSessionName(c.arg);
+    if (!v.ok) return { kind: "error", message: v.message };
+
+    // Claude Code memakai nama yang kita berikan APA ADANYA -- ia hanya
+    // menambahkan "(Branch n)" kalau namanya TIDAK diberikan (terukur
+    // 2026-08-09). Jadi tanpa pagar ini, dua sesi bisa bernama sama, dan
+    // picker /switch jadi ambigu justru saat ia paling dibutuhkan.
+    if (deps.sessionTitles().includes(v.name)) {
+      return {
+        kind: "error",
+        message:
+          `Nama \`${v.name}\` sudah dipakai sesi lain. ` +
+          `Pakai nama lain supaya dua sesi tidak bernama sama.`,
+      };
+    }
+
+    writePending(slashDirIn(deps.botHome), { command: `/branch ${v.name}` }, deps.newId());
+    return { kind: "sent", ack: `🌿 Branch baru: \`${v.name}\`` };
+  }
+
   const m = mapKnown(c.name, c.arg);
   if (!m.ok) return { kind: "error", message: m.message };
 
@@ -103,7 +147,7 @@ export function handleSlash(text: string, deps: SlashDeps): SlashOutcome {
  * ADANYA -- lapisan ini tidak mengolahnya. Menerapkan pemetaan di sini akan
  * membuat tombol konfirmasi berbohong soal apa yang dikirim.
  */
-export function handleConfirm(command: string, deps: SlashDeps): SlashOutcome {
+export function handleConfirm(command: string, deps: ConfirmDeps): SlashOutcome {
   writePending(slashDirIn(deps.botHome), { command }, deps.newId());
   return { kind: "sent", ack: `📤 \`${command}\` dikirim ke Claude Code` };
 }

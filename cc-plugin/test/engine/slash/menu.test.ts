@@ -34,8 +34,9 @@ describe("buildCommandMenu", () => {
     expect(buildCommandMenu()[0]?.command).toBe("context");
   });
 
-  test("mendaftarkan /rename, /new, /context -- dan hanya itu di tahap ini", () => {
+  test("mendaftarkan /context, /rename, /new, /branch -- dan hanya itu di tahap ini", () => {
     expect(buildCommandMenu().map((e) => e.command).sort()).toEqual([
+      "branch",
       "context",
       "new",
       "rename",

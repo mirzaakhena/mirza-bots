@@ -171,10 +171,10 @@ sesi).
 - **Identitas sesi dibaca, bukan dipotret.** Hook `SessionStart` menulis id sesi
   terbaru ke `session.id` di folder bot; engine membacanya tiap kali push. Tanpa ini,
   `/clear` membuat pesan berikutnya distempel id sesi lama — terukur 2026-08-02.
-- **Slash Telegram dicegat SESUDAH dicatat, tidak sebelum.** `/rename <nama>`
-  dan `/new <nama>` dari Telegram tidak lagi diteruskan ke AI: keduanya diolah
-  jadi payload dan ditulis ke `slash/` milik `cc-wrapper` (`/new` =
-  `[/clear, /rename <nama>]`, urutannya bagian dari kontrak). Slash yang **tidak**
+- **Slash Telegram dicegat SESUDAH dicatat, tidak sebelum.** `/rename <nama>`,
+  `/new <nama>`, dan `/branch <nama>` dari Telegram tidak lagi diteruskan ke AI:
+  ketiganya diolah jadi payload dan ditulis ke `slash/` milik `cc-wrapper`
+  (`/new` = `[/clear, /rename <nama>]`, urutannya bagian dari kontrak). Slash yang **tidak**
   dikenal tidak ditolak — ia dapat tombol **Kirim/Batal** lebih dulu, karena
   sebagian slash CC interaktif dan injeksi yang membukanya lalu berhenti
   meninggalkan TUI menggantung. **Urutan catat-lalu-cegat itu inti aturannya:**

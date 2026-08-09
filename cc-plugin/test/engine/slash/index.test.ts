@@ -14,7 +14,7 @@ import { slashDirIn } from "../../../src/engine/paths";
 
 let proj: string;
 let n = 0;
-const deps = () => ({ botHome: proj, newId: () => `id${++n}` });
+const deps = () => ({ botHome: proj, newId: () => `id${++n}`, sessionTitles: () => [] as string[] });
 
 beforeEach(() => { proj = mkdtempSync(join(tmpdir(), "slash-")); n = 0; });
 afterEach(() => rmSync(proj, { recursive: true, force: true }));
@@ -148,5 +148,45 @@ describe("alamat penulisan", () => {
     handleSlash("/rename sesi-alamat", deps());
     expect(readdirSync(slashDirIn(proj)).filter((f) => f.endsWith(".json"))).toHaveLength(1);
     expect(existsSync(join(proj, ".claude", "channels"))).toBe(false);
+  });
+});
+
+/**
+ * `/branch` punya tiga cabang dan ketiganya harus terkunci: polos menjawab
+ * dengan pohon (bukan memarahi), bernama-dan-unik diteruskan, bernama-tapi-
+ * bentrok DITOLAK sebelum apa pun sampai ke TUI.
+ */
+describe("handleSlash: /branch", () => {
+  test("polos -> local, bukan error dan bukan payload", () => {
+    const r = handleSlash("/branch", deps());
+    expect(r).toEqual({ kind: "local", command: "/branch" });
+    expect(berkasPending()).toHaveLength(0);
+  });
+
+  test("bernama & unik -> payload /branch <nama> ditulis", () => {
+    const r = handleSlash("/branch riset-api", deps());
+    expect(r.kind).toBe("sent");
+    expect(berkasPending()).toHaveLength(1);
+  });
+
+  // CC memakai nama yang diberikan APA ADANYA -- tanpa pagar ini dua sesi bisa
+  // bernama sama, dan picker /switch jadi ambigu justru saat paling dibutuhkan.
+  test("nama yang sudah dipakai ditolak SEBELUM payload lahir", () => {
+    const d = { ...deps(), sessionTitles: () => ["riset-api"] };
+    const r = handleSlash("/branch riset-api", d);
+    expect(r.kind).toBe("error");
+    expect(berkasPending()).toHaveLength(0);
+  });
+
+  test("nama tidak sah memakai validator yang sama dengan /rename", () => {
+    const r = handleSlash("/branch a\nb", deps());
+    expect(r.kind).toBe("error");
+    expect(berkasPending()).toHaveLength(0);
+  });
+
+  // Kalau /branch tidak dikenal, ia jatuh ke jalur konfirmasi tombol dan
+  // seluruh pagar di atas terlewati diam-diam.
+  test("/branch dikenal, jadi tidak pernah lewat jalur konfirmasi", () => {
+    expect(handleSlash("/branch x", deps()).kind).not.toBe("confirm");
   });
 });

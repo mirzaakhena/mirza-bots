@@ -17,6 +17,8 @@ import {
 import { installBridge, buildBridgeCommand, pluginRootFrom } from "./context/install";
 import { readCapturedStatus } from "./context/status-file";
 import { readSessionNameFromTranscript } from "./context/session-title";
+import { listSessions, takenTitles, type SessionInfo } from "./sessions";
+import { renderBranchTree } from "./slash/branch-tree";
 import { replyStored, type ReplyableCtx } from "./reply-stored";
 import { renderContext } from "./context/render";
 import { waitForCapture } from "./context/wait";
@@ -563,6 +565,25 @@ export function startEngine(botHome: string): EngineStart {
   // `pushToAi: false` (lapisan slash Telegram) juga mematikan indikatornya:
   // tidak ada giliran AI yang sedang disiapkan, jadi "sedang mengetik" akan
   // menjanjikan balasan yang tidak akan pernah datang.
+  /**
+   * Direktori transcript Claude Code milik bot ini, atau `null`.
+   *
+   * Diambil dari `transcript_path` yang CC sendiri laporkan -- encoding nama
+   * foldernya TIDAK pernah dihitung sendiri. Wrapper lama menghitungnya dan
+   * pecah diam-diam saat CC mengubah aturannya, dan itu kelas kegagalan yang
+   * paling mahal karena tidak ada yang terlihat rusak.
+   */
+  const transcriptDir = (): string | null => {
+    const captured = readCapturedStatus(statusPathIn(botHome));
+    const p = captured?.payload?.transcript_path;
+    return typeof p === "string" ? dirname(p) : null;
+  };
+
+  const sessionsNow = (): SessionInfo[] => {
+    const dir = transcriptDir();
+    return dir === null ? [] : listSessions(dir);
+  };
+
   const deliver = async (msg: NormalizedMessage, opts: IncomingOptions = {}) => {
     const accepted = await deliverIncoming(msg, deps, lastChatByBot, opts);
     if (accepted && opts.pushToAi !== false) typing.start(msg.chatId);
@@ -659,6 +680,10 @@ export function startEngine(botHome: string): EngineStart {
     const outcome = handleSlash(ctx.message.text, {
       botHome,
       newId: () => randomUUID(),
+      // Dibaca hanya kalau cabang /branch bernama benar-benar dijalankan --
+      // sebuah fungsi, bukan nilai, supaya /rename dan /new tidak ikut
+      // membayar pembacaan direktori transcript.
+      sessionTitles: () => takenTitles(sessionsNow()),
     });
     if (outcome.kind === "passthrough") return;
     const store = storeCtxReply(String(ctx.chat.id));
@@ -671,6 +696,14 @@ export function startEngine(botHome: string): EngineStart {
       return;
     }
     if (outcome.kind === "local") {
+      if (outcome.command === "/branch") {
+        await replyStored(
+          ctx,
+          store,
+          renderBranchTree(sessionsNow(), readCurrentSessionId(botHome), Date.now())
+        );
+        return;
+      }
       await replyLocalContext(ctx, botHome, store);
       return;
     }
