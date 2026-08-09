@@ -46,6 +46,13 @@ export type ConfirmDeps = Pick<SlashDeps, "botHome" | "newId">;
 export const SLASH_CALLBACK_GO = "slash:go:";
 /** Tombol "Batal". Tidak membawa muatan apa pun. */
 export const SLASH_CALLBACK_CANCEL = "slash:no";
+/**
+ * Prefiks tombol pindah sesi di bawah pohon `/branch`. Dihitung: 9 byte + UUID
+ * 36 = 45, lega di bawah batas 55 -- jadi id sesi dibawa UTUH. Membawa
+ * potongan 8 hex akan menghemat byte yang tidak perlu dihemat dan menukarnya
+ * dengan kemungkinan salah sesi.
+ */
+export const SLASH_CALLBACK_SWITCH = "slash:sw:";
 
 /**
  * Telegram menolak callback_data di atas 64 byte dengan BUTTON_DATA_INVALID
@@ -70,9 +77,12 @@ export function confirmFits(command: string): boolean {
  */
 export function parseSlashCallback(
   data: string | undefined
-): { kind: "go"; command: string } | { kind: "cancel" } | null {
+): { kind: "go"; command: string } | { kind: "cancel" } | { kind: "switch"; sessionId: string } | null {
   if (data === undefined) return null;
   if (data === SLASH_CALLBACK_CANCEL) return { kind: "cancel" };
+  if (data.startsWith(SLASH_CALLBACK_SWITCH)) {
+    return { kind: "switch", sessionId: data.slice(SLASH_CALLBACK_SWITCH.length) };
+  }
   if (data.startsWith(SLASH_CALLBACK_GO)) {
     return { kind: "go", command: data.slice(SLASH_CALLBACK_GO.length) };
   }
@@ -150,4 +160,20 @@ export function handleSlash(text: string, deps: SlashDeps): SlashOutcome {
 export function handleConfirm(command: string, deps: ConfirmDeps): SlashOutcome {
   writePending(slashDirIn(deps.botHome), { command }, deps.newId());
   return { kind: "sent", ack: `📤 \`${command}\` dikirim ke Claude Code` };
+}
+
+/**
+ * Tap tombol pindah sesi di bawah pohon `/branch`.
+ *
+ * Diterjemahkan jadi `/resume <id>` -- perintah Claude Code yang memang ada,
+ * disuntik ke sesi yang SEDANG hidup. Tidak ada tipe payload baru di wrapper:
+ * bagian paling berisiko dari `/switch` sistem lama justru tidak perlu dibawa.
+ *
+ * Ack-nya menyebut id-nya, bukan nama sesinya: nama dibaca dari transcript dan
+ * bisa saja berubah antara pohon digambar dan tombol ditekan, sedangkan id
+ * tidak pernah. Menyebut nama yang sudah basi lebih buruk daripada menyebut id.
+ */
+export function handleSwitch(sessionId: string, deps: ConfirmDeps): SlashOutcome {
+  writePending(slashDirIn(deps.botHome), { command: `/resume ${sessionId}` }, deps.newId());
+  return { kind: "sent", ack: `↩️ Pindah ke sesi \`${sessionId.slice(0, 8)}\`` };
 }

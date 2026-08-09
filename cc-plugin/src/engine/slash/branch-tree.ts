@@ -119,6 +119,59 @@ export function treeLines(roots: TreeNode[], currentId: string | undefined): str
 }
 
 /**
+ * Silsilah sesi yang sedang berjalan: naik lewat `forkedFrom` sampai leluhur
+ * paling atas, lalu turunkan SELURUH keturunannya.
+ *
+ * Sesi lain di project ini sengaja tidak ikut. `/branch` menjawab "saya di
+ * mana, dan cabang apa saja yang serumpun" -- daftar sesi yang tidak
+ * berhubungan cuma memanjangkan layar tanpa menjawab pertanyaan itu, dan
+ * mendorong satu-satunya baris berguna keluar layar (terlihat 2026-08-10).
+ *
+ * Rantai naiknya dijaga `seen`: transcript yang rusak atau disunting tangan
+ * bisa membuat `forkedFrom` melingkar, dan lingkaran itu akan menggantung bot
+ * selamanya alih-alih menjawab.
+ */
+export function lineageOf(sessions: SessionInfo[], currentId: string | undefined): SessionInfo[] {
+  if (currentId === undefined) return sessions;
+  const byId = new Map(sessions.map((s) => [s.id, s]));
+  if (!byId.has(currentId)) return sessions;
+
+  let rootId = currentId;
+  const seen = new Set<string>([rootId]);
+  for (;;) {
+    const parentId = byId.get(rootId)?.forkedFrom?.sessionId;
+    if (!parentId || !byId.has(parentId) || seen.has(parentId)) break;
+    rootId = parentId;
+    seen.add(parentId);
+  }
+
+  const family = new Set<string>([rootId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const s of sessions) {
+      const p = s.forkedFrom?.sessionId;
+      if (p && family.has(p) && !family.has(s.id)) {
+        family.add(s.id);
+        grew = true;
+      }
+    }
+  }
+  return sessions.filter((s) => family.has(s.id));
+}
+
+export type BranchView = {
+  /** Teks CommonMark siap kirim. */
+  text: string;
+  /**
+   * Sesi dalam urutan yang SAMA dengan nomor di teks. Tombol dibangun dari
+   * daftar ini, jadi nomor di badan pesan dan nomor di tombol tidak bisa
+   * berbeda -- keduanya lahir dari satu urutan.
+   */
+  ordered: SessionInfo[];
+};
+
+/**
  * Jawaban lengkap untuk `/branch` polos.
  *
  * Nol sesi tidak mungkin dalam praktik (sesi yang sedang berjalan pasti ada),
@@ -128,16 +181,21 @@ export function renderBranchTree(
   sessions: SessionInfo[],
   currentId: string | undefined,
   now: number
-): string {
+): BranchView {
   if (sessions.length === 0) {
-    return "Belum ada sesi yang tercatat.\n\nBuat cabang: `/branch <nama>`";
+    return {
+      text: "Belum ada sesi yang tercatat.\n\nBuat cabang: `/branch <nama>`",
+      ordered: [],
+    };
   }
+
+  const family = lineageOf(sessions, currentId);
 
   // Dipotong SEBELUM hutan disusun: anak yang induknya tidak ikut tampil naik
   // jadi akar sendiri (buildForest sudah menanganinya), jadi tidak ada sesi
   // yang lenyap dari daftar hanya karena induknya terpotong.
-  const shown = sessions.slice(0, MAX_TREE_SESSIONS);
-  const hidden = sessions.length - shown.length;
+  const shown = family.slice(0, MAX_TREE_SESSIONS);
+  const hidden = family.length - shown.length;
 
   const roots = buildForest(shown);
   const lines = treeLines(roots, currentId);
@@ -148,13 +206,16 @@ export function renderBranchTree(
     return `${i + 1}. ${labelOf(s)} · ${shortAge(s.mtime, now)}${here}`;
   });
 
-  return [
+  const text = [
     "```",
     ...lines,
     "```",
     ...detail,
     ...(hidden > 0 ? [`(${hidden} sesi lebih lama tidak ditampilkan)`] : []),
     "",
+    "Tap nomor untuk pindah ke sesi itu.",
     "Buat cabang: `/branch <nama>`",
   ].join("\n");
+
+  return { text, ordered };
 }

@@ -56,6 +56,18 @@ Lebar terpakai terukur: ~28 kolom pada font kecil, **~19 pada font besar**. Yang
 
 19 kolom habis oleh indentasi + nama saja, jadi: **blok kode mengurus bentuk, daftar bernomor di bawahnya mengurus detail** (nama penuh, umur, penanda sesi aktif). Keduanya memakai urutan yang sama, sehingga nomor di daftar menunjuk baris yang sama di pohon.
 
+**K-7. `/branch` polos menampilkan SILSILAH sesi berjalan saja, dengan tombol pindah di bawahnya.**
+
+Naik lewat `forkedFrom` sampai leluhur paling atas, lalu turunkan seluruh keturunannya. Sesi lain di project ini tidak ikut. Di bawah pohon dipasang tombol angka; tap → `/resume <id>`.
+
+*Alasan:* `/branch` menjawab "saya di mana, dan cabang apa saja yang serumpun". Daftar sesi yang tidak berhubungan memanjangkan layar tanpa menjawab pertanyaan itu — terlihat 2026-08-10, sepuluh sesi sudah mendorong baris `Buat cabang:` keluar layar. Tombolnya menutup jarak antara "melihat" dan "pindah", yang selama ini butuh dua perintah terpisah.
+
+*Batas yang disadari:* tombol hanya untuk sesi LAIN. Tombol yang tidak melakukan apa-apa mengajari user bahwa tombol di sini boleh tidak berarti.
+
+**K-8. `/switch` menampilkan sesi lintas silsilah, beberapa yang terbaru saja.**
+
+Pembagian perannya jadi tegas: `/branch` = dalam satu rumpun, `/switch` = antar rumpun. Belum diimplementasikan.
+
 **K-5. `/switch` melayani sesi apa pun asal-usulnya.** Sesi dari `/clear` dan dari `/branch` sama-sama berkas `.jsonl` di folder project yang sama; tidak ada pembedaan.
 
 ---
@@ -128,5 +140,5 @@ Batas yang sudah ada dan tetap berlaku: `callback_data` maksimum 55 byte sesudah
 
 ## 8. Status implementasi
 
-- **cc-plugin 0.34.0** — `sessions.ts`, `branch-tree.ts`, dan `/branch` (dua cabang: pohon & bernama) selesai. 641 test hijau, `bunx tsc --noEmit` bersih.
+- **cc-plugin 0.35.0** — `sessions.ts`, `branch-tree.ts`, `/branch` (dua cabang: pohon silsilah & bernama), dan tombol pindah sesi (`/resume <id>`) selesai. 650 test hijau, `bunx tsc --noEmit` bersih.
 - **`/switch`** — belum dikerjakan. Ia menunggu picker terpaginasi, komponen yang belum ada sama sekali di repo ini, dan dua ujicoba di bagian 7.

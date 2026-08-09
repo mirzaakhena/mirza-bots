@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
   buildForest,
+  lineageOf,
   flatten,
   labelOf,
   renderBranchTree,
@@ -113,7 +114,7 @@ test("render: bentuk di blok kode, detail lengkap di daftar bernomor", () => {
     [s("a", "kenalan", 120), s("b", "riset-api-yang-panjang", 40, "a")],
     "b",
     NOW
-  );
+  ).text;
   // Nama penuh TIDAK boleh hilang: blok kode memotongnya, daftar memulihkannya.
   expect(out).toContain("riset-api-yang-panjang");
   expect(out).toContain("1. kenalan · 2j");
@@ -123,14 +124,14 @@ test("render: bentuk di blok kode, detail lengkap di daftar bernomor", () => {
 });
 
 test("nol sesi dijawab kalimat, bukan blok kode kosong", () => {
-  const out = renderBranchTree([], undefined, NOW);
+  const out = renderBranchTree([], undefined, NOW).text;
   expect(out).not.toContain("```");
   expect(out).toContain("/branch <nama>");
 });
 
 test("sesi berlebih dipotong, dan jumlah yang disembunyikan DIKATAKAN", () => {
   const many = Array.from({ length: 20 }, (_, i) => s(`id-${i}`, `sesi-${i}`, i));
-  const out = renderBranchTree(many, undefined, NOW);
+  const out = renderBranchTree(many, undefined, NOW).text;
   expect(out).toContain("(8 sesi lebih lama tidak ditampilkan)");
   expect(out).toContain("sesi-11");
   expect(out).not.toContain("sesi-12");
@@ -142,9 +143,54 @@ test("sesi berlebih dipotong, dan jumlah yang disembunyikan DIKATAKAN", () => {
 // mengunci bentuk KAWATNYA, bukan cuma bentuk CommonMark-nya.
 test("hasil render tetap jadi blok kode sesudah dikonversi ke MarkdownV2", () => {
   const wire = commonMarkToMarkdownV2(
-    renderBranchTree([s("a", "kenalan", 5), s("b", "anak", 2, "a")], "b", NOW)
+    renderBranchTree([s("a", "kenalan", 5), s("b", "anak", 2, "a")], "b", NOW).text
   );
   expect(wire).toContain("```");
   // Di dalam blok kode, garis pohon tidak boleh ikut di-escape jadi "\├".
   expect(wire).toContain("└ anak");
+});
+
+// Permintaan user 2026-08-10: /branch menjawab "saya di mana, dan cabang apa
+// saja yang serumpun". Sesi yang tidak berhubungan cuma memanjangkan layar dan
+// mendorong baris berguna keluar tampilan.
+test("hanya silsilah sesi berjalan yang tampil, sesi lain tidak ikut", () => {
+  const out = renderBranchTree(
+    [
+      s("a", "keluarga-induk", 60),
+      s("b", "keluarga-anak", 30, "a"),
+      s("z", "sesi-asing", 10),
+    ],
+    "b",
+    NOW
+  );
+  expect(out.text).toContain("keluarga-induk");
+  expect(out.text).not.toContain("sesi-asing");
+  expect(out.ordered.map((x) => x.id)).toEqual(["a", "b"]);
+});
+
+test("silsilah dinaikkan sampai leluhur, lalu turun ke SELURUH keturunan", () => {
+  const family = lineageOf(
+    [
+      s("kakek", "kakek", 90),
+      s("ayah", "ayah", 60, "kakek"),
+      s("aku", "aku", 30, "ayah"),
+      s("paman", "paman", 20, "kakek"),
+      s("asing", "asing", 5),
+    ],
+    "aku"
+  );
+  expect(family.map((x) => x.id).sort()).toEqual(["aku", "ayah", "kakek", "paman"]);
+});
+
+// Transcript yang disunting tangan bisa membuat forkedFrom melingkar. Lingkaran
+// menggantungkan bot selamanya -- jauh lebih buruk daripada pohon yang aneh.
+test("rantai forkedFrom yang melingkar tidak menggantung", () => {
+  const a = s("a", "a", 10, "b");
+  const b = s("b", "b", 5, "a");
+  expect(lineageOf([a, b], "a").map((x) => x.id).sort()).toEqual(["a", "b"]);
+});
+
+test("sesi berjalan yang tidak dikenal -> tampilkan apa adanya, jangan kosong", () => {
+  const all = [s("a", "satu", 5)];
+  expect(lineageOf(all, "tidak-ada")).toEqual(all);
 });

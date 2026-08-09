@@ -56,9 +56,11 @@ import { buildCommandMenu } from "./slash/menu";
 import {
   handleSlash,
   handleConfirm,
+  handleSwitch,
   parseSlashCallback,
   SLASH_CALLBACK_GO,
   SLASH_CALLBACK_CANCEL,
+  SLASH_CALLBACK_SWITCH,
 } from "./slash";
 import {
   makeBot,
@@ -707,13 +709,33 @@ export function startEngine(botHome: string): EngineStart {
         // Yang DIKIRIM bentuk kawatnya, yang DICATAT CommonMark aslinya --
         // aturan yang sama dipegang `storeOutgoing`: riwayat harus terbaca
         // sebagai apa yang ditulis.
-        const tree = renderBranchTree(sessionsNow(), readCurrentSessionId(botHome), Date.now());
+        const here = readCurrentSessionId(botHome);
+        const view = renderBranchTree(sessionsNow(), here, Date.now());
+        // Tombol hanya untuk sesi LAIN: pindah ke sesi yang sedang dibuka
+        // tidak melakukan apa-apa, dan tombol yang tidak melakukan apa-apa
+        // mengajari user bahwa tombol di sini boleh tidak berarti. Nomornya
+        // tetap nomor dari daftar, jadi tombol dan badan pesan tidak bisa
+        // menunjuk baris yang berbeda.
+        const rows: { text: string; callback_data: string }[][] = [];
+        view.ordered.forEach((sesi, i) => {
+          if (sesi.id === here) return;
+          const row = rows[rows.length - 1];
+          const button = {
+            text: String(i + 1),
+            callback_data: `${SLASH_CALLBACK_SWITCH}${sesi.id}`,
+          };
+          if (row && row.length < 8) row.push(button);
+          else rows.push([button]);
+        });
         await replyStored(
           ctx,
           store,
-          commonMarkToMarkdownV2(tree),
-          { parse_mode: "MarkdownV2" },
-          tree
+          commonMarkToMarkdownV2(view.text),
+          {
+            parse_mode: "MarkdownV2",
+            ...(rows.length > 0 ? { reply_markup: { inline_keyboard: rows } } : {}),
+          },
+          view.text
         );
         return;
       }
@@ -852,6 +874,12 @@ export function startEngine(botHome: string): EngineStart {
       const store = storeCtxReply(String(ctx.callbackQuery.message?.chat.id ?? ctx.from.id));
       if (slashTap.kind === "go") {
         const outcome = handleConfirm(slashTap.command, {
+          botHome,
+          newId: () => randomUUID(),
+        });
+        if (outcome.kind === "sent") await replyStored(ctx, store, outcome.ack);
+      } else if (slashTap.kind === "switch") {
+        const outcome = handleSwitch(slashTap.sessionId, {
           botHome,
           newId: () => randomUUID(),
         });

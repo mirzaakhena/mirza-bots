@@ -5,10 +5,12 @@ import { join } from "node:path";
 import {
   handleSlash,
   handleConfirm,
+  handleSwitch,
   parseSlashCallback,
   confirmFits,
   MAX_CONFIRM_COMMAND_BYTES,
   SLASH_CALLBACK_GO,
+  SLASH_CALLBACK_SWITCH,
 } from "../../../src/engine/slash";
 import { slashDirIn } from "../../../src/engine/paths";
 
@@ -188,5 +190,30 @@ describe("handleSlash: /branch", () => {
   // seluruh pagar di atas terlewati diam-diam.
   test("/branch dikenal, jadi tidak pernah lewat jalur konfirmasi", () => {
     expect(handleSlash("/branch x", deps()).kind).not.toBe("confirm");
+  });
+});
+
+describe("tombol pindah sesi di bawah pohon /branch", () => {
+  test("callback dikenali dan membawa id sesi UTUH", () => {
+    const id = "11111111-2222-3333-4444-555555555555";
+    expect(parseSlashCallback(`${SLASH_CALLBACK_SWITCH}${id}`)).toEqual({
+      kind: "switch",
+      sessionId: id,
+    });
+  });
+
+  test("prefiks + UUID muat di batas callback_data Telegram", () => {
+    const id = "11111111-2222-3333-4444-555555555555";
+    expect(Buffer.byteLength(`${SLASH_CALLBACK_SWITCH}${id}`, "utf8")).toBeLessThanOrEqual(64);
+  });
+
+  test("tap menulis /resume <id>, bukan tipe payload baru", () => {
+    const r = handleSwitch("11111111-2222-3333-4444-555555555555", {
+      botHome: proj,
+      newId: () => "sw-1",
+    });
+    expect(r.kind).toBe("sent");
+    const isi = JSON.parse(readFileSync(join(slashDirIn(proj), "sw-1.json"), "utf8"));
+    expect(isi.command).toBe("/resume 11111111-2222-3333-4444-555555555555");
   });
 });
