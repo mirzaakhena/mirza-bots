@@ -861,15 +861,46 @@ export function startEngine(botHome: string): EngineStart {
     },
   });
 
-  const engine: Engine = {
-    bot: botName,
-
-      async reply(
-        text: string,
-        buttons?: ButtonRow[],
-        replyTo?: string,
-        files?: string[]
-      ): Promise<ReplyResult> {
+  /**
+   * Satu-satunya pintu keluar yang MENGIRIM lalu MENCATAT (bandingkan
+   * `replyStored`, yang dipakai pesan-pesan kecil milik lapisan slash). Dua
+   * pemanggil, dan haknya berbeda -- itulah yang `withOriginMarker` pisahkan:
+   *
+   * - `engine.reply` (tool MCP `reply`) → `true`. Balasan AI SELALU punya
+   *   pemicu, dan penanda AB-4 persis menjawab "giliran ini dipicu siapa".
+   * - `announce` (pengumuman sesi) → `false`. Pengumuman tidak punya pemicu
+   *   sama sekali: ia lahir dari timer 5 detik, bukan dari sebuah giliran.
+   *
+   * ## Kenapa pemisahan ini ada
+   *
+   * Terukur dua kali di produksi (`mirza_02_bot`, conversations.db baris 78 —
+   * 2026-08-07 08:36 WIB — dan baris 111 — 2026-08-08 09:06 WIB): pengumuman
+   * "✏️ Sesi sekarang: ..." datang diawali "Dipicu oleh bot lain (bot-03)",
+   * padahal yang menekan `/branch` adalah user sendiri dan bot-03 terakhir
+   * bicara entah berapa lama sebelumnya.
+   *
+   * Yang membuatnya bertahan lama: slash Telegram diproses dengan
+   * `pushToAi: false`, jadi ia tidak pernah melewati `sink.push` — satu-satunya
+   * tempat `lastPushOrigin` diperbarui. Origin lama karena itu selamat
+   * melewati `/clear` sekalipun, karena `/clear` tidak me-restart proses ini.
+   *
+   * ## Kenapa BUKAN diperbaiki dengan mereset origin saat slash masuk
+   *
+   * Itu menutup gejalanya lewat pintu yang salah, dan menukarnya dengan false
+   * negative: bot lain menitip tugas, user kebetulan mengetik `/context` di
+   * tengah, dan balasan AI untuk titipan itu lolos TANPA penanda. Arah yang
+   * dipilih kode ini sejak awal (lihat `buildAgentOriginMarker`) adalah
+   * menandai berlebihan, bukan gagal menandai. Yang salah di sini bukan
+   * NILAI origin-nya, melainkan ALAMATNYA: pengumuman mesin memang tidak
+   * pernah berhak atas jawaban itu.
+   */
+  const sendOutgoing = async (
+    text: string,
+    buttons: ButtonRow[] | undefined,
+    replyTo: string | undefined,
+    files: string[] | undefined,
+    withOriginMarker: boolean
+  ): Promise<ReplyResult> => {
         let chatId = lastChatByBot.get(botName);
         if (!chatId) {
           // W-27: Map ini hidup di memori proses -- restart mengosongkannya,
@@ -904,7 +935,7 @@ export function startEngine(botHome: string): EngineStart {
         // kode, bukan kesopanan) dan supaya chunking (planParts di bawah)
         // menghitung penandanya sebagai bagian dari teks yang dipotong,
         // bukan tempelan sesudahnya yang bisa merusak batas potongan.
-        const marker = buildAgentOriginMarker(lastPushOrigin);
+        const marker = withOriginMarker ? buildAgentOriginMarker(lastPushOrigin) : null;
         const outgoingText = marker ? `${marker}\n\n${text}` : text;
 
         // Satu panggilan, di atas segalanya: pagar narasi tombol, larangan
@@ -992,6 +1023,13 @@ export function startEngine(botHome: string): EngineStart {
         // "kepanjangan" AI hanya akan membuat AI mengira dirinya harus
         // memangkas teksnya sendiri untuk sesuatu yang bukan salahnya.
         return { chars: text.length, parts: parts.length, files: filesSent };
+  };
+
+  const engine: Engine = {
+    bot: botName,
+
+      reply(text, buttons, replyTo, files): Promise<ReplyResult> {
+        return sendOutgoing(text, buttons, replyTo, files, true);
       },
 
       async history(opts): Promise<HistoryMessage[]> {
@@ -1106,7 +1144,10 @@ export function startEngine(botHome: string): EngineStart {
 
   const announce = async (notice: SessionNotice): Promise<void> => {
     try {
-      await engine.reply(renderSessionNotice(notice, botName));
+      // `sendOutgoing(..., false)`, BUKAN `engine.reply`: pengumuman mesin
+      // tidak boleh membawa penanda AB-4. Alasan lengkapnya di header
+      // `sendOutgoing`.
+      await sendOutgoing(renderSessionNotice(notice, botName), undefined, undefined, undefined, false);
     } catch (err) {
       // Bot yang belum pernah disapa siapa pun memang tidak punya tujuan
       // (no_known_chat). Itu keadaan sah, bukan kerusakan -- dan pengumuman

@@ -4,8 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startEngine, nextPushOrigin, buildAgentOriginMarker } from "../../src/engine/engine";
 import type { Engine } from "../../src/engine/engine";
-import { configPathIn, inboxDirIn, conversationsDbPathIn } from "../../src/engine/paths";
-import { openConversationsDb } from "../../src/engine/db/conversations-schema";
+import {
+  configPathIn,
+  inboxDirIn,
+  conversationsDbPathIn,
+  sessionIdPathIn,
+  statusPathIn,
+} from "../../src/engine/paths";
+import {
+  openConversationsDb,
+  getNotifiedSessionName,
+} from "../../src/engine/db/conversations-schema";
+import { writeCapturedStatus } from "../../src/engine/context/status-file";
 import { AGENT_ORIGIN } from "../../src/engine/agent/receive";
 import type { PushMessage } from "../../src/engine/sink";
 
@@ -163,6 +173,22 @@ function lastAssistantText(home: string): string {
 
 const MARKER_PREFIX = "🤖 Dipicu oleh bot lain";
 
+/** Satu baris `custom-title` persis seperti yang Claude Code tulis. */
+function titleLine(sessionId: string, title: string): string {
+  return JSON.stringify({ type: "custom-title", sessionId, customTitle: title });
+}
+
+/** Menunggu sebuah KEADAAN, bukan durasi tebakan. */
+async function waitUntil<T>(probe: () => T | undefined | null, timeoutMs = 15000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const hit = probe();
+    if (hit !== undefined && hit !== null) return hit;
+    if (Date.now() > deadline) throw new Error("timeout menunggu keadaan");
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Fungsi murni
 // ---------------------------------------------------------------------------
@@ -275,6 +301,69 @@ test("penanda memakai nama bot TERAKHIR ketika dua bot berbeda mengirim berturut
     res.engine.close();
   });
 });
+
+// Pengumuman mesin BUKAN balasan untuk siapa pun -- ia lahir dari timer 5
+// detik, bukan dari sebuah giliran. Penanda menjawab "giliran ini dipicu
+// siapa", jadi menempelkannya di sini berarti menjawab pertanyaan yang tidak
+// pernah diajukan, dan jawabannya SELALU salah apa pun isinya.
+//
+// Terukur produksi pada `mirza_02_bot`: baris 78 (2026-08-07 08:36 WIB) dan
+// baris 111 (2026-08-08 09:06 WIB) di conversations.db, dua-duanya
+// "✏️ Sesi sekarang: ..." yang diawali "Dipicu oleh bot lain (bot-03)" --
+// padahal yang menekan /branch adalah user, dan bot-03 terakhir bicara
+// entah berapa lama sebelumnya. Slash Telegram diproses dengan
+// `pushToAi: false` sehingga tidak pernah melewati `sink.push`, jadi origin
+// lama bertahan melewati /clear sekalipun (proses engine tidak restart).
+test("pengumuman ganti nama sesi tidak pernah membawa penanda antar-bot", async () => {
+  await withFakeTelegram(async ({ enqueue, sent }) => {
+    const home = botFolder("bot-uji", { token: "123:fake", allowFrom: ["555"] });
+
+    // Transcript CC palsu: di sinilah nama sesi sungguhan dibaca (bukan dari
+    // status.json -- lihat context/session-title.ts).
+    const sessionId = "11111111-2222-3333-4444-555555555555";
+    writeFileSync(sessionIdPathIn(home), sessionId, "utf8");
+    const ccDir = mkdtempSync(join(tmpdir(), "cc-transcript-"));
+    const transcript = join(ccDir, `${sessionId}.jsonl`);
+    writeFileSync(transcript, `${titleLine(sessionId, "nama-awal")}\n`, "utf8");
+    writeCapturedStatus(statusPathIn(home), { transcript_path: transcript }, Date.now());
+
+    const res = startEngine(home);
+    if (!res.ok) throw new Error(res.message);
+
+    const pushes = collectPushes(res.engine);
+    enqueue(textUpdate(555, "halo dari user"));
+    await pushes.wait((m) => m.text === "halo dari user");
+
+    dropAgentMessage(home, "u-1.json", "bot-03", "titipan lama dari bot-03");
+    await pushes.wait((m) => m.meta.origin === AGENT_ORIGIN && m.meta.from_bot === "bot-03");
+
+    // Bukti antara: origin memang agent pada titik ini, jadi test ini
+    // benar-benar menguji pengecualian pengumuman -- bukan kebetulan bersih.
+    await res.engine.reply("balasan yang MEMANG dipicu bot-03");
+    expect(lastAssistantText(home).startsWith(MARKER_PREFIX)).toBe(true);
+
+    // Pengumuman start harus lebih dulu mencatat nama awal, kalau tidak
+    // shouldNotifyRename menolak mengumumkan apa pun (lastNotified null).
+    await waitUntil(() => {
+      const db = openConversationsDb(conversationsDbPathIn(home));
+      const name = getNotifiedSessionName(db);
+      db.close();
+      return name;
+    });
+
+    // Nama sesi berubah -- persis yang dilakukan /branch, /clear, /rename.
+    writeFileSync(
+      transcript,
+      `${titleLine(sessionId, "nama-awal")}\n${titleLine(sessionId, "nama-baru")}\n`,
+      "utf8"
+    );
+
+    const notice = await waitUntil(() => sent.find((s) => s.text.includes("nama-baru")));
+    expect(notice.text).not.toContain(MARKER_PREFIX);
+
+    res.engine.close();
+  });
+}, 30000);
 
 // Reset -- inilah yang mengunci "tidak nyangkut" (bukan flag ala
 // `telegramDriven` lama, audit area-10 §10.2). Tanpa test ini bug sistem
