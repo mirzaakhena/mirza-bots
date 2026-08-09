@@ -19,6 +19,7 @@ import { readCapturedStatus } from "./context/status-file";
 import { readSessionNameFromTranscript } from "./context/session-title";
 import { listSessions, takenTitles, type SessionInfo } from "./sessions";
 import { renderBranchTree } from "./slash/branch-tree";
+import { commonMarkToMarkdownV2 } from "./markdown";
 import { replyStored, type ReplyableCtx } from "./reply-stored";
 import { renderContext } from "./context/render";
 import { waitForCapture } from "./context/wait";
@@ -697,10 +698,22 @@ export function startEngine(botHome: string): EngineStart {
     }
     if (outcome.kind === "local") {
       if (outcome.command === "/branch") {
+        // `replyStored` mengirim TANPA parse_mode -- itu benar untuk ack satu
+        // baris, tapi salah di sini: pohonnya bergantung pada blok kode. Tanpa
+        // parse_mode, ``` tampil apa adanya, kolomnya kacau karena font
+        // proporsional, dan Telegram malah menjadikan tiap "/clear" di dalam
+        // pohon sebagai tautan command (terlihat 2026-08-10 di HP user).
+        //
+        // Yang DIKIRIM bentuk kawatnya, yang DICATAT CommonMark aslinya --
+        // aturan yang sama dipegang `storeOutgoing`: riwayat harus terbaca
+        // sebagai apa yang ditulis.
+        const tree = renderBranchTree(sessionsNow(), readCurrentSessionId(botHome), Date.now());
         await replyStored(
           ctx,
           store,
-          renderBranchTree(sessionsNow(), readCurrentSessionId(botHome), Date.now())
+          commonMarkToMarkdownV2(tree),
+          { parse_mode: "MarkdownV2" },
+          tree
         );
         return;
       }

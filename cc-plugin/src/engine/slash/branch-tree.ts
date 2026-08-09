@@ -24,6 +24,15 @@ import type { SessionInfo } from "../sessions";
 /** Anggaran keras satu baris pohon. Lihat komentar header untuk asal angkanya. */
 export const TREE_WIDTH = 19;
 
+/**
+ * Sesi yang ditampilkan, terbaru dulu. Bot harian mengumpulkan puluhan
+ * transcript, dan pohon sepanjang itu tidak terbaca di HP -- lebih buruk lagi,
+ * ia mendorong satu-satunya baris yang berguna ("Buat cabang: ...") keluar
+ * layar. Yang dipotong DIKATAKAN jumlahnya; pemotongan diam-diam terbaca
+ * sebagai "cuma segini sesinya".
+ */
+export const MAX_TREE_SESSIONS = 12;
+
 /** Penanda sesi yang sedang aktif. Ditaruh di ujung, sesudah nama. */
 const HERE = " <";
 
@@ -124,7 +133,13 @@ export function renderBranchTree(
     return "Belum ada sesi yang tercatat.\n\nBuat cabang: `/branch <nama>`";
   }
 
-  const roots = buildForest(sessions);
+  // Dipotong SEBELUM hutan disusun: anak yang induknya tidak ikut tampil naik
+  // jadi akar sendiri (buildForest sudah menanganinya), jadi tidak ada sesi
+  // yang lenyap dari daftar hanya karena induknya terpotong.
+  const shown = sessions.slice(0, MAX_TREE_SESSIONS);
+  const hidden = sessions.length - shown.length;
+
+  const roots = buildForest(shown);
   const lines = treeLines(roots, currentId);
   const ordered = flatten(roots);
 
@@ -138,6 +153,7 @@ export function renderBranchTree(
     ...lines,
     "```",
     ...detail,
+    ...(hidden > 0 ? [`(${hidden} sesi lebih lama tidak ditampilkan)`] : []),
     "",
     "Buat cabang: `/branch <nama>`",
   ].join("\n");

@@ -48,11 +48,18 @@ export async function replyStored(
   ctx: ReplyableCtx,
   store: (messageId: string, text: string) => void,
   text: string,
-  other?: SendOptions
+  other?: SendOptions,
+  /**
+   * Teks yang DICATAT, kalau berbeda dari yang dikirim. Dipakai jalur yang
+   * mengirim hasil escape MarkdownV2: riwayat harus terbaca sebagai apa yang
+   * ditulis, bukan sebagai bentuk kawatnya (aturan yang sama dipegang
+   * `storeOutgoing`). Kosong berarti keduanya sama -- kasus mayoritas.
+   */
+  storeText?: string
 ): Promise<void> {
   const sent = await ctx.reply(text, other);
   try {
-    store(String(sent.message_id), text);
+    store(String(sent.message_id), storeText ?? text);
   } catch (err) {
     // TIDAK PERNAH fatal. Pesannya sudah ada di HP user; melempar di sini akan
     // membuat pemanggil mengira pengirimannya gagal lalu mengulanginya, dan

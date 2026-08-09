@@ -9,6 +9,7 @@ import {
   TREE_WIDTH,
 } from "../../../src/engine/slash/branch-tree";
 import type { SessionInfo } from "../../../src/engine/sessions";
+import { commonMarkToMarkdownV2 } from "../../../src/engine/markdown";
 
 /**
  * Pagar utamanya LEBAR. Terukur di HP user 2026-08-09: Telegram tidak punya
@@ -125,4 +126,25 @@ test("nol sesi dijawab kalimat, bukan blok kode kosong", () => {
   const out = renderBranchTree([], undefined, NOW);
   expect(out).not.toContain("```");
   expect(out).toContain("/branch <nama>");
+});
+
+test("sesi berlebih dipotong, dan jumlah yang disembunyikan DIKATAKAN", () => {
+  const many = Array.from({ length: 20 }, (_, i) => s(`id-${i}`, `sesi-${i}`, i));
+  const out = renderBranchTree(many, undefined, NOW);
+  expect(out).toContain("(8 sesi lebih lama tidak ditampilkan)");
+  expect(out).toContain("sesi-11");
+  expect(out).not.toContain("sesi-12");
+});
+
+// Bug produksi 2026-08-10: pohonnya dikirim TANPA parse_mode, sehingga ```
+// tampil apa adanya, kolomnya kacau karena font proporsional, dan Telegram
+// menjadikan tiap "/clear" di dalam pohon sebagai tautan command. Test ini
+// mengunci bentuk KAWATNYA, bukan cuma bentuk CommonMark-nya.
+test("hasil render tetap jadi blok kode sesudah dikonversi ke MarkdownV2", () => {
+  const wire = commonMarkToMarkdownV2(
+    renderBranchTree([s("a", "kenalan", 5), s("b", "anak", 2, "a")], "b", NOW)
+  );
+  expect(wire).toContain("```");
+  // Di dalam blok kode, garis pohon tidak boleh ikut di-escape jadi "\├".
+  expect(wire).toContain("└ anak");
 });
