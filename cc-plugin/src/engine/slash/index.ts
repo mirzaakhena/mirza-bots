@@ -27,20 +27,10 @@ export type SlashOutcome =
   /** Slash tak dikenal: minta konfirmasi sebelum disuntik. */
   | { kind: "confirm"; command: string; prompt: string };
 
-export type SlashDeps = {
-  botHome: string;
-  newId: () => string;
-  /**
-   * Nama sesi yang sudah dipakai -- dipakai `/branch` untuk menolak nama
-   * bentrok. Sebuah FUNGSI, bukan array: daftarnya dibaca dari disk dan hanya
-   * satu cabang di sini yang membutuhkannya, jadi jalur lain tidak boleh ikut
-   * membayar pembacaan itu.
-   */
-  sessionTitles: () => string[];
-};
+export type SlashDeps = { botHome: string; newId: () => string };
 
-/** `handleConfirm` tidak pernah butuh daftar sesi -- ia meneruskan apa adanya. */
-export type ConfirmDeps = Pick<SlashDeps, "botHome" | "newId">;
+/** Nama lama, dipertahankan supaya pemanggil tidak perlu diubah dua kali. */
+export type ConfirmDeps = SlashDeps;
 
 /** Prefiks tombol "Kirim". Dihitung: 9 byte. */
 export const SLASH_CALLBACK_GO = "slash:go:";
@@ -128,19 +118,14 @@ export function handleSlash(text: string, deps: SlashDeps): SlashOutcome {
     const v = validateSessionName(c.arg);
     if (!v.ok) return { kind: "error", message: v.message };
 
-    // Claude Code memakai nama yang kita berikan APA ADANYA -- ia hanya
-    // menambahkan "(Branch n)" kalau namanya TIDAK diberikan (terukur
-    // 2026-08-09). Jadi tanpa pagar ini, dua sesi bisa bernama sama, dan
-    // picker /switch jadi ambigu justru saat ia paling dibutuhkan.
-    if (deps.sessionTitles().includes(v.name)) {
-      return {
-        kind: "error",
-        message:
-          `Nama \`${v.name}\` sudah dipakai sesi lain. ` +
-          `Pakai nama lain supaya dua sesi tidak bernama sama.`,
-      };
-    }
-
+    // Nama yang kembar TIDAK ditolak (keputusan user 2026-08-10). Identitas
+    // sesi adalah `session_id`; nama cuma label, dan tombol pindah membawa
+    // UUID utuh -- jadi nama kembar tidak pernah bisa menyesatkan mesin.
+    // Yang tersisa cuma menyesatkan mata, dan itu diselesaikan di TAMPILAN:
+    // `branch-tree.ts` menempelkan id pendek hanya pada label yang kembar.
+    //
+    // Efeknya di sini: cabang ini murni lagi -- tidak ada pembacaan disk saat
+    // user mengetik `/branch <nama>`.
     writePending(slashDirIn(deps.botHome), { command: `/branch ${v.name}` }, deps.newId());
     return { kind: "sent", ack: `🌿 Branch baru: \`${v.name}\`` };
   }

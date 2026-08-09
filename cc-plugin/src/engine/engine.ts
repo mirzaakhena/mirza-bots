@@ -17,7 +17,7 @@ import {
 import { installBridge, buildBridgeCommand, pluginRootFrom } from "./context/install";
 import { readCapturedStatus } from "./context/status-file";
 import { readSessionNameFromTranscript } from "./context/session-title";
-import { listSessions, takenTitles, type SessionInfo } from "./sessions";
+import { listSessions, type SessionInfo } from "./sessions";
 import { renderBranchTree } from "./slash/branch-tree";
 import { commonMarkToMarkdownV2 } from "./markdown";
 import { replyStored, type ReplyableCtx } from "./reply-stored";
@@ -683,10 +683,6 @@ export function startEngine(botHome: string): EngineStart {
     const outcome = handleSlash(ctx.message.text, {
       botHome,
       newId: () => randomUUID(),
-      // Dibaca hanya kalau cabang /branch bernama benar-benar dijalankan --
-      // sebuah fungsi, bukan nilai, supaya /rename dan /new tidak ikut
-      // membayar pembacaan direktori transcript.
-      sessionTitles: () => takenTitles(sessionsNow()),
     });
     if (outcome.kind === "passthrough") return;
     const store = storeCtxReply(String(ctx.chat.id));

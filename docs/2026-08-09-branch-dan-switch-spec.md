@@ -40,9 +40,13 @@ Ini perilaku Claude Code, bukan bug `mirza-bots`, dan tidak ada yang bisa diperb
 
 *Konsekuensi yang diterima sadar:* perilaku bawaan `/branch` milik CC tidak lagi bisa dicapai dari Telegram. Perilaku itu justru yang menghasilkan `/clear (Branch 4)`, jadi yang hilang tidak berharga.
 
-**K-2. Nama yang bentrok DITOLAK.** Kalau sudah ada sesi lain dengan nama itu, `/branch <nama>` ditolak sebelum apa pun dikirim ke TUI.
+**K-2. Nama yang kembar TIDAK ditolak; pembeda diletakkan di tampilan.** *(diubah 2026-08-10, menggantikan keputusan sebaliknya pada 2026-08-09)*
 
-*Alasan:* CC memakai nama yang kita berikan **apa adanya, tanpa menambah suffix** — berbeda dari `/branch` polos. Meneruskan nama yang sudah dipakai menghasilkan dua sesi bernama sama, dan picker `/switch` menjadi ambigu justru pada saat ia paling dibutuhkan.
+`/branch <nama>` diteruskan apa adanya walau ada sesi lain bernama sama. Yang kembar diberi id pendek di daftar detail — hanya yang kembar, supaya nama yang unik tetap bersih.
+
+*Alasan perubahan:* identitas sesi adalah `session_id`; nama cuma label. Sejak tombol pindah membawa UUID utuh (K-7), nama kembar tidak pernah bisa menyesatkan mesin — tap nomor 3 pindah ke id yang persis itu. Yang tersisa hanya menyesatkan mata, dan itu masalah tampilan, bukan alasan melarang.
+
+*Efek samping yang bagus:* pagar bentrok adalah satu-satunya alasan lapisan slash membaca disk saat user mengetik `/branch <nama>`. Menghapusnya membuat cabang itu murni lagi.
 
 **K-3. Validasi nama memakai `validateSessionName` yang sudah ada.** Satu aturan nama untuk `/rename`, `/new`, dan `/branch` — tiga pintu tidak boleh berbeda pendapat soal nama yang sah.
 
@@ -140,5 +144,5 @@ Batas yang sudah ada dan tetap berlaku: `callback_data` maksimum 55 byte sesudah
 
 ## 8. Status implementasi
 
-- **cc-plugin 0.35.0** — `sessions.ts`, `branch-tree.ts`, `/branch` (dua cabang: pohon silsilah & bernama), dan tombol pindah sesi (`/resume <id>`) selesai. 650 test hijau, `bunx tsc --noEmit` bersih.
+- **cc-plugin 0.36.0** — `sessions.ts`, `branch-tree.ts`, `/branch` (dua cabang: pohon silsilah & bernama), tombol pindah sesi (`/resume <id>`), dan disambiguasi nama kembar selesai. 650 test hijau, `bunx tsc --noEmit` bersih.
 - **`/switch`** — belum dikerjakan. Ia menunggu picker terpaginasi, komponen yang belum ada sama sekali di repo ini, dan dua ujicoba di bagian 7.

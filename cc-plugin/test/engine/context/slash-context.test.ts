@@ -23,7 +23,7 @@ describe("/context di lapisan slash", () => {
   // Code. Ia dijawab dari data lokal.
   test("TIDAK menulis pending -- tidak pernah dikirim ke CC", () => {
     const dir = mkdtempSync(join(tmpdir(), "slash-ctx-"));
-    const out = handleSlash("/context", { botHome: dir, newId: () => "id-1", sessionTitles: () => [] });
+    const out = handleSlash("/context", { botHome: dir, newId: () => "id-1" });
 
     expect(out).toEqual({ kind: "local", command: "/context" });
 
@@ -35,7 +35,7 @@ describe("/context di lapisan slash", () => {
 
   test("argumen diabaikan, tetap local", () => {
     const dir = mkdtempSync(join(tmpdir(), "slash-ctx-"));
-    expect(handleSlash("/context apa saja", { botHome: dir, newId: () => "x", sessionTitles: () => [] })).toEqual({
+    expect(handleSlash("/context apa saja", { botHome: dir, newId: () => "x" })).toEqual({
       kind: "local",
       command: "/context",
     });
@@ -43,7 +43,7 @@ describe("/context di lapisan slash", () => {
 
   test("/rename masih menulis pending -- jalur command lain tidak ikut berubah", () => {
     const dir = mkdtempSync(join(tmpdir(), "slash-ctx-"));
-    const out = handleSlash("/rename halo", { botHome: dir, newId: () => "id-2", sessionTitles: () => [] });
+    const out = handleSlash("/rename halo", { botHome: dir, newId: () => "id-2" });
     expect(out.kind).toBe("sent");
     expect(readdirSync(slashDirIn(dir))).toHaveLength(1);
   });

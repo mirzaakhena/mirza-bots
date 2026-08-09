@@ -201,9 +201,19 @@ export function renderBranchTree(
   const lines = treeLines(roots, currentId);
   const ordered = flatten(roots);
 
+  // Nama kembar TIDAK dilarang (keputusan user 2026-08-10): identitas sesi
+  // adalah `session_id`, dan tombol pindah membawa UUID utuh, jadi kembar tidak
+  // pernah menyesatkan mesin. Yang tersisa menyesatkan MATA -- dua baris
+  // bertulisan sama -- dan itu diselesaikan di sini: id pendek ditempel HANYA
+  // pada yang kembar, supaya nama yang unik tetap bersih.
+  const counts = new Map<string, number>();
+  for (const s of ordered) counts.set(labelOf(s), (counts.get(labelOf(s)) ?? 0) + 1);
+
   const detail = ordered.map((s, i) => {
     const here = s.id === currentId ? " ← sekarang" : "";
-    return `${i + 1}. ${labelOf(s)} · ${shortAge(s.mtime, now)}${here}`;
+    const label = labelOf(s);
+    const disambig = (counts.get(label) ?? 0) > 1 ? ` (${s.id.slice(0, 8)})` : "";
+    return `${i + 1}. ${label}${disambig} · ${shortAge(s.mtime, now)}${here}`;
   });
 
   const text = [

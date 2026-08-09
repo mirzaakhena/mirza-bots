@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listSessions, takenTitles } from "../../src/engine/sessions";
+import { listSessions } from "../../src/engine/sessions";
 
 /**
  * `sessions.ts` adalah fondasi bersama `/branch` dan `/switch`. Kalau ia salah
@@ -85,13 +85,4 @@ test("urut mtime, terbaru dulu", () => {
   writeTranscript(d, UUID_A, [{ type: "user" }], 1_600_000_000);
   writeTranscript(d, UUID_B, [{ type: "user" }], 1_700_000_000);
   expect(listSessions(d).map((s) => s.id)).toEqual([UUID_B, UUID_A]);
-});
-
-test("takenTitles: sesi tanpa nama tidak ikut, dan duplikat tidak digandakan", () => {
-  const taken = takenTitles([
-    { id: "1", title: "kenalan", mtime: 2, forkedFrom: null },
-    { id: "2", title: null, mtime: 1, forkedFrom: null },
-    { id: "3", title: "kenalan", mtime: 0, forkedFrom: null },
-  ]);
-  expect(taken).toEqual(["kenalan"]);
 });

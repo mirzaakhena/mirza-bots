@@ -194,3 +194,21 @@ test("sesi berjalan yang tidak dikenal -> tampilkan apa adanya, jangan kosong", 
   const all = [s("a", "satu", 5)];
   expect(lineageOf(all, "tidak-ada")).toEqual(all);
 });
+
+// Nama kembar tidak dilarang, jadi tampilannya yang harus membedakan -- tapi
+// HANYA yang kembar: menempelkan id ke semua nama membuat yang unik ikut kotor.
+test("nama kembar dibedakan id pendek, nama unik tetap bersih", () => {
+  const out = renderBranchTree(
+    [
+      s("11111111-aaaa-bbbb-cccc-dddddddddddd", "riset-api", 60),
+      s("22222222-aaaa-bbbb-cccc-dddddddddddd", "riset-api", 30, "11111111-aaaa-bbbb-cccc-dddddddddddd"),
+      s("33333333-aaaa-bbbb-cccc-dddddddddddd", "lain-sendiri", 10, "11111111-aaaa-bbbb-cccc-dddddddddddd"),
+    ],
+    "22222222-aaaa-bbbb-cccc-dddddddddddd",
+    NOW
+  ).text;
+  expect(out).toContain("riset-api (11111111)");
+  expect(out).toContain("riset-api (22222222)");
+  expect(out).toContain("lain-sendiri ·");
+  expect(out).not.toContain("lain-sendiri (");
+});

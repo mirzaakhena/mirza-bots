@@ -16,7 +16,7 @@ import { slashDirIn } from "../../../src/engine/paths";
 
 let proj: string;
 let n = 0;
-const deps = () => ({ botHome: proj, newId: () => `id${++n}`, sessionTitles: () => [] as string[] });
+const deps = () => ({ botHome: proj, newId: () => `id${++n}` });
 
 beforeEach(() => { proj = mkdtempSync(join(tmpdir(), "slash-")); n = 0; });
 afterEach(() => rmSync(proj, { recursive: true, force: true }));
@@ -171,13 +171,13 @@ describe("handleSlash: /branch", () => {
     expect(berkasPending()).toHaveLength(1);
   });
 
-  // CC memakai nama yang diberikan APA ADANYA -- tanpa pagar ini dua sesi bisa
-  // bernama sama, dan picker /switch jadi ambigu justru saat paling dibutuhkan.
-  test("nama yang sudah dipakai ditolak SEBELUM payload lahir", () => {
-    const d = { ...deps(), sessionTitles: () => ["riset-api"] };
-    const r = handleSlash("/branch riset-api", d);
-    expect(r.kind).toBe("error");
-    expect(berkasPending()).toHaveLength(0);
+  // Keputusan user 2026-08-10: nama kembar TIDAK ditolak. Identitas sesi adalah
+  // session_id, dan tombol pindah membawa UUID utuh -- yang tersisa cuma
+  // menyesatkan mata, dan itu diselesaikan di tampilan.
+  test("nama yang sama dengan sesi lain TETAP diteruskan", () => {
+    const r = handleSlash("/branch riset-api", deps());
+    expect(r.kind).toBe("sent");
+    expect(berkasPending()).toHaveLength(1);
   });
 
   test("nama tidak sah memakai validator yang sama dengan /rename", () => {

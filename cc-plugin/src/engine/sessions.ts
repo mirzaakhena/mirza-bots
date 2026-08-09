@@ -9,9 +9,8 @@
  * sendiri, dua fitur bisa diam-diam berbeda pendapat -- dan bedanya baru
  * ketahuan saat user melihat sesi di satu tempat tapi tidak di tempat lain.
  *
- * Keduanya memakai irisan yang berbeda dari data yang sama: `/branch` cuma
- * butuh kumpulan `title` (untuk menolak nama yang bentrok), `/switch` butuh
- * semuanya.
+ * Keduanya memakai irisan yang berbeda dari data yang sama: `/branch` memakai
+ * silsilah sesi yang sedang berjalan, `/switch` seluruh daftarnya.
  *
  * ## Kenapa direktorinya DILEWATKAN, bukan dihitung
  *
@@ -144,18 +143,4 @@ export function listSessions(transcriptDir: string): SessionInfo[] {
     if (info) out.push(info);
   }
   return out.sort((a, b) => b.mtime - a.mtime);
-}
-
-/**
- * Nama-nama yang sudah dipakai. Dipakai `/branch` untuk menolak nama bentrok.
- *
- * Sesi tanpa nama tidak ikut: "belum dinamai" bukan sebuah nama, dan
- * memasukkannya akan membuat `/branch` menolak nama pertama yang sah.
- */
-export function takenTitles(sessions: SessionInfo[]): string[] {
-  const names: string[] = [];
-  for (const s of sessions) {
-    if (s.title !== null && !names.includes(s.title)) names.push(s.title);
-  }
-  return names;
 }
