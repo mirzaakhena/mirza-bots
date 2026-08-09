@@ -14,7 +14,8 @@
  * exactly this failure, so it needs a machine guarding it rather than the AI
  * remembering.
  */
-import { readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // How Claude Code names this plugin's MCP server. Both the inbound detection and
 // the reply-tool name are scoped by it, so the guard only ever speaks for its own
@@ -164,10 +165,27 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
   };
 }
 
+/**
+ * Nama aturan yang dijaga hook ini, dieja sebagai literal.
+ *
+ * SALINAN SENGAJA dari `src/server.ts`, sekelas dengan `AGENT_TURN_MARKER` di
+ * atas dan karena alasan yang sama: hook hanya boleh mengimpor `node:`, dan itu
+ * terukur -- versi pertama `session-start.ts` yang mengimpor modul engine tidak
+ * pernah menyala sama sekali. Yang menutup jaraknya adalah TEST yang mengadu
+ * daftar ini dengan `RULE_IDS`, bukan sebuah import.
+ *
+ * Yang disalin hanya NAMAnya, tidak pernah teks aturannya. Teks itu sudah
+ * dibayar sekali di `instructions` dan masih ada di context AI saat teguran
+ * datang; menyalinnya ke sini akan melahirkan salinan kedua yang bisa menyimpang
+ * dari aslinya, dan tidak ada yang akan gagal saat itu terjadi.
+ */
+export const RULE_REPLY_REQUIRED = "reply-required";
+export const RULE_NO_PROSE = "no-prose";
+
 export function decideStop(
   a: TranscriptAnalysis,
   stopHookActive: boolean
-): { block: boolean; reason?: string } {
+): { block: boolean; reason?: string; rule?: string } {
   // Claude Code telling us we already blocked once. Blocking again would trap
   // the session in a loop it has no way out of.
   if (stopHookActive) return { block: false };
@@ -199,13 +217,23 @@ export function decideStop(
   // datang paling banyak sekali per giliran.
   if (a.latestReplyIdx > a.latestInboundIdx) {
     if (a.latestProseIdx > a.latestInboundIdx && !proseMilikGiliranAgent) {
+      // NAMA ATURAN + IMPERATIF, tanpa mengulang alasannya (spec 2026-08-10
+      // K-5). Alasannya sudah dibayar sekali di `instructions`, dan kalimat
+      // aslinya masih ada di context AI di bawah judul `Rule no-prose:` --
+      // mengulangnya di sini memindahkan biaya sekali-sesi menjadi biaya
+      // per-kejadian, sekaligus melahirkan salinan kedua yang bisa menyimpang.
+      //
+      // Yang TIDAK boleh ikut dipangkas: nama tool. Pelajaran dari pengingat
+      // penamaan sesi 2026-08-06 -- pengingat yang menyuruh sebuah TINDAKAN
+      // harus ikut menyebut ALATnya, karena "AI pasti tahu caranya" terbukti
+      // asumsi yang tidak berlaku (bot uji sempat membaca source code repo
+      // sebelum menemukan tool yang dimaksud).
       return {
         block: true,
+        rule: RULE_NO_PROSE,
         reason:
-          "This turn is under the terse-turn protocol and you already answered via " +
-          `\`reply\` (${REPLY_TOOL}) -- but you also wrote prose into the transcript. ` +
-          "Nobody reads it: the person is on Telegram, and every later turn of this " +
-          'session keeps paying for those tokens. End the turn with a single "." and ' +
+          `You broke rule \`${RULE_NO_PROSE}\`: you answered via \`reply\` (${REPLY_TOOL}) and ` +
+          'then also wrote prose into the transcript. End the turn now with a single "." and ' +
           "nothing else. Do NOT explain this, and do NOT send another `reply` about it.",
       };
     }
@@ -214,10 +242,11 @@ export function decideStop(
 
   return {
     block: true,
+    rule: RULE_REPLY_REQUIRED,
     reason:
-      "This message came from Telegram and the person who sent it is AFK -- they do not see this " +
-      "transcript. You have not sent a reply since their last message. Send your answer now via " +
-      `the \`reply\` tool (${REPLY_TOOL}), then end the turn.`,
+      `You broke rule \`${RULE_REPLY_REQUIRED}\`: nothing has gone out since the last message ` +
+      `from the person. Send your answer now via the \`reply\` tool (${REPLY_TOOL}), then end ` +
+      "the turn.",
   };
 }
 
@@ -238,6 +267,40 @@ export function parseHookInput(raw: string): any | null {
     return JSON.parse(raw.replace(/^﻿/, ""));
   } catch {
     return null;
+  }
+}
+
+/**
+ * Satu baris catatan pelanggaran. Murni, jadi bentuknya bisa diuji tanpa disk.
+ *
+ * Sengaja JSONL dan bukan prosa: yang akan ditanyakan padanya adalah HITUNGAN
+ * ("aturan mana yang paling sering dilanggar"), dan hitungan menuntut bentuk
+ * yang bisa dibaca mesin. Prosa yang enak dibaca manusia harus di-parse ulang
+ * dengan regex begitu ada yang benar-benar menghitungnya.
+ */
+export function violationLine(rule: string, sessionId: string | undefined, iso: string): string {
+  return `${JSON.stringify({ ts: iso, rule, ...(sessionId !== undefined ? { session_id: sessionId } : {}) })}\n`;
+}
+
+/**
+ * Menempelkan satu baris ke `logs/violations.jsonl` di folder bot.
+ *
+ * Menumpang pola yang sudah dipakai `session-start.ts` (`logs/session-hook.log`),
+ * TERMASUK `try/catch` yang menelan segalanya: pencatatan tidak boleh pernah
+ * menjadi penyebab hook ini gagal. Yang dijaga hook adalah kesunyian ke user;
+ * kehilangan satu baris log jauh lebih murah daripada kehilangan teguran.
+ *
+ * Belum ada yang membacanya, dan itu disengaja (spec 2026-08-10, bagian 5):
+ * menambah pembaca berarti menambah keputusan tentang apa yang ditampilkan dan
+ * di mana, dan itu belum perlu.
+ */
+function recordViolation(botHome: string, rule: string, sessionId: string | undefined): void {
+  try {
+    const dir = join(botHome, "logs");
+    mkdirSync(dir, { recursive: true });
+    appendFileSync(join(dir, "violations.jsonl"), violationLine(rule, sessionId, new Date().toISOString()));
+  } catch {
+    // Sengaja bisu.
   }
 }
 
@@ -264,7 +327,15 @@ function main(): void {
 
   const decision = decideStop(analyzeTranscript(lines), false);
   if (!decision.block) return;
+  // Teguran keluar LEBIH DULU. Ia satu-satunya keluaran yang menanggung tugas
+  // hook ini; catatannya menyusul, dan kalaupun gagal tidak ada yang hilang
+  // selain satu baris angka.
   process.stdout.write(JSON.stringify({ decision: "block", reason: decision.reason }));
+  if (decision.rule !== undefined) {
+    const botHome = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+    const sessionId = typeof input?.session_id === "string" ? input.session_id : undefined;
+    recordViolation(botHome, decision.rule, sessionId);
+  }
 }
 
 if (import.meta.main) main();

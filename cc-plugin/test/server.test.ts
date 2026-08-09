@@ -10,6 +10,9 @@ import {
   AGENT_TURN_MARKER,
   SYSTEM_TURN_MARKER,
   markerFor,
+  INSTRUCTION_BLOCKS,
+  RULE_IDS,
+  renderInstructions,
 } from "../src/server";
 import { slashDirIn } from "../src/engine/paths";
 import type { Engine } from "../src/engine/engine";
@@ -883,5 +886,62 @@ describe("SERVER_INSTRUCTIONS memperkenalkan penulis ketiga", () => {
   test("kontrak prioritas diserahkan ke AI, dan boleh dikembalikan ke user", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/does NOT rank what to do first/);
     expect(SERVER_INSTRUCTIONS).toContain("hand it back to the user");
+  });
+});
+
+// Aturan punya NAMA, bukan nomor (spec 2026-08-10 K-1), dan penjelasan TIDAK
+// ikut dinamai (K-2). Yang dijaga di sini bukan nama-namanya, melainkan bahwa
+// perakitannya tidak bisa diam-diam menghasilkan aturan yang tidak pernah
+// sampai ke pembacanya -- kegagalan yang persis sebentuk dengan `[from: system]`
+// yang dikirim bertahun-tahun tanpa pernah diperkenalkan (0.37.2).
+describe("aturan bernama di dalam instructions", () => {
+  test("setiap aturan muncul dengan judulnya, bukan cuma ada di daftar", () => {
+    expect(RULE_IDS.length).toBeGreaterThan(0);
+    for (const id of RULE_IDS) {
+      expect(SERVER_INSTRUCTIONS).toContain(`Rule ${id}:`);
+    }
+  });
+
+  // Nama yang kembar membuat rujukan jadi ambigu justru saat ia paling
+  // dibutuhkan: teguran menyebut satu nama, dan pembacanya menemukan dua
+  // kalimat berbeda yang sama-sama mengaku bernama itu.
+  test("nama aturan unik", () => {
+    expect(new Set(RULE_IDS).size).toBe(RULE_IDS.length);
+  });
+
+  // Bentuk namanya dijaga sekarang, saat baru enam, supaya penambah berikutnya
+  // punya cetakan. Daftar yang bentuknya tidak pernah dijaga akan menumbuhkan
+  // `replyLength`, `Reply_Length`, dan `reply length` dalam setahun.
+  test("nama aturan berbentuk kebab-case", () => {
+    for (const id of RULE_IDS) {
+      expect(id).toMatch(/^[a-z]+(-[a-z]+)*$/);
+    }
+  });
+
+  // Pemecahan paragraf terse-turn (K-3). Kalau keduanya menyatu lagi, catatan
+  // pelanggaran berhenti bisa membedakan "diam" dari "boros" -- dua kegagalan
+  // yang obatnya berlawanan, dan satu-satunya alasan pemecahan ini ada.
+  test("diam dan boros adalah dua aturan terpisah", () => {
+    expect(RULE_IDS).toContain("reply-required");
+    expect(RULE_IDS).toContain("no-prose");
+  });
+
+  test("blok penjelasan TIDAK diberi judul aturan", () => {
+    const penjelasan = INSTRUCTION_BLOCKS.filter((b) => b.id === undefined);
+
+    expect(penjelasan.length).toBeGreaterThan(0);
+    for (const b of penjelasan) {
+      expect(SERVER_INSTRUCTIONS).toContain(b.text);
+      expect(SERVER_INSTRUCTIONS).not.toContain(`Rule undefined: ${b.text}`);
+    }
+  });
+
+  // Perakitannya murni, jadi bisa diadu dengan daftar karangan -- tanpa itu
+  // satu-satunya cara mengujinya adalah lewat teks nyata, yang ikut berubah
+  // tiap kali kalimat aturannya disunting.
+  test("renderInstructions memberi judul hanya pada yang ber-id", () => {
+    const out = renderInstructions([{ text: "penjelasan" }, { id: "contoh", text: "aturan" }]);
+
+    expect(out).toBe("penjelasan\n\nRule contoh: aturan");
   });
 });

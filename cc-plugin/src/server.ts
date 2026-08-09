@@ -139,27 +139,112 @@ export function formatSendResult(result: {
 //       * the AI could not calibrate trust on a marker it was never told
 //         exists. For the other two it at least knows the string means
 //         something and can be sceptical when a user types one by hand.
-export const SERVER_INSTRUCTIONS = [
-  `Every message pushed into this session starts with a marker that names where it came from -- ${USER_TURN_MARKER} or ${AGENT_TURN_MARKER}. A third marker, ${SYSTEM_TURN_MARKER}, never leads a message but can appear inside one. The marker says who sent it, never what to do about it; the rules below are what each source means. A turn with no marker at all was typed by the user directly into this terminal, and is an ordinary turn.`,
-  "",
-  "Messages that arrive from Telegram appear in this session as notifications. The person who sent one is AFK -- away from this terminal, reading Telegram on their phone. They never see this transcript, so a `reply` tool call is the only thing that reaches them; your transcript output does not, however well written it is.",
-  "",
-  `When an incoming message is prefixed with ${USER_TURN_MARKER}, do not write prose in that turn. Say everything you have to say through the \`reply\` tool, then end the turn with a single "." and nothing else. Never restate, summarize, or explain in the transcript what you already sent via \`reply\` -- nobody reads it, and it keeps costing tokens on every later turn of the session.`,
-  "",
-  "This applies only to turns carrying that prefix. Turns the user types directly into this terminal are ordinary turns -- answer those in full, as usual.",
-  "",
-  "Send a short `reply` saying what you are about to do BEFORE your first tool call of the turn, and keep it to one line. They are AFK: while you work they see nothing at all, so they cannot tell whether you are working or hung, and the wait feels identical either way. Skip this only when your whole answer is text with no tool calls at all.",
-  "",
-  `Keep replies short: aim for about ${REPLY_LENGTH_GUIDELINE} characters. This is a chat on someone's phone, not a document. If a topic needs more room, send several focused \`reply\` calls that each stand on their own rather than one long block. Nothing is ever rejected for being long -- a reply past Telegram's hard limit is split into several messages automatically -- so this is about what is worth reading, not about what fits.`,
-  "",
-  `A message prefixed with ${AGENT_TURN_MARKER} came from ANOTHER BOT, not from the user. Do NOT answer it with \`reply\` -- that tool writes to the user's Telegram chat, and inter-bot traffic must stay off it. Answer with \`agent_send\` instead, addressed back to \`from_bot\`, with \`in_reply_to\` set to the \`agent_message_id\` from the meta and \`hop_count\` one higher than the incoming one.`,
-  "",
-  "This rule is not blocked at the tool level -- there are legitimate cases where a bot-to-bot exchange surfaces something only the user can decide, and `reply` staying silent would be worse than it speaking up. But know the consequence before you do it: if a turn triggered by an inter-bot message calls `reply` anyway, the engine automatically prepends a visible Indonesian marker to the outgoing text naming which bot triggered it -- you cannot suppress or edit it away. So the rule above still stands as the default; only reach for `reply` here when the user genuinely needs to see this, not as a shortcut.",
-  "",
-  `Only reply to an inter-bot message when its meta says \`expects_reply: true\`. Anything else is one-way -- answering it anyway costs the other bot a turn it did not ask for. And a reply may never itself ask for a reply; that rule is enforced, not merely advised.`,
-  "",
-  `A block marked ${SYSTEM_TURN_MARKER} is written by the machine -- never by a person, never by another bot. It never arrives on its own: it is attached to a message that was already coming. It states a condition that is true RIGHT NOW rather than something that happened, so it stops appearing by itself once the condition no longer holds -- there is nothing to remember between turns. It does NOT rank what to do first: that judgment is yours, and you may hand it back to the user.`,
-].join("\n");
+/**
+ * Satu blok teks di dalam `instructions`.
+ *
+ * `id` yang ADA berarti blok ini sebuah ATURAN, dan itu namanya. `id` yang
+ * tidak ada berarti blok ini PENJELASAN, dan ia keluar apa adanya.
+ *
+ * Dua bentuk, bukan satu, dan itu keputusan (spec 2026-08-10 K-2): dari
+ * sepuluh paragraf yang ada saat spec ditulis hanya lima yang benar-benar
+ * aturan. Sisanya menerangkan -- siapa yang AFK, kenapa aturan antar-bot
+ * sengaja tidak diblokir, apa arti penanda mesin. Melabeli penjelasan sebagai
+ * `Rule` adalah berbohong kepada pembacanya, dan pembacanya BERTINDAK atas
+ * label itu.
+ */
+export interface InstructionBlock {
+  id?: string;
+  text: string;
+}
+
+/**
+ * Kenapa NAMA, bukan nomor (spec 2026-08-10 K-1).
+ *
+ * Usul awal user 2026-08-09 adalah `Rule #1`..`Rule #n`. Nomor bersifat
+ * posisional: menyisipkan satu aturan di tengah membuat setiap rujukan `#3` di
+ * hook, test, dan komentar menunjuk aturan yang salah -- DAN TIDAK ADA YANG
+ * ERROR. Itu kelas kegagalan yang repo ini sudah punya doktrinnya (dua literal
+ * yang harus sama akan menyimpang diam-diam), dan `engine/reminders.ts` sudah
+ * memakai nama sejak awal, jadi konvensinya tinggal dipakai konsisten.
+ *
+ * Nama juga sudah menjelaskan dirinya: `no-prose` terbaca sebelum kalimat
+ * aturannya dibaca, `#3` tidak pernah.
+ */
+export const INSTRUCTION_BLOCKS: InstructionBlock[] = [
+  {
+    text: `Every message pushed into this session starts with a marker that names where it came from -- ${USER_TURN_MARKER} or ${AGENT_TURN_MARKER}. A third marker, ${SYSTEM_TURN_MARKER}, never leads a message but can appear inside one. The marker says who sent it, never what to do about it; the rules below are what each source means. A rule carries a name of its own, and the machine uses that name when it tells you one was broken. A turn with no marker at all was typed by the user directly into this terminal, and is an ordinary turn.`,
+  },
+  {
+    text: "Messages that arrive from Telegram appear in this session as notifications. The person who sent one is AFK -- away from this terminal, reading Telegram on their phone. They never see this transcript, so a `reply` tool call is the only thing that reaches them; your transcript output does not, however well written it is.",
+  },
+  // DIPECAH DUA (spec 2026-08-10 K-3). Sebelumnya satu paragraf memuat dua
+  // kewajiban, sementara reply-guard sudah lama memperlakukannya sebagai dua
+  // pelanggaran terpisah dengan dua pesan berbeda -- teksnya yang tertinggal,
+  // bukan mesinnya. Satu id untuk dua kewajiban akan membuat catatan
+  // pelanggaran tidak bisa membedakan "diam" dari "boros", dua kegagalan yang
+  // obatnya berlawanan.
+  {
+    id: "reply-required",
+    text: `When an incoming message is prefixed with ${USER_TURN_MARKER}, say everything you have to say through the \`reply\` tool. That call is the only thing that reaches the person: a turn that ends without one leaves them with silence they cannot tell apart from a broken bot.`,
+  },
+  {
+    id: "no-prose",
+    text: `On that same turn, do not also write prose into the transcript: end the turn with a single "." and nothing else. Never restate, summarize, or explain there what you already sent via \`reply\` -- nobody reads it, and it keeps costing tokens on every later turn of the session.`,
+  },
+  {
+    text: "Both rules apply only to turns carrying that prefix. Turns the user types directly into this terminal are ordinary turns -- answer those in full, as usual.",
+  },
+  {
+    id: "ack-first",
+    text: "Send a short `reply` saying what you are about to do BEFORE your first tool call of the turn, and keep it to one line. They are AFK: while you work they see nothing at all, so they cannot tell whether you are working or hung, and the wait feels identical either way. Skip this only when your whole answer is text with no tool calls at all.",
+  },
+  {
+    id: "reply-length",
+    text: `Keep replies short: aim for about ${REPLY_LENGTH_GUIDELINE} characters. This is a chat on someone's phone, not a document. If a topic needs more room, send several focused \`reply\` calls that each stand on their own rather than one long block. Nothing is ever rejected for being long -- a reply past Telegram's hard limit is split into several messages automatically -- so this is about what is worth reading, not about what fits.`,
+  },
+  {
+    id: "inter-bot-channel",
+    text: `A message prefixed with ${AGENT_TURN_MARKER} came from ANOTHER BOT, not from the user. Do NOT answer it with \`reply\` -- that tool writes to the user's Telegram chat, and inter-bot traffic must stay off it. Answer with \`agent_send\` instead, addressed back to \`from_bot\`, with \`in_reply_to\` set to the \`agent_message_id\` from the meta and \`hop_count\` one higher than the incoming one.`,
+  },
+  {
+    text: "That rule is not blocked at the tool level -- there are legitimate cases where a bot-to-bot exchange surfaces something only the user can decide, and `reply` staying silent would be worse than it speaking up. But know the consequence before you do it: if a turn triggered by an inter-bot message calls `reply` anyway, the engine automatically prepends a visible Indonesian marker to the outgoing text naming which bot triggered it -- you cannot suppress or edit it away. So the rule above still stands as the default; only reach for `reply` here when the user genuinely needs to see this, not as a shortcut.",
+  },
+  {
+    id: "expects-reply-only",
+    text: `Only reply to an inter-bot message when its meta says \`expects_reply: true\`. Anything else is one-way -- answering it anyway costs the other bot a turn it did not ask for. And a reply may never itself ask for a reply; that rule is enforced, not merely advised.`,
+  },
+  {
+    text: `A block marked ${SYSTEM_TURN_MARKER} is written by the machine -- never by a person, never by another bot. It never arrives on its own: it is attached to a message that was already coming. It states a condition that is true RIGHT NOW rather than something that happened, so it stops appearing by itself once the condition no longer holds -- there is nothing to remember between turns. It does NOT rank what to do first: that judgment is yours, and you may hand it back to the user.`,
+  },
+];
+
+/**
+ * Nama setiap aturan, dalam urutan tulisnya. Diekspor untuk SATU pemakai: test
+ * yang mengadu id yang dieja hook dengan id yang benar-benar ada di sini.
+ *
+ * Hook TIDAK boleh mengimpornya -- ia hanya boleh mengimpor `node:`, dan itu
+ * terukur, bukan selera: versi pertama `hooks/session-start.ts` yang mengimpor
+ * modul engine tidak pernah menyala sama sekali padahal terlihat terpasang.
+ * Jadi salinan tidak terhindarkan; yang bisa dipilih hanyalah salinan yang
+ * dijaga atau salinan yang tidak.
+ */
+export const RULE_IDS: string[] = INSTRUCTION_BLOCKS.flatMap((b) =>
+  b.id === undefined ? [] : [b.id]
+);
+
+/**
+ * Murni, supaya seluruh perakitannya bisa diuji tanpa menyalakan server MCP.
+ *
+ * Aturan diberi awalan `Rule <id>:` supaya rujukan dari hook punya tempat
+ * mendarat: saat teguran berbunyi "you broke rule `no-prose`", kalimat aslinya
+ * masih ada di context AI dan bisa dibaca ulang PERSIS, bukan lewat parafrase
+ * yang bisa menyimpang.
+ */
+export function renderInstructions(blocks: InstructionBlock[]): string {
+  return blocks.map((b) => (b.id === undefined ? b.text : `Rule ${b.id}: ${b.text}`)).join("\n\n");
+}
+
+export const SERVER_INSTRUCTIONS = renderInstructions(INSTRUCTION_BLOCKS);
 
 /**
  * `botHome` diterima terpisah dari `backend`, dan itu bukan kelebihan

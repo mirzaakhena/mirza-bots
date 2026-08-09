@@ -91,13 +91,16 @@ describe("giliran yang dipicu bot lain", () => {
     const lines = [...TURN_AGENT, inboundTelegram()];
     const d = decideStop(analyzeTranscript(lines), false);
     expect(d.block).toBe(true);
-    expect(d.reason).toContain("AFK");
+    // Dulu menuntut kata "AFK". Sejak spec 2026-08-10 pesan teguran berisi NAMA
+    // ATURAN + imperatif dan tidak lagi mengulang alasannya, jadi yang dijaga
+    // di sini adalah aturan mana yang ditagih -- bukan kata mana yang dipakai.
+    expect(d.rule).toBe("reply-required");
   });
 
   test("prosa sesudah reply di giliran TELEGRAM tetap diblokir seperti sebelumnya", () => {
     const lines = [inboundTelegram(), replyTurn(), proseTurn("penjelasan panjang")];
     const d = decideStop(analyzeTranscript(lines), false);
     expect(d.block).toBe(true);
-    expect(d.reason).toContain("already answered");
+    expect(d.rule).toBe("no-prose");
   });
 });

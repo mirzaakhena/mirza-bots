@@ -1,5 +1,13 @@
 import { describe, test, expect } from "bun:test";
-import { analyzeTranscript, decideStop, parseHookInput } from "../hooks/reply-guard";
+import {
+  analyzeTranscript,
+  decideStop,
+  parseHookInput,
+  violationLine,
+  RULE_NO_PROSE,
+  RULE_REPLY_REQUIRED,
+} from "../hooks/reply-guard";
+import { RULE_IDS } from "../src/server";
 import { USER_TURN_MARKER, AGENT_TURN_MARKER } from "../src/server";
 import { AGENT_TURN_MARKER as GUARD_AGENT_MARKER } from "../hooks/reply-guard";
 
@@ -142,6 +150,7 @@ describe("decideStop", () => {
 
     expect(decision.block).toBe(true);
     expect(decision.reason).toContain("reply");
+    expect(decision.rule).toBe(RULE_REPLY_REQUIRED);
   });
 
   test("does not block once a reply followed the inbound", () => {
@@ -261,7 +270,12 @@ describe("pelanggaran terse-turn", () => {
     );
 
     expect(decision.block).toBe(true);
-    expect(decision.reason).toContain("terse-turn");
+    // Dulu menuntut kata "terse-turn". Sejak spec 2026-08-10 pesan teguran
+    // menyebut NAMA ATURAN, dan nama itulah yang harus sampai -- ia yang bisa
+    // dirujuk balik ke kalimat aslinya di `instructions`, dan ia juga yang
+    // dicatat ke `logs/violations.jsonl`.
+    expect(decision.rule).toBe(RULE_NO_PROSE);
+    expect(decision.reason).toContain(RULE_NO_PROSE);
   });
 
   test("prosa dari giliran LAMA tidak menghukum giliran sekarang", () => {
@@ -280,5 +294,50 @@ describe("pelanggaran terse-turn", () => {
     );
 
     expect(decision.block).toBe(false);
+  });
+});
+
+// INI PENGGANTI IMPORT YANG DILARANG.
+//
+// Hook hanya boleh mengimpor `node:` -- terukur, bukan selera: versi pertama
+// session-start.ts yang mengimpor modul engine tidak pernah menyala sama sekali
+// padahal terlihat terpasang. Jadi nama aturan HARUS dieja dua kali, di sini dan
+// di src/server.ts, dan satu-satunya yang bisa menjaga keduanya tetap sama
+// adalah test. Tanpanya, mengganti nama sebuah aturan membuat hook menyebut nama
+// yang tidak lagi ada -- dan tidak ada yang gagal.
+describe("nama aturan yang dieja hook tetap sama dengan yang di server.ts", () => {
+  test("setiap id yang dirujuk hook benar-benar ada", () => {
+    for (const id of [RULE_REPLY_REQUIRED, RULE_NO_PROSE]) {
+      expect(RULE_IDS).toContain(id);
+    }
+  });
+});
+
+// Bentuk catatannya diuji terpisah dari penulisannya ke disk: yang bisa salah
+// diam-diam adalah BENTUKNYA -- baris yang tidak bisa di-parse mesin -- bukan
+// pemanggilan appendFileSync.
+describe("violationLine", () => {
+  test("satu baris JSON per pelanggaran, diakhiri newline", () => {
+    const line = violationLine(RULE_NO_PROSE, "sesi-1", "2026-08-10T01:00:00.000Z");
+
+    expect(line.endsWith("\n")).toBe(true);
+    expect(JSON.parse(line)).toEqual({
+      ts: "2026-08-10T01:00:00.000Z",
+      rule: RULE_NO_PROSE,
+      session_id: "sesi-1",
+    });
+  });
+
+  // `session_id` yang tidak diketahui DIHILANGKAN, bukan ditulis sebagai
+  // "undefined". Baris yang memuat string "undefined" akan terlihat seperti
+  // sesi yang benar-benar bernama begitu saat nanti dihitung -- kekeliruan yang
+  // sebentuk dengan yang dijaga forwarder push di server.ts.
+  test("sesi yang tidak diketahui tidak melahirkan field palsu", () => {
+    const parsed = JSON.parse(
+      violationLine(RULE_REPLY_REQUIRED, undefined, "2026-08-10T01:00:00.000Z")
+    );
+
+    expect(parsed).toEqual({ ts: "2026-08-10T01:00:00.000Z", rule: RULE_REPLY_REQUIRED });
+    expect("session_id" in parsed).toBe(false);
   });
 });
