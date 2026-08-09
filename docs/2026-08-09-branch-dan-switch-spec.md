@@ -68,9 +68,17 @@ Naik lewat `forkedFrom` sampai leluhur paling atas, lalu turunkan seluruh keturu
 
 *Batas yang disadari:* tombol hanya untuk sesi LAIN. Tombol yang tidak melakukan apa-apa mengajari user bahwa tombol di sini boleh tidak berarti.
 
-**K-8. `/switch` menampilkan sesi lintas silsilah, beberapa yang terbaru saja.**
+**K-8. `/switch` menampilkan sesi lintas silsilah, delapan yang terbaru, DATAR.**
 
-Pembagian perannya jadi tegas: `/branch` = dalam satu rumpun, `/switch` = antar rumpun. Belum diimplementasikan.
+Pembagian perannya tegas: `/branch` = dalam satu rumpun (bergaris, hierarkis), `/switch` = antar rumpun (datar, tanpa hierarki).
+
+*Kenapa datar, bukan dikelompokkan per rumpun:* satu tombol harus berarti satu sesi yang namanya terlihat. Kalau tombolnya mewakili rumpun, tap-nya harus MENEBAK sesi mana di dalam rumpun itu yang dimaksud — dan tombol yang menebak lebih buruk daripada daftar yang sedikit lebih panjang.
+
+*Kenapa delapan:* itu batas satu baris tombol Telegram. Daftar yang lebih panjang dari tombolnya memuat baris yang tidak bisa ditap, dan baris seperti itu terbaca sebagai kerusakan.
+
+*Yang tetap dibawa dari hierarki:* satu tanda `⑂` pada sesi yang punya cabang, supaya user tahu di mana `/branch` akan memperlihatkan lebih banyak. Dihitung dari SELURUH daftar, bukan dari delapan yang tampil — cabang yang lahir lama tetap membuat induknya bercabang.
+
+*Argumen diabaikan:* memilih sesi lewat nama akan ambigu justru karena nama kembar sekarang diizinkan (K-2).
 
 **K-5. `/switch` melayani sesi apa pun asal-usulnya.** Sesi dari `/clear` dan dari `/branch` sama-sama berkas `.jsonl` di folder project yang sama; tidak ada pembedaan.
 
@@ -144,5 +152,5 @@ Batas yang sudah ada dan tetap berlaku: `callback_data` maksimum 55 byte sesudah
 
 ## 8. Status implementasi
 
-- **cc-plugin 0.36.0** — `sessions.ts`, `branch-tree.ts`, `/branch` (dua cabang: pohon silsilah & bernama), tombol pindah sesi (`/resume <id>`), dan disambiguasi nama kembar selesai. 650 test hijau, `bunx tsc --noEmit` bersih.
-- **`/switch`** — belum dikerjakan. Ia menunggu picker terpaginasi, komponen yang belum ada sama sekali di repo ini, dan dua ujicoba di bagian 7.
+- **cc-plugin 0.37.0** — SELESAI seluruhnya: `sessions.ts`, `branch-tree.ts`, `switch-list.ts`, `/branch`, `/switch`, tombol pindah sesi, disambiguasi nama kembar. 657 test hijau, `bunx tsc --noEmit` bersih.
+- **Dua ujicoba di bagian 7 sudah dijalankan 2026-08-10 dan lulus** di `mirza_02_bot`: tap tombol → `/resume <id>` → hook `source=resume` → pengumuman "Sesi sekarang" mengikuti; dan `/branch <nama>` tetap menulis `forkedFrom`, terbukti dari pohon `something └ x1 └ x2` yang garisnya hanya bisa lahir dari field itu.

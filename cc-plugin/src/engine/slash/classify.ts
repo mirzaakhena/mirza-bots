@@ -7,14 +7,15 @@
  * daftar tidak menghilangkan kemampuannya, hanya menambah satu tap.
  *
  * /context bergabung di tahap 2: ia dikenal, tapi TIDAK menghasilkan payload
- * wrapper sama sekali -- dijawab dari data lokal (spec tahap 1 §4). /switch
- * masih menunggu daftar sesi bernama dan punya rencana sendiri.
+ * wrapper sama sekali -- dijawab dari data lokal (spec tahap 1 §4). /branch dan
+ * /switch menyusul di tahap 3, keduanya juga dijawab dari data lokal: yang
+ * dikirim ke wrapper hanya hasil TAP tombolnya.
  */
 // URUTANNYA berarti: menu "/" di Telegram lahir dari daftar ini apa adanya,
 // jadi yang di depan muncul paling atas di HP user. /context ditaruh pertama
 // atas permintaan user -- ia yang paling sering dilihat sekilas, dan tidak
 // menuntut argumen apa pun.
-export const KNOWN_COMMANDS = ["/context", "/rename", "/new", "/branch"] as const;
+export const KNOWN_COMMANDS = ["/context", "/rename", "/new", "/branch", "/switch"] as const;
 
 export type Classified =
   | { kind: "known"; name: string; arg: string }

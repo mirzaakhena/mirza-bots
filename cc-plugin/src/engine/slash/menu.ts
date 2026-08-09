@@ -28,6 +28,7 @@ export const COMMAND_DESCRIPTIONS: Record<string, string> = {
   "/rename": "Rename the current session",
   "/new": "Start a fresh named session",
   "/branch": "Branch this session (or show the tree)",
+  "/switch": "Switch to another session",
 };
 
 export function buildCommandMenu(): BotCommandEntry[] {

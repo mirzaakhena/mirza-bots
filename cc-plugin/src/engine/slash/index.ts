@@ -105,6 +105,11 @@ export function handleSlash(text: string, deps: SlashDeps): SlashOutcome {
   // pemetaan, dan pagar itu harus tetap berlaku untuk yang lain.
   if (c.name === "/context") return { kind: "local", command: "/context" };
 
+  // Dijawab dari daftar sesi di disk; yang berangkat ke wrapper hanya hasil TAP
+  // tombolnya (handleSwitch). Argumen apa pun diabaikan -- memilih sesi lewat
+  // nama akan ambigu justru karena nama kembar sekarang diizinkan (K-2).
+  if (c.name === "/switch") return { kind: "local", command: "/switch" };
+
   // `/branch` juga duduk di sini, bukan di mapKnown, karena dua cabangnya
   // butuh hal yang mapKnown sengaja tidak punya: bentuk polosnya dijawab dari
   // disk (pohon sesi), dan bentuk bernamanya perlu tahu nama apa saja yang

@@ -19,6 +19,7 @@ import { readCapturedStatus } from "./context/status-file";
 import { readSessionNameFromTranscript } from "./context/session-title";
 import { listSessions, type SessionInfo } from "./sessions";
 import { renderBranchTree } from "./slash/branch-tree";
+import { renderSwitchList } from "./slash/switch-list";
 import { commonMarkToMarkdownV2 } from "./markdown";
 import { replyStored, type ReplyableCtx } from "./reply-stored";
 import { renderContext } from "./context/render";
@@ -587,6 +588,57 @@ export function startEngine(botHome: string): EngineStart {
     return dir === null ? [] : listSessions(dir);
   };
 
+  /**
+   * Mengirim satu daftar sesi (`/branch` atau `/switch`) beserta tombol
+   * pindahnya.
+   *
+   * Satu fungsi untuk dua perintah dengan sengaja: keduanya memakai penomoran
+   * yang sama, batas tombol yang sama, dan aturan "jangan beri tombol untuk
+   * sesi yang sedang dibuka" yang sama. Dua salinan akan berbeda pendapat
+   * suatu hari, dan bedanya berupa nomor tombol yang menunjuk baris lain.
+   *
+   * `replyStored` biasa mengirim TANPA parse_mode -- benar untuk ack satu
+   * baris, salah di sini: pohon `/branch` bergantung pada blok kode, dan tanpa
+   * parse_mode ``` tampil apa adanya sementara Telegram menjadikan tiap
+   * "/clear" di dalamnya tautan command (terlihat 2026-08-10 di HP user).
+   * Yang DIKIRIM bentuk kawatnya, yang DICATAT CommonMark aslinya -- aturan
+   * yang sama dipegang `storeOutgoing`.
+   */
+  const sendListing = async (
+    ctx: ReplyableCtx,
+    store: (messageId: string, text: string) => void,
+    text: string,
+    ordered: SessionInfo[],
+    here: string | undefined
+  ): Promise<void> => {
+    // Tombol hanya untuk sesi LAIN: pindah ke sesi yang sedang dibuka tidak
+    // melakukan apa-apa, dan tombol yang tidak melakukan apa-apa mengajari
+    // user bahwa tombol di sini boleh tidak berarti. Nomornya tetap nomor dari
+    // daftar, jadi tombol dan badan pesan tidak bisa menunjuk baris berbeda.
+    const rows: { text: string; callback_data: string }[][] = [];
+    ordered.forEach((sesi, i) => {
+      if (sesi.id === here) return;
+      const button = {
+        text: String(i + 1),
+        callback_data: `${SLASH_CALLBACK_SWITCH}${sesi.id}`,
+      };
+      const row = rows[rows.length - 1];
+      if (row && row.length < 8) row.push(button);
+      else rows.push([button]);
+    });
+
+    await replyStored(
+      ctx,
+      store,
+      commonMarkToMarkdownV2(text),
+      {
+        parse_mode: "MarkdownV2",
+        ...(rows.length > 0 ? { reply_markup: { inline_keyboard: rows } } : {}),
+      },
+      text
+    );
+  };
+
   const deliver = async (msg: NormalizedMessage, opts: IncomingOptions = {}) => {
     const accepted = await deliverIncoming(msg, deps, lastChatByBot, opts);
     if (accepted && opts.pushToAi !== false) typing.start(msg.chatId);
@@ -695,44 +747,13 @@ export function startEngine(botHome: string): EngineStart {
       return;
     }
     if (outcome.kind === "local") {
-      if (outcome.command === "/branch") {
-        // `replyStored` mengirim TANPA parse_mode -- itu benar untuk ack satu
-        // baris, tapi salah di sini: pohonnya bergantung pada blok kode. Tanpa
-        // parse_mode, ``` tampil apa adanya, kolomnya kacau karena font
-        // proporsional, dan Telegram malah menjadikan tiap "/clear" di dalam
-        // pohon sebagai tautan command (terlihat 2026-08-10 di HP user).
-        //
-        // Yang DIKIRIM bentuk kawatnya, yang DICATAT CommonMark aslinya --
-        // aturan yang sama dipegang `storeOutgoing`: riwayat harus terbaca
-        // sebagai apa yang ditulis.
+      if (outcome.command === "/branch" || outcome.command === "/switch") {
         const here = readCurrentSessionId(botHome);
-        const view = renderBranchTree(sessionsNow(), here, Date.now());
-        // Tombol hanya untuk sesi LAIN: pindah ke sesi yang sedang dibuka
-        // tidak melakukan apa-apa, dan tombol yang tidak melakukan apa-apa
-        // mengajari user bahwa tombol di sini boleh tidak berarti. Nomornya
-        // tetap nomor dari daftar, jadi tombol dan badan pesan tidak bisa
-        // menunjuk baris yang berbeda.
-        const rows: { text: string; callback_data: string }[][] = [];
-        view.ordered.forEach((sesi, i) => {
-          if (sesi.id === here) return;
-          const row = rows[rows.length - 1];
-          const button = {
-            text: String(i + 1),
-            callback_data: `${SLASH_CALLBACK_SWITCH}${sesi.id}`,
-          };
-          if (row && row.length < 8) row.push(button);
-          else rows.push([button]);
-        });
-        await replyStored(
-          ctx,
-          store,
-          commonMarkToMarkdownV2(view.text),
-          {
-            parse_mode: "MarkdownV2",
-            ...(rows.length > 0 ? { reply_markup: { inline_keyboard: rows } } : {}),
-          },
-          view.text
-        );
+        const view =
+          outcome.command === "/branch"
+            ? renderBranchTree(sessionsNow(), here, Date.now())
+            : renderSwitchList(sessionsNow(), here, Date.now());
+        await sendListing(ctx, store, view.text, view.ordered, here);
         return;
       }
       await replyLocalContext(ctx, botHome, store);

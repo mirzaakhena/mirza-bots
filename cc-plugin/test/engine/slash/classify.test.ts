@@ -56,9 +56,14 @@ describe("classify", () => {
 
   // Daftarnya dikunci PERSIS, bukan sekadar "memuat" -- supaya menambah
   // sesuatu ke KNOWN_COMMANDS tidak pernah bisa terjadi diam-diam. /context
-  // masuk di tahap 2, /branch di tahap 3; /switch belum, ia menunggu picker
-  // terpaginasi yang belum ada di repo ini.
-  test("daftar dikenal persis empat di tahap ini", () => {
-    expect([...KNOWN_COMMANDS].sort()).toEqual(["/branch", "/context", "/new", "/rename"]);
+  // masuk di tahap 2; /branch dan /switch di tahap 3.
+  test("daftar dikenal persis lima di tahap ini", () => {
+    expect([...KNOWN_COMMANDS].sort()).toEqual([
+      "/branch",
+      "/context",
+      "/new",
+      "/rename",
+      "/switch",
+    ]);
   });
 });
