@@ -836,7 +836,20 @@ cc-wrapper/
 ├── src/typer.ts                rencana pengetikan (chunking + jeda submit)
 ├── src/startup.ts              --continue, gerbang trust, percobaan ulang
 └── src/pty.ts                  satu-satunya berkas yang menyentuh terminal
+
+scripts/
+└── migrasi-dari-marketplace.ps1  memindahkan satu bot harian dari sistem lama
 ```
+
+`scripts/migrasi-dari-marketplace.ps1` memigrasikan **satu** bot dari
+`mirza-marketplace/plugins/telegram` ke sistem ini: token direuse, riwayat tidak
+dibawa. Dry-run adalah default; `-Apply` mengerjakannya. Ia **menolak** kalau ada
+berkas `.claude/channels/` yang masih dipegang proses lain — sesi Claude Code
+yang hidup memegang `messages.db`, dan Windows menolak memindahkannya, jadi tanpa
+gerbang itu `Move-Item` berhenti di tengah dan meninggalkan arsip setengah jadi.
+Urutan lengkapnya, termasuk kenapa `mirza-bot` dijalankan **dua kali** pada
+migrasi pertama, ada di
+[`docs/2026-08-10-migrasi-bot-06-spec.md`](docs/2026-08-10-migrasi-bot-06-spec.md).
 
 Modul di kedua paket sengaja dibagi jadi **murni** dan **menyentuh dunia**.
 Hampir semua aturan hidup di yang murni, sehingga bisa diuji tanpa jaringan,
