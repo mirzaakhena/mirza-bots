@@ -10,9 +10,9 @@ Temuan diurut dari yang paling bisa dibuktikan ke yang paling spekulatif. Setiap
 entri menyebut **bukti**, bukan kecurigaan — dan yang belum diverifikasi
 dinyatakan begitu apa adanya.
 
-> **Status per 2026-08-10 (0.39.0):** **A-2, A-3, dan A-10 sudah diperbaiki**
-> (keputusan user: dahulukan yang bisa meledak sewaktu-waktu). Sisanya masih
-> terbuka. Lihat catatan **✅ SUDAH DIPERBAIKI** di masing-masing entri.
+> **Status per 2026-08-10 (0.40.0):** **A-1, A-2, A-3, A-7, A-8, dan A-10 sudah
+> diperbaiki.** Sisanya masih terbuka. Lihat catatan **✅ SUDAH DIPERBAIKI** di
+> masing-masing entri.
 
 ---
 
@@ -46,9 +46,22 @@ berkas itu sendiri sudah menyatakan niat yang berlawanan:
 
 Niatnya benar; yang bocor justru berkasnya, bukan kalimatnya.
 
-**Perbaikan:** tahan baris log di memori, dan tulis hanya sesudah
-`isBotFolder(cwd)` menjawab `true`. Untuk folder non-bot: tidak menulis apa pun,
-dan itu memang yang komentarnya maksudkan.
+**✅ SUDAH DIPERBAIKI (0.40.0).** `isBotFolder` naik ke baris pertama
+`runHook`, sebelum apa pun — termasuk sebelum stdin dibaca. Folder yang bukan
+bot tidak menerima satu byte pun.
+
+Alurnya dipindahkan ke `runHook(deps)` dengan efek sampingnya disuntik, supaya
+URUTANNYA yang diuji, bukan cuma hasilnya: sebuah test memastikan `note` dan
+`writeSessionId` tidak pernah dipanggil untuk folder non-bot. Diperiksa dengan
+mutation check — mencabut satu baris guard itu membuat testnya merah.
+
+"fired" tetap dicatat untuk folder bot, dan di situlah ia memang berguna:
+membedakan hook yang gagal dari hook yang tidak pernah menyala. Untuk folder
+yang bukan bot tidak ada yang bisa gagal, jadi tidak ada yang perlu dibedakan.
+
+⚠️ Berkas `logs/session-hook.log` yang TERLANJUR ada di `bot-01`..`bot-06`
+tidak ikut dihapus — membersihkan folder orang lain bukan hak perbaikan ini.
+Hapus sendiri kalau mengganggu.
 
 ---
 
@@ -213,9 +226,19 @@ Dijalankan begitu dari terminal biasa (tanpa `CLAUDE_PROJECT_DIR`), ia membuat
 empat folder + satu database kosong **di dalam repo**, lalu gagal. Tidak
 tertangkap `.gitignore` kecuali `*.db`.
 
-**Perbaikan:** doctor harus **read-only**. Baca config dulu; `ensureBotDirs`
-tidak punya urusan di sini sama sekali, dan `openConversationsDb` sebaiknya
-diganti pemeriksaan "berkasnya ada?" + buka read-only.
+**✅ SUDAH DIPERBAIKI (0.40.0).** Alurnya pindah ke `runDoctor(botHome, deps)`
+di `engine/doctor.ts` dengan `loadConfig` dan `openDb` disuntik, jadi urutannya
+bisa diuji: sebuah test memastikan `openDb` **tidak pernah dipanggil** ketika
+config gagal dibaca. Mutation check dilakukan — membalik urutannya membuat
+testnya merah.
+
+`ensureBotDirs` dicabut seluruhnya dari `bin/doctor.ts`: membuat folder adalah
+pekerjaan engine, yang melakukannya karena ia memang akan memakainya.
+`buildDoctorReport` kini menerima `Database | null`, dan database yang belum ada
+dilaporkan `conversationsReady: false` alih-alih dibuat.
+
+Diverifikasi hidup: dijalankan dari `cc-plugin/` ia menjawab `{"ok": false, …}`,
+keluar dengan kode 1, dan `ls` sesudahnya tidak menemukan satu folder baru pun.
 
 ---
 
@@ -231,8 +254,10 @@ console.log(plan.newConfig.body.replace(/^/gm, "    "));
 dirancang supaya aman dijalankan dulu — mencetak token ke terminal, scrollback,
 dan berkas log mana pun yang menangkapnya.
 
-**Perbaikan:** cetak dengan token diredaksi; tulis nilai aslinya hanya ke berkas
-saat `--apply`.
+**✅ SUDAH DIPERBAIKI (0.40.0).** `redactTokenInConfig` — murni, diuji. Yang
+ditulis ke disk tetap nilai aslinya; yang diredaksi hanya yang dicetak. Polanya
+menelan pasangan escape, jadi token yang memuat kutip ganda tetap tertutup
+seluruhnya — penyaring yang berhenti di kutip pertama akan membocorkan sisanya.
 
 **Catatan tambahan:** README sendiri menandai skrip ini *"belum pernah dijalankan
 atas state nyata"*, dan `~/.claude/mirza-bots/` sudah tidak dipakai sejak
@@ -512,8 +537,9 @@ dikerjakan", bukan "berapa mudah dikerjakan".
 2. ~~**A-10**~~ ✅ **selesai 0.39.0** — dinaikkan dari urutan 5 setelah dipikir
    ulang: pemicunya bukan skenario eksotis melainkan cara pakai yang README
    sendiri dokumentasikan (`claude` langsung, tanpa wrapper).
-3. **A-1, A-7, A-8** — tiga efek samping yang menulis ke tempat yang bukan
-   haknya. Kecil satu-satu, dan justru karena itu tidak pernah dikerjakan.
+3. ~~**A-1, A-7, A-8**~~ ✅ **selesai 0.40.0** — tiga efek samping yang menulis
+   ke tempat yang bukan haknya. Kecil satu-satu, dan justru karena itu tidak
+   pernah dikerjakan.
 4. **A-5 + A-6 bersamaan** — jangan diperbaiki terpisah; A-5 sendirian
    memunculkan A-6.
 5. **A-9, C-7 (script `test`/`typecheck`), CI** — memasang pagar sebelum

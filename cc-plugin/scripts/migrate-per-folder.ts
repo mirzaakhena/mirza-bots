@@ -169,6 +169,22 @@ export function planMigration(stateRoot: string, botHome: string, botName: strin
 }
 
 /**
+ * Menutup nilai `token` untuk keperluan TAMPILAN. Murni.
+ *
+ * Yang ditulis ke disk tetap nilai aslinya; yang diredaksi hanya yang dicetak.
+ * Bedanya penting: dry-run ADA supaya aman dijalankan lebih dulu, dan justru ia
+ * yang mencetak token bot ke terminal, scrollback, dan berkas log mana pun yang
+ * kebetulan menangkap keluarannya.
+ *
+ * Pola `"(?:[^"\\]|\\.)*"` menelan pasangan escape, jadi token yang memuat
+ * kutip ganda tetap tertutup seluruhnya -- penyaring yang berhenti di kutip
+ * pertama akan membocorkan sisanya.
+ */
+export function redactTokenInConfig(body: string): string {
+  return body.replace(/("token"\s*:\s*)"(?:[^"\\]|\\.)*"/g, '$1"<redacted>"');
+}
+
+/**
  * Menyalin. Tidak memindahkan, tidak menghapus, dan aman diulang.
  *
  * Idempotent karena setiap langkahnya menulis isi yang sama ke tempat yang
@@ -199,7 +215,7 @@ function main(): void {
   console.log(apply ? "MENYALIN:" : "RENCANA (dry-run, tidak ada yang ditulis):");
   for (const { from, to } of plan.copies) console.log(`  ${from}\n    -> ${to}`);
   console.log(`  config baru -> ${plan.newConfig.path}`);
-  console.log(plan.newConfig.body.replace(/^/gm, "    "));
+  console.log(redactTokenInConfig(plan.newConfig.body).replace(/^/gm, "    "));
 
   if (plan.warnings.length > 0) {
     console.log("\nPERINGATAN:");

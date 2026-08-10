@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openConversationsDb } from "../../src/engine/db/conversations-schema";
-import { buildDoctorReport } from "../../src/engine/doctor";
+import { buildDoctorReport, runDoctor } from "../../src/engine/doctor";
 import { botPidPathIn } from "../../src/engine/paths";
 
 function botFolder(name = "bot-01"): string {
@@ -51,5 +51,61 @@ describe("doctor report", () => {
     const report = buildDoctorReport(home, openConversationsDb(":memory:"), "0.1.0");
 
     expect(report.lock).toEqual({ bot: "bot-01", pid: 999999, alive: false });
+  });
+});
+
+describe("runDoctor: memeriksa dulu, tidak menulis apa pun", () => {
+  // Urutan lamanya `ensureBotDirs()` -> `loadConfig()`, jadi menjalankan doctor
+  // dari folder yang BUKAN bot membuat data/ inbox/ slash/ logs/ dan sebuah
+  // conversations.db kosong di sana LEBIH DULU, baru gagal. Laporan yang
+  // meninggalkan jejak di folder yang sedang ia periksa bukan laporan.
+  const okConfig = () => ({ token: "t", allowFrom: ["1"] });
+
+  test("folder tanpa config yang sah dijawab error, dan database tidak pernah disentuh", () => {
+    let opened = 0;
+    const result = runDoctor(botFolder(), {
+      loadConfig: () => {
+        throw new Error("Cannot read config");
+      },
+      openDb: () => {
+        opened++;
+        return null;
+      },
+      version: "0.1.0",
+    });
+
+    expect(result.ok).toBe(false);
+    // Yang dijaga bukan pesannya, melainkan bahwa jalur penulisan tidak pernah
+    // dicapai: config diperiksa DULU.
+    expect(opened).toBe(0);
+  });
+
+  test("config yang sah menghasilkan laporan lengkap", () => {
+    const result = runDoctor(botFolder("bot-88"), {
+      loadConfig: okConfig,
+      openDb: () => openConversationsDb(":memory:"),
+      version: "0.9.0",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.bot).toBe("bot-88");
+      expect(result.conversationsReady).toBe(true);
+      expect(result.version).toBe("0.9.0");
+    }
+  });
+
+  test("database yang belum ada dilaporkan belum siap, bukan dibuat", () => {
+    // "Belum ada" adalah keadaan sah untuk bot yang belum pernah menerima
+    // pesan. Membuatnya di sini akan membuat doctor menjawab "siap" untuk
+    // sesuatu yang baru saja ia bikin sendiri.
+    const result = runDoctor(botFolder(), {
+      loadConfig: okConfig,
+      openDb: () => null,
+      version: "0.1.0",
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.conversationsReady).toBe(false);
   });
 });

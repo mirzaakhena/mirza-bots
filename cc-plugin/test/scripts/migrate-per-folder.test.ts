@@ -2,7 +2,11 @@ import { test, expect, describe } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { planMigration, applyMigration } from "../../scripts/migrate-per-folder";
+import {
+  planMigration,
+  applyMigration,
+  redactTokenInConfig,
+} from "../../scripts/migrate-per-folder";
 
 /**
  * Sebuah tiruan `~/.claude/mirza-bots` seperti bentuknya pada 2026-08-04:
@@ -183,5 +187,47 @@ describe("applyMigration", () => {
 
     expect(existsSync(join(home, "config.json"))).toBe(true);
     expect(existsSync(join(home, "session.id"))).toBe(false);
+  });
+});
+
+describe("redactTokenInConfig (token tidak boleh ikut tercetak)", () => {
+  // Dry-run ADA supaya aman dijalankan lebih dulu -- dan justru ia yang
+  // mencetak token bot ke terminal, scrollback, dan berkas log mana pun yang
+  // kebetulan menangkap keluarannya. Yang ditulis ke DISK tetap nilai aslinya;
+  // yang diredaksi hanya yang DITAMPILKAN.
+  test("nilai token diganti penanda", () => {
+    const body = JSON.stringify({ token: "8123456:AAH-rahasia", allowFrom: ["1"] }, null, 2);
+
+    const shown = redactTokenInConfig(body);
+
+    expect(shown).not.toContain("8123456:AAH-rahasia");
+    expect(shown).toContain("<redacted>");
+  });
+
+  test("field lain tidak ikut berubah", () => {
+    const body = JSON.stringify(
+      { token: "rahasia", allowFrom: ["111", "222"], timezone: "Asia/Jakarta" },
+      null,
+      2
+    );
+
+    const shown = redactTokenInConfig(body);
+
+    expect(shown).toContain("111");
+    expect(shown).toContain("222");
+    expect(shown).toContain("Asia/Jakarta");
+  });
+
+  test("body tanpa token dibiarkan apa adanya", () => {
+    const body = JSON.stringify({ allowFrom: ["1"] }, null, 2);
+    expect(redactTokenInConfig(body)).toBe(body);
+  });
+
+  test("token yang memuat kutip ganda tetap tertutup seluruhnya", () => {
+    // Token BotFather tidak memuat kutip, tapi berkas ini juga dipakai atas
+    // config yang disunting tangan -- dan penyaring yang berhenti di karakter
+    // pertama yang tak terduga akan membocorkan sisanya.
+    const body = '{\n  "token": "a\\"b",\n  "allowFrom": []\n}';
+    expect(redactTokenInConfig(body)).not.toContain("a\\\"b");
   });
 });

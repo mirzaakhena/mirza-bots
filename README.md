@@ -694,7 +694,7 @@ CLAUDE_PROJECT_DIR=C:/Users/Mirza/workspace/mirza_01_bot bun run doctor
   "bot": "mirza_01_bot",
   "lock": { "bot": "mirza_01_bot", "pid": 41234, "alive": true },
   "conversationsReady": true,
-  "version": "0.38.0"
+  "version": "0.40.0"
 }
 ```
 
@@ -703,9 +703,12 @@ melayani bot ini sekarang, dan `alive: false` dengan `pid` terisi berarti kuncin
 basi. Membedakan "tidak berjalan" dari "aman" adalah seluruh guna laporan ini,
 jadi keadaan kosong pun dilaporkan alih-alih dihilangkan.
 
-> ⚠️ `doctor` saat ini **membuat** `data/ inbox/ slash/ logs/` sebelum
-> memvalidasi config, jadi menjalankannya dari folder yang bukan bot akan
-> meninggalkan folder kosong di sana. Lihat `docs/2026-08-10-review-temuan-perbaikan.md` §A-7.
+**Doctor tidak menulis apa pun.** Ia memeriksa config **lebih dulu**, dan
+database yang belum ada dilaporkan `conversationsReady: false` alih-alih dibuat
+di tempat — laporan yang menjawab "siap" untuk sesuatu yang baru saja ia bikin
+sendiri tidak melaporkan apa pun. Menjalankannya dari folder yang bukan bot
+menjawab `{"ok": false, "error": …}` dan keluar dengan kode 1, tanpa
+meninggalkan jejak di folder itu.
 
 ---
 

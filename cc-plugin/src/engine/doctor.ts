@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
-import { botNameFrom, botPidPathIn } from "./paths";
+import { botNameFrom, botPidPathIn, configPathIn, conversationsDbPathIn } from "./paths";
 import type { DoctorReport, LockStatus } from "./types";
 
 /**
@@ -40,19 +40,69 @@ function readLock(botHome: string): LockStatus {
   return { bot, pid, alive };
 }
 
+/**
+ * `null` berarti berkas databasenya BELUM ADA, dan itu keadaan sah untuk bot
+ * yang belum pernah menerima pesan. Ia dilaporkan `conversationsReady: false` --
+ * bukan dibuat di tempat, karena doctor yang menjawab "siap" untuk sesuatu yang
+ * baru saja ia bikin sendiri tidak melaporkan apa pun.
+ */
 export function buildDoctorReport(
   botHome: string,
-  conversationsDb: Database,
+  conversationsDb: Database | null,
   version: string
 ): DoctorReport {
-  const convTableRows = conversationsDb
-    .query("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
-    .all();
+  const convTableRows =
+    conversationsDb === null
+      ? []
+      : conversationsDb
+          .query("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
+          .all();
 
   return {
     bot: botNameFrom(botHome),
     lock: readLock(botHome),
     conversationsReady: convTableRows.length === 1,
     version,
+  };
+}
+
+export type DoctorDeps = {
+  /** Melempar bila config tidak ada / rusak / bentuk lama. */
+  loadConfig: (path: string) => unknown;
+  /** `null` bila berkas databasenya belum ada. TIDAK boleh membuatnya. */
+  openDb: (path: string) => Database | null;
+  version: string;
+};
+
+export type DoctorResult = ({ ok: true } & DoctorReport) | { ok: false; error: string };
+
+/**
+ * Seluruh alur `bun run doctor`, dengan efek sampingnya disuntik.
+ *
+ * ## Kenapa urutannya yang dijaga, bukan sekadar hasilnya
+ *
+ * Urutan lamanya `ensureBotDirs()` lalu `loadConfig()`. Menjalankan doctor dari
+ * folder yang BUKAN bot karena itu membuat `data/ inbox/ slash/ logs/` dan
+ * sebuah `conversations.db` kosong di sana LEBIH DULU, baru gagal -- dan README
+ * sendiri menyuruh `cd cc-plugin && bun run doctor`, yaitu persis folder yang
+ * tidak boleh dikotori.
+ *
+ * Sekarang tidak ada folder yang dibuat sama sekali. Doctor MEMERIKSA; membuat
+ * folder adalah pekerjaan engine, dan engine yang melakukannya karena ia memang
+ * akan memakainya. Laporan yang meninggalkan jejak di tempat yang sedang ia
+ * periksa bukan laporan.
+ */
+export function runDoctor(botHome: string, deps: DoctorDeps): DoctorResult {
+  try {
+    // Config DULU. Ia satu-satunya yang bisa menjawab "folder ini bot atau
+    // bukan", dan tidak ada satu byte pun boleh ditulis sebelum ia menjawab.
+    deps.loadConfig(configPathIn(botHome));
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+
+  return {
+    ok: true,
+    ...buildDoctorReport(botHome, deps.openDb(conversationsDbPathIn(botHome)), deps.version),
   };
 }

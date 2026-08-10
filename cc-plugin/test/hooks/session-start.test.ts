@@ -1,8 +1,14 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseHookInput, sessionIdFrom, isBotFolder, botNameOf } from "../../hooks/session-start";
+import {
+  parseHookInput,
+  sessionIdFrom,
+  isBotFolder,
+  botNameOf,
+  runHook,
+} from "../../hooks/session-start";
 
 test("prefers the session id in the hook payload", () => {
   expect(
@@ -84,4 +90,79 @@ test("folder tanpa config.json bukan bot", () => {
 test("separator dan trailing slash tidak mengubah nama bot", () => {
   expect(botNameOf("C:\\Users\\Mirza\\workspace\\bot-uji")).toBe("bot-uji");
   expect(botNameOf("C:/Users/Mirza/workspace/bot-uji/")).toBe("bot-uji");
+});
+
+describe("runHook: folder yang bukan bot tidak disentuh sama sekali", () => {
+  // Terukur di workspace nyata 2026-08-10: bot-01..bot-06 punya
+  // logs/session-hook.log padahal tidak satu pun punya config.json. Sebabnya
+  // urutan -- `note(cwd, "fired")` dipanggil SEBELUM folder itu diperiksa, dan
+  // `note` sendiri melakukan mkdirSync. Jadi berkasnya lahir sebelum ada yang
+  // tahu folder itu bot atau bukan.
+  //
+  // Komentar di berkas hook-nya sendiri sudah menyatakan niat yang berlawanan:
+  // "saying so here would mean shouting in every unrelated project the user
+  // opens". Niatnya benar; yang bocor berkasnya.
+  function spies() {
+    const notes: string[] = [];
+    const writes: Array<{ path: string; id: string }> = [];
+    return {
+      notes,
+      writes,
+      note: (line: string) => notes.push(line),
+      writeSessionId: (path: string, id: string) => writes.push({ path, id }),
+    };
+  }
+
+  test("tidak mencatat apa pun, dan tidak membaca stdin", () => {
+    const s = spies();
+    let stdinReads = 0;
+
+    runHook({
+      cwd: tempFolder("project-orang-lain", false),
+      readStdin: () => {
+        stdinReads++;
+        return JSON.stringify({ session_id: "abc" });
+      },
+      env: {} as any,
+      note: s.note,
+      writeSessionId: s.writeSessionId,
+    });
+
+    expect(s.notes).toEqual([]);
+    expect(s.writes).toEqual([]);
+    expect(stdinReads).toBe(0);
+  });
+
+  test("folder bot mencatat dan menulis session.id", () => {
+    const s = spies();
+    const home = tempFolder("mirza_01_bot", true);
+
+    runHook({
+      cwd: home,
+      readStdin: () => JSON.stringify({ session_id: "abc-123", source: "clear" }),
+      env: {} as any,
+      note: s.note,
+      writeSessionId: s.writeSessionId,
+    });
+
+    expect(s.writes).toEqual([{ path: join(home, "session.id"), id: "abc-123" }]);
+    expect(s.notes.length).toBeGreaterThan(0);
+  });
+
+  test("folder bot tanpa session id tetap MENINGGALKAN jejak, dan tidak menulis", () => {
+    // Di sinilah "fired" berguna: bot folder yang gagal harus bisa dibedakan
+    // dari hook yang tidak pernah menyala.
+    const s = spies();
+
+    runHook({
+      cwd: tempFolder("mirza_01_bot", true),
+      readStdin: () => "{}",
+      env: {} as any,
+      note: s.note,
+      writeSessionId: s.writeSessionId,
+    });
+
+    expect(s.writes).toEqual([]);
+    expect(s.notes.length).toBeGreaterThan(0);
+  });
 });
