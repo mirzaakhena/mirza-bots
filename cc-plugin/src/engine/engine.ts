@@ -53,7 +53,7 @@ import {
   type PollerDeps,
 } from "./telegram/poller";
 import { classify } from "./slash/classify";
-import { buildCommandMenu } from "./slash/menu";
+import { buildCommandMenu, staleMenuScopes } from "./slash/menu";
 import {
   handleSlash,
   handleConfirm,
@@ -946,11 +946,28 @@ export function startEngine(botHome: string): EngineStart {
   // Sengaja TIDAK di-await dan tidak fatal: ia kosmetik. Bot yang menolak
   // melayani pesan karena gagal memperbarui daftar menu menukar sesuatu yang
   // penting dengan sesuatu yang tidak.
-  bot.api
-    .setMyCommands(buildCommandMenu())
-    .catch((err) =>
-      console.error(`cc-plugin: setMyCommands failed for ${botName} (continuing): ${err}`)
-    );
+  // Sengaja TIDAK di-await dan tidak fatal: ia kosmetik. Bot yang menolak
+  // melayani pesan karena gagal memperbarui daftar menu menukar sesuatu yang
+  // penting dengan sesuatu yang tidak.
+  //
+  // Mendaftarkan daftar yang benar TIDAK CUKUP. Telegram menyimpan menu per
+  // scope dan yang lebih spesifik MENANG (chat > all_private_chats > default),
+  // sementara `setMyCommands` tanpa `scope` menulis ke yang paling lemah.
+  // Sistem lama menulis ke scope yang kuat, sisanya hidup di server Telegram,
+  // dan tidak ada berkas di mesin ini yang memperlihatkannya -- di `bot-06`
+  // 2026-08-10 menu di HP user tidak berubah sedikit pun sesudah migrasi, tanpa
+  // satu pun error di mana pun. Karena itu pembersihannya dilakukan TIAP boot:
+  // idempoten, dan tidak bergantung pada siapa pun mengingatnya.
+  void (async () => {
+    await bot.api.setMyCommands(buildCommandMenu());
+    // Sesudah default ditulis, bukan sebelum: mengosongkan lapisan kuat lebih
+    // dulu meninggalkan sekejap di mana chat ini tidak punya menu sama sekali.
+    for (const scope of staleMenuScopes(config.allowFrom)) {
+      await bot.api.deleteMyCommands({ scope });
+    }
+  })().catch((err) =>
+    console.error(`cc-plugin: menu registration failed for ${botName} (continuing): ${err}`)
+  );
 
   startPolling(bot, {
     name: botName,

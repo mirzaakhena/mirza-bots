@@ -39,3 +39,46 @@ export function buildCommandMenu(): BotCommandEntry[] {
     description: COMMAND_DESCRIPTIONS[name] ?? "",
   }));
 }
+
+/** Scope `setMyCommands` yang lebih kuat daripada default. */
+export type StaleMenuScope = { type: "all_private_chats" } | { type: "chat"; chat_id: number };
+
+/**
+ * Scope yang harus DIKOSONGKAN supaya `buildCommandMenu()` benar-benar terlihat.
+ * Murni: menghasilkan daftar, tidak memanggil apa pun.
+ *
+ * Telegram menyimpan daftar command per scope dan yang lebih spesifik MENANG:
+ * `chat` > `all_private_chats` > `default`. Karena `setMyCommands` di sini
+ * dipanggil TANPA `scope`, ia hanya pernah menyentuh yang paling lemah -- jadi
+ * daftar yang benar bisa terdaftar dan tetap tak terlihat selamanya.
+ *
+ * Yang menaruh sisa di scope kuat adalah sistem lama, dan sengaja: per-chat
+ * untuk chat berpasangan (`plugins/telegram/server.ts:162`), `all_private_chats`
+ * untuk /start + /help. Sisanya hidup di **server Telegram**, bukan di berkas
+ * mana pun di mesin ini -- mengarsipkan state lama tidak bisa menghapusnya, dan
+ * reconcile yang tahu caranya (`server.ts:175`) hanya jalan selama plugin lama
+ * hidup, yaitu mati persis saat ia dibutuhkan.
+ *
+ * Terukur di `bot-06` 2026-08-10: scope chat memuat 10 command lama, menu di HP
+ * user tidak berubah sedikit pun sesudah migrasi, dan tidak ada satu pun error
+ * di mana pun. Karena itu pembersihan ini dilakukan tiap boot dan tidak
+ * bergantung pada siapa pun mengingatnya.
+ *
+ * `all_private_chats` selalu ikut walau `allowFrom` kosong: /start dan /help
+ * tinggal di sana tanpa peduli chat mana pun.
+ */
+export function staleMenuScopes(allowFrom: readonly string[]): StaleMenuScope[] {
+  const scopes: StaleMenuScope[] = [{ type: "all_private_chats" }];
+  const sudah = new Set<number>();
+  for (const raw of allowFrom) {
+    // Bukan angka berarti bukan chat id yang pernah dipakai Telegram: dilewati
+    // satu-satu, bukan menghentikan sisanya -- satu salah ketik tidak boleh
+    // membuat chat lain ikut tidak dibersihkan.
+    if (!/^-?\d+$/.test(raw.trim())) continue;
+    const chat_id = Number(raw.trim());
+    if (sudah.has(chat_id)) continue;
+    sudah.add(chat_id);
+    scopes.push({ type: "chat", chat_id });
+  }
+  return scopes;
+}

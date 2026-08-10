@@ -455,6 +455,23 @@ bekerja.
 | `/branch <nama>` | Buat cabang baru |
 | `/switch` | Daftar datar seluruh sesi + tombol pindah |
 
+**Mendaftarkan daftar yang benar tidak cukup.** Telegram menyimpan menu **per
+scope**, dan yang lebih spesifik menang: `chat` > `all_private_chats` >
+`default`. `setMyCommands` tanpa `scope` menulis ke yang **paling lemah**, jadi
+sisa di scope yang lebih kuat membuat daftar kita terdaftar dengan benar dan
+tetap **tak terlihat**. Sistem lama menulis ke scope kuat dengan sengaja
+(per-chat untuk chat berpasangan, `all_private_chats` untuk `/start` + `/help`),
+dan sisanya hidup di **server Telegram** — tidak ada berkas di mesin ini yang
+memperlihatkannya, jadi mengarsipkan state lama tidak bisa menghapusnya.
+
+Terukur di `bot-06` 2026-08-10: sesudah migrasi, menu di HP **tidak berubah
+sedikit pun**, dan tidak ada satu pun error di mana pun; scope `chat` masih
+memuat 10 command lama. Sejak 0.42.0 engine karena itu **mengosongkan scope yang
+lebih kuat tiap boot** — `all_private_chats` plus satu per chat id di
+`allowFrom`. Idempoten, dan tidak bergantung pada siapa pun mengingatnya saat
+memindahkan bot berikutnya. Urutannya default dulu, baru pengosongan: kebalik
+meninggalkan sekejap di mana chat itu tidak punya menu sama sekali.
+
 Slash yang **tidak** dikenal tidak ditolak — ia dapat tombol **Kirim/Batal**
 lebih dulu, karena sebagian slash CC interaktif dan injeksi yang membukanya lalu
 berhenti meninggalkan TUI menggantung.

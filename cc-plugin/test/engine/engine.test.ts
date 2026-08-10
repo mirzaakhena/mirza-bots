@@ -263,6 +263,93 @@ test("reply still refuses when conversations.db is genuinely empty, without blam
   res.engine.close();
 });
 
+/**
+ * Terukur di `bot-06` 2026-08-10, dan bentuk kegagalannya yang terburuk:
+ * sesudah migrasi, menu "/" di HP user tidak berubah SEDIKIT PUN, dan tidak ada
+ * satu pun error di mana pun. Sebabnya scope -- `setMyCommands` tanpa `scope`
+ * menulis ke lapisan paling LEMAH, sementara sistem lama meninggalkan 10
+ * command di scope `chat` yang MENANG. Sisa itu hidup di server Telegram, jadi
+ * tidak ada berkas di mesin ini yang bisa memperlihatkannya.
+ *
+ * Ini test WIRING, bukan aturan: aturannya diuji murni di
+ * `test/engine/slash/menu.test.ts`. Yang dijaga di sini cuma satu hal, dan itu
+ * hal yang paling gampang hilang -- engine benar-benar MEMANGGILNYA.
+ * Pembersihan yang benar tapi tidak pernah dipanggil terlihat persis seperti
+ * yang sudah beres.
+ */
+test("boot mengosongkan scope menu yang lebih kuat daripada default", async () => {
+  const calls: { path: string; body: unknown }[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (req) => {
+      const path = new URL(req.url).pathname;
+      let body: unknown;
+      try {
+        body = await req.json();
+      } catch {
+        // getUpdates dan kawan-kawan boleh datang tanpa body.
+      }
+      calls.push({ path, body });
+      if (path.endsWith("/getMe")) {
+        return Response.json({
+          ok: true,
+          result: { id: 1, is_bot: true, first_name: "t", username: "t_bot" },
+        });
+      }
+      if (path.endsWith("/getUpdates")) return Response.json({ ok: true, result: [] });
+      return Response.json({ ok: true, result: true });
+    },
+  });
+
+  const prevRoot = process.env.TELEGRAM_API_ROOT;
+  process.env.TELEGRAM_API_ROOT = `http://localhost:${server.port}`;
+  try {
+    const home = botFolder("bot-menu", {
+      token: "123:fake",
+      allowFrom: ["1121398977", "42"],
+    });
+    const res = startEngine(home);
+    if (!res.ok) throw new Error(res.message);
+
+    // Menunggu KEJADIAN, bukan durasi yang ditebak. Pemanggilannya sengaja
+    // tidak di-await di engine (kosmetik; gagal memperbarui menu tidak boleh
+    // menggagalkan boot), jadi ia mendarat sesudah startEngine kembali.
+    const deletes = () => calls.filter((c) => c.path.endsWith("/deleteMyCommands"));
+    // Sengaja di BAWAH timeout default bun (5000 ms): kalau pemanggilannya
+    // tidak pernah datang, test ini harus GAGAL dengan memperlihatkan apa yang
+    // diterima -- bukan timeout, yang tidak memberi tahu apa pun.
+    const deadline = Date.now() + 2000;
+    while (deletes().length < 3 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+
+    // Scope bisa tiba sebagai objek atau sebagai JSON string tergantung cara
+    // grammy menyandikan body -- yang diuji ISI-nya, bukan sandinya.
+    const scopeOf = (c: { body: unknown }) => {
+      const raw = (c.body as { scope?: unknown } | undefined)?.scope;
+      return typeof raw === "string" ? JSON.parse(raw) : raw;
+    };
+    // Diurutkan, bukan apa adanya: yang dijamin adalah ketiganya dibersihkan,
+    // bukan urutan tibanya di server.
+    const kunci = (s: unknown) => JSON.stringify(s);
+    expect(deletes().map(scopeOf).map(kunci).sort()).toEqual(
+      [
+        { type: "all_private_chats" },
+        { type: "chat", chat_id: 1121398977 },
+        { type: "chat", chat_id: 42 },
+      ]
+        .map(kunci)
+        .sort()
+    );
+
+    res.engine.close();
+  } finally {
+    server.stop();
+    if (prevRoot === undefined) delete process.env.TELEGRAM_API_ROOT;
+    else process.env.TELEGRAM_API_ROOT = prevRoot;
+  }
+});
+
 // Bug yang kambuh 2026-08-04 DAN 2026-08-05: path bridge menyematkan nomor
 // versi, jadi tiap `claude plugin update` membuatnya basi sampai kebetulan
 // ada yang menjalankan /context. startEngine sekarang menyembuhkan path-nya
