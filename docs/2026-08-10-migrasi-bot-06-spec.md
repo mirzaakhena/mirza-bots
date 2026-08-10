@@ -315,7 +315,93 @@ saat `bot-06` diminta ikut estafet.
 
 ---
 
-## 10. Untuk yang membaca sesudah ini
+## 10. Kelima bot sisanya — apa yang berubah dari `bot-06`
+
+Ditambahkan 2026-08-10 sesudah user meminta migrasi lima bot lain, **termasuk
+`bot-02`**, sesi yang menulis dokumen ini.
+
+### 10.1 Armada, terukur
+
+| bot | token | Telegram | sesi lama hidup? |
+|---|---|---|---|
+| bot-01 | `8674860971` | `@mirza_botone_bot` | ✅ |
+| bot-02 | `8745792917` | `@mirza_bottwo_bot` | ✅ **sesi ini sendiri** |
+| bot-03 | `8926694543` | `@mirza_botthree_bot` | ✅ |
+| bot-04 | `8805996311` | `@mirza_botfour_bot` | ✅ |
+| bot-05 | `8777548282` | `@mirza_botfive_bot` | ✅ |
+
+Kelima token **berbeda dan sah** (`getMe` menjawab untuk semuanya), jadi tidak
+ada bot yang berebut token bot lain. Yang berebut hanya bisa terjadi dalam satu
+folder yang sama.
+
+### 10.2 Yang `bot-06` TIDAK ajarkan: sesi lama yang masih hidup
+
+`bot-06` mudah karena sesi lamanya **sudah tertutup** — ia bahkan tidak lagi
+terdaftar di `~/.claude/agent-registry.json`, sementara kelima bot lain punya
+heartbeat segar. Konsekuensinya baru terlihat saat diukur:
+
+```
+bot-01 : messages.db TERKUNCI proses lain -- Move-Item akan GAGAL
+bot-02 : messages.db TERKUNCI proses lain -- Move-Item akan GAGAL
+bot-05 : messages.db TERKUNCI proses lain -- Move-Item akan GAGAL
+```
+
+Windows menolak memindahkan berkas yang handle-nya dipegang proses lain. Jadi
+migrasi bot bersesi hidup bukan "berisiko" — ia **gagal di tengah**, dan
+kegagalan di tengah meninggalkan arsip setengah jadi: keadaan yang lebih buruk
+daripada tidak mulai sama sekali.
+
+**Urutan per bot karena itu wajib:** tutup sesi lama → migrasikan berkas →
+`mirza-bot -u`. Langkah pertama dan ketiga milik user; hanya yang kedua bisa
+diotomatiskan.
+
+Ada juga alasan kedua yang lebih halus untuk menutup dulu: sesi lama memegang
+token di **memori**. Ia terus menarik pesan walau `.env`-nya sudah dipindah, jadi
+menyalakan engine baru sebelum sesi lama mati menghasilkan persis dua poller satu
+token yang §5.1 dirancang untuk mencegah.
+
+### 10.3 `scripts/migrasi-dari-marketplace.ps1`
+
+Langkah 1–4 dijadikan skrip, dan itu **bukan kenyamanan**: saat sesi `bot-02`
+ditutup, agen yang menulis dokumen ini tidak ada lagi untuk mengerjakannya
+manual. Skrip ini yang membuat bot terakhir tetap bisa dipindah.
+
+- **dry-run default**, `-Apply` untuk mengerjakan (mengikuti
+  `cc-plugin/scripts/migrate-per-folder.ts`)
+- **menolak** kalau ada satu saja berkas di `.claude/channels/` terkunci, dan
+  **menyebut berkasnya**
+- **menolak** kalau `config.json` sudah ada (jalan dua kali akan mengarsipkan
+  state sistem BARU seolah ia milik yang lama)
+- `allowFrom` dibaca dari `access.json` bot itu, tidak diketik ulang
+- memeriksa ulang sesudah menulis: token di `config.json` harus **identik
+  byte-per-byte** dengan yang di arsip, dan `settings.json` harus JSON sah
+- memperingatkan (bukan memblokir) kalau `cc-plugin` terpasang < 0.42.0
+
+Terverifikasi 2026-08-10 pada tiga jalur: ditolak pada `bot-05` hidup (menyebut
+ketiga berkas `messages.db*`), berhasil pada bot sintetis di scratchpad, dan
+ditolak saat dijalankan ulang.
+
+**Tidak ada test otomatis untuk skrip ini, dan itu dinyatakan.** Pengamannya
+bukan test melainkan dry-run sebagai default plus gerbang yang menolak sebelum
+apa pun bergerak.
+
+### 10.4 Urutan yang diusulkan, dan kenapa `bot-02` terakhir
+
+`bot-05` → `bot-04` → `bot-03` → `bot-01` → **`bot-02` paling akhir**.
+
+`bot-01` menjelang akhir karena ia penyumbang 102 dari 139 `/switch` seluruh
+armada plus 27 `edit_message` — ia bot yang paling merasakan celah yang belum
+ditutup (`edit_message` masih hilang; `/switch` sudah ada sejak 0.41.0).
+
+`bot-02` **paling akhir karena ia sesi yang mengerjakan migrasi ini**.
+Menutupnya mengakhiri percakapan yang memegang seluruh konteks, jadi ia harus
+jadi yang terakhir supaya keempat bot lain selesai selagi masih ada yang bisa
+membaca hasilnya dan memperbaiki kalau meleset. Untuk `bot-02` sendiri, satu-satunya
+yang tersisa adalah menjalankan skrip di §10.3 — itulah sebabnya ia ada.
+
+---
+
+## 11. Untuk yang membaca sesudah ini
 
 - Konfigurasi rujukannya bukan dokumen ini melainkan **`mirza_01_bot/.claude/settings.json`**.
   Kalau keduanya berbeda, yang di folder itu yang benar.
