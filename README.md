@@ -843,7 +843,18 @@ scripts/
 
 `scripts/migrasi-dari-marketplace.ps1` memigrasikan **satu** bot dari
 `mirza-marketplace/plugins/telegram` ke sistem ini: token direuse, riwayat tidak
-dibawa. Dry-run adalah default; `-Apply` mengerjakannya. Ia **menolak** kalau ada
+dibawa. Dry-run adalah default; `-Apply` mengerjakannya.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\migrasi-dari-marketplace.ps1 -Bot bot-05
+powershell -ExecutionPolicy Bypass -File scripts\migrasi-dari-marketplace.ps1 -Bot bot-05 -Apply
+```
+
+⚠️ **`-ExecutionPolicy Bypass` wajib**, dan itu bukan kehati-hatian berlebihan:
+di mesin ini `CurrentUser` dan `LocalMachine` keduanya `Undefined`, jadi
+`powershell -File` biasa jatuh ke `Restricted` dan menjawab *"running scripts is
+disabled on this system"*. Flag ini hanya berlaku untuk satu proses — ia sengaja
+tidak mengubah setelan mesin. Ia **menolak** kalau ada
 berkas `.claude/channels/` yang masih dipegang proses lain — sesi Claude Code
 yang hidup memegang `messages.db`, dan Windows menolak memindahkannya, jadi tanpa
 gerbang itu `Move-Item` berhenti di tengah dan meninggalkan arsip setengah jadi.

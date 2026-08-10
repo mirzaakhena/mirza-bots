@@ -111,9 +111,19 @@ menyala dibuktikan hidup.
 1. Nyalakan `bot-01` dua kali: `cd C:\Users\Mirza\workspace\bot-01` → `mirza-bot`
    → tutup → `mirza-bot`.
 2. Tutup sesi `bot-02`.
-3. `powershell -File C:\Users\Mirza\workspace\mirza-bots\scripts\migrasi-dari-marketplace.ps1 -Bot bot-02`
-   (dry-run, tidak menyentuh apa pun)
-4. Ulangi dengan `-Apply`.
+3. Dry-run (tidak menyentuh apa pun):
+   ```
+   powershell -ExecutionPolicy Bypass -File C:\Users\Mirza\workspace\mirza-bots\scripts\migrasi-dari-marketplace.ps1 -Bot bot-02
+   ```
+   ⚠️ **`-ExecutionPolicy Bypass` wajib.** Tanpa itu: *"running scripts is
+   disabled on this system"* (`UnauthorizedAccess`) — terukur pada user
+   2026-08-10 14:17. `Get-ExecutionPolicy -List` di mesin ini: `CurrentUser` dan
+   `LocalMachine` **Undefined**, jadi `powershell` biasa jatuh ke `Restricted`.
+   Sesi agen tidak pernah melihat error ini karena scope `Process`-nya sudah
+   `Bypass` — **pelajarannya: perintah yang diuji dari dalam sesi agen belum
+   tentu jalan di terminal user.** Flag ini hanya berlaku untuk satu proses;
+   ia TIDAK mengubah setelan mesin, dan itu disengaja.
+4. Ulangi dengan `-Apply` di akhir.
 5. `cd C:\Users\Mirza\workspace\bot-02` → `mirza-bot` → tutup → `mirza-bot`.
 6. **Bersihkan sisa sistem lama di `~/.claude`** — diminta user 2026-08-10 14:05
    (*"Seharusnya bersihkan semuanya ya.."*). **Wajib SESUDAH langkah 5**, alasannya
@@ -199,6 +209,14 @@ menentukan, §10 bagian armada.
   working tree dan semua bot commit di situ; `-A` bisa menyapu masuk perubahan
   bot lain yang belum di-commit. Terjadi nyaris hari ini (`bb5eb47` muncul di
   antara commit-commit sesi ini). ✅ Pakai path eksplisit.
+- ❌ **JANGAN memberi user perintah shell yang hanya diuji dari dalam sesi agen.**
+  Sesi agen berjalan dengan `ExecutionPolicy` scope `Process` = `Bypass`; terminal
+  user jatuh ke `Restricted` karena `CurrentUser`/`LocalMachine` **Undefined**.
+  Perintah `powershell -File …` yang mulus di sini menjawab
+  *"running scripts is disabled on this system"* di sana — terukur 2026-08-10
+  14:17. ✅ Selalu sertakan `-ExecutionPolicy Bypass` untuk skrip `.ps1` yang
+  dijalankan user, dan **jangan** menyuruh `Set-ExecutionPolicy` permanen: itu
+  mengubah postur keamanan mesin untuk satu skrip.
 - ❌ **JANGAN percaya `$pid` di PowerShell.** Ia variabel otomatis read-only;
   menugaskannya gagal diam-diam di dalam loop dan tabel survei jadi mencetak PID
   proses sendiri untuk keenam bot. ✅ Pakai nama lain (`$enginePid`).
