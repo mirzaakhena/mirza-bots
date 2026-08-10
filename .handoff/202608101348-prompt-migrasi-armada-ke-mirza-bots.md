@@ -115,6 +115,21 @@ menyala dibuktikan hidup.
    (dry-run, tidak menyentuh apa pun)
 4. Ulangi dengan `-Apply`.
 5. `cd C:\Users\Mirza\workspace\bot-02` → `mirza-bot` → tutup → `mirza-bot`.
+6. **Bersihkan sisa sistem lama di `~/.claude`** — diminta user 2026-08-10 14:05
+   (*"Seharusnya bersihkan semuanya ya.."*). **Wajib SESUDAH langkah 5**, alasannya
+   di §10. Arsipkan, jangan hapus:
+
+   ```powershell
+   $ts = (Get-Date).ToString('yyyy-MM-ddTHH-mm-ss')
+   $arsip = "C:\Users\Mirza\.claude\_arsip-sistem-lama-$ts"
+   New-Item -ItemType Directory -Path $arsip | Out-Null
+   Move-Item 'C:\Users\Mirza\.claude\channels'            (Join-Path $arsip 'channels')
+   Move-Item 'C:\Users\Mirza\.claude\mirza-bots'          (Join-Path $arsip 'mirza-bots')
+   Move-Item 'C:\Users\Mirza\.claude\agent-registry.json' (Join-Path $arsip 'agent-registry.json')
+   ```
+
+   Probe kuncinya dulu seperti skrip migrasi melakukannya — kalau ada yang
+   terkunci, ada sesi sistem lama yang masih hidup dan langkah 1–5 belum tuntas.
 
 **Langkah, milik bot berikutnya** — membuktikan tiga yang belum pernah terlihat
 menyala (`celah-migrasi-hitung-ulang` §5 menyatakannya eksplisit):
@@ -219,14 +234,34 @@ menentukan, §10 bagian armada.
   `~/.claude/plugins/cache/mirza-bots/cc-plugin/`. Ini yang membuat statusline
   ber-path-versi di bot lain tidak pernah mati.
 
-**Sisa yang belum disentuh sama sekali** (bukan bagian goal ini, dicatat supaya
-tidak dicari):
-- Tiga sisa mati di `~/.claude/`: `channels/telegram/.env` (token **401
-  Unauthorized**, bukan milik bot mana pun yang hidup),
-  `mirza-bots/` (state root LAMA sistem baru — `fleet.db`, `config.json` bentuk
-  `bots` yang zod `strictObject` sekarang **menolak**), dan
-  `agent-registry.json`. Diverifikasi lewat grep: nol jalur kode `cc-plugin`
-  membacanya, hanya dua komentar yang menyebut `MIRZA_BOTS_HOME`.
+**Kenapa pembersihan `~/.claude` (§6 langkah 6) harus MENUNGGU langkah 5.**
+
+Tiga sasarannya, terukur 2026-08-10 14:05:
+
+| Sasaran | Isi | Keadaan |
+|---|---|---|
+| `~/.claude/channels/` | 13 item, 0,47 MB — `telegram/.env` bertoken **401 Unauthorized** (mati), `access.json` ber-`dmPolicy: "pairing"` | **bebas kunci** |
+| `~/.claude/mirza-bots/` | 24 item, 2,41 MB — state root LAMA sistem baru: `fleet.db` (peninggalan `fleetd`, dibubarkan 2026-08-02), `config.json` bentuk `bots` yang zod `strictObject` sekarang **menolak**, `locks/mirza_01_bot.pid` | **bebas kunci** |
+| `~/.claude/agent-registry.json` | registry wrapper lama | ⚠️ **DIPAKAI SEKARANG** |
+
+Dua yang pertama sudah bisa dipindah hari ini. Yang ketiga tidak: `bot-02`
+masih memakai wrapper sistem lama, dan wrapper itu menulis heartbeat ke
+`agent-registry.json` **tiap 5 detik** — terukur, berkasnya ditulis 4 detik
+sebelum pemeriksaan ini. Memindahkannya di bawah proses yang sedang menulis
+adalah cara membuat sesi hidup gagal tanpa alasan yang terbaca.
+
+Karena itu ketiganya dijadikan **satu paket sesudah langkah 5**, bukan dikerjakan
+separuh sekarang: pembersihan yang setengah jalan meninggalkan pertanyaan "yang
+satu ini kenapa masih ada?" untuk orang berikutnya, dan pertanyaan itu lebih
+mahal daripada menunggu.
+
+Diverifikasi lewat grep bahwa ketiganya memang mati bagi sistem baru: **nol
+jalur kode** `cc-plugin` membaca `~/.claude/mirza-bots` atau
+`channels/telegram`; satu-satunya sebutan `MIRZA_BOTS_HOME` adalah **dua
+komentar** di `src/engine/paths.ts`.
+
+**Sisa lain yang belum disentuh** (bukan bagian goal ini, dicatat supaya tidak
+dicari):
 - `edit_message` (dipakai armada 58× seumur hidup), `react`, dan
   voice/video/video_note/sticker/audio yang **diabaikan diam-diam tanpa jejak**.
   Kalau ada keluhan "kok bot-nya diam?", ini kandidat pertama — bukan misteri
