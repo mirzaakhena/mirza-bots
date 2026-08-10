@@ -88,3 +88,38 @@ describe("pagar: tidak ada pintu keluar kedua", () => {
     expect(langsung).toHaveLength(0);
   });
 });
+
+/**
+ * Pagar kedua dengan bentuk yang sama, dan lahir dari kelas kegagalan yang sama:
+ * sesuatu yang dibuat di `startEngine` tapi tidak ikut dihentikan di `close()`.
+ *
+ * `albumBuffer` adalah yang ketinggalan sampai 0.41.0. Ia memegang dua timer per
+ * album yang memanggil `deliver()` -> `insertMessage`, jadi album yang tiba
+ * tepat sebelum sesi ditutup menulis ke database yang sudah pergi.
+ *
+ * ⚠️ Batas yang disadari: pagar ini menahan PENCABUTAN, bukan penambahan. Kalau
+ * suatu hari ada komponen bertimer BARU yang lupa dihentikan, daftar di bawah
+ * tidak akan tahu -- ia harus ikut disunting. Yang dijaga di sini adalah bahwa
+ * yang sudah pernah diperbaiki tidak diam-diam hilang lagi, dan itu persis yang
+ * sudah terjadi sekali.
+ */
+describe("pagar: close() menghentikan semua yang dinyalakan startEngine", () => {
+  const HARUS_DIHENTIKAN = [
+    "typing.stopAll",
+    "stopSessionAnnouncer",
+    "stopInboxScanner",
+    "albumBuffer.stopAll",
+    "releaseBotLock",
+    "conversationsDb.close",
+  ];
+
+  test.each(HARUS_DIHENTIKAN)("close() memanggil %s", (nama) => {
+    const src = readFileSync(join(import.meta.dir, "../../src/engine/engine.ts"), "utf8");
+    // Badan `close()` saja, bukan seluruh berkas: `releaseBotLock` juga muncul
+    // di daftar import, dan pagar yang cocok dengan importnya sendiri tidak
+    // membuktikan apa pun.
+    const body = src.slice(src.indexOf("    close(): void {"));
+    const tutup = body.indexOf("\n    },");
+    expect(body.slice(0, tutup)).toContain(nama);
+  });
+});

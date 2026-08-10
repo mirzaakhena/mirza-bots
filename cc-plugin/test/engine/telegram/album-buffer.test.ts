@@ -72,3 +72,91 @@ describe("AlbumBuffer", () => {
     expect(flushed.map((f) => f.items)).toEqual([["p1", "p2"], ["p3"]]);
   });
 });
+
+describe("AlbumBuffer.stopAll (rem yang sebelumnya tidak ada)", () => {
+  // Kenapa ini perlu: `Engine.close()` menghentikan typing, announcer, dan
+  // pemindai inbox, lalu MENUTUP database. Buffer ini punya dua timer per album
+  // (debounce 1,5 dtk dan hard cap 8 dtk) dan tidak ikut dihentikan -- jadi
+  // sebuah album yang tiba tepat sebelum sesi ditutup akan memanggil deliver()
+  // sesudah dbnya pergi: `RangeError: Cannot use a closed database`.
+  //
+  // Hari ini tersembunyi karena `close()` memang tidak pernah dipanggil (A-5).
+  // Begitu A-5 diperbaiki, ini yang muncul -- jadi keduanya satu paket.
+  test("timer yang menunggu tidak pernah jadi flush", async () => {
+    const flushed: string[] = [];
+    const buf = new AlbumBuffer<string>(60, 5000, (key) => flushed.push(key));
+
+    buf.add("album-1", "p1");
+    buf.stopAll();
+    await new Promise((r) => setTimeout(r, 120));
+
+    expect(flushed).toEqual([]);
+  });
+
+  // Kedua test di bawah ada karena versi PERTAMA-nya lolos untuk alasan yang
+  // salah, dan itu ketahuan lewat mutation check: mencabut `clearTimeout` mana
+  // pun TIDAK membuatnya merah. Sebabnya `this.buckets.clear()` sendirian sudah
+  // cukup membuat `flush()` pulang lebih awal, jadi `onFlush` memang tidak
+  // pernah dipanggil -- entah timernya dibersihkan atau tidak.
+  //
+  // Yang benar-benar dibeli `clearTimeout` baru terlihat kalau ada bucket BARU
+  // dengan kunci yang sama sesudahnya: timer basi milik bucket lama akan
+  // menembak flush() ke bucket baru itu, dan mengirimnya JAUH lebih cepat dari
+  // waktunya. Itu bentuk yang bisa dilihat, jadi itu yang diuji.
+  const jeda = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test("hard cap basi tidak menembak bucket berikutnya", async () => {
+    const flushed: string[][] = [];
+    // Debounce sengaja panjang supaya ia tidak pernah ikut bicara di test ini.
+    const buf = new AlbumBuffer<string>(60_000, 400, (_k, items) => flushed.push(items));
+
+    buf.add("a", "p1");
+    buf.stopAll(); // hard cap milik p1 seharusnya mati di sini
+
+    await jeda(250);
+    buf.add("a", "p2"); // bucket baru, hard capnya sendiri jatuh di t=650
+
+    // t=500: timer basi (t=400) sudah lewat, timer yang sah (t=650) belum.
+    await jeda(250);
+    expect(flushed).toEqual([]);
+
+    await jeda(400);
+    expect(flushed).toEqual([["p2"]]);
+  });
+
+  test("debounce basi tidak menembak bucket berikutnya", async () => {
+    const flushed: string[][] = [];
+    const buf = new AlbumBuffer<string>(400, 60_000, (_k, items) => flushed.push(items));
+
+    buf.add("a", "p1");
+    buf.stopAll();
+
+    await jeda(250);
+    buf.add("a", "p2");
+
+    await jeda(250);
+    expect(flushed).toEqual([]);
+
+    await jeda(400);
+    expect(flushed).toEqual([["p2"]]);
+  });
+
+  test("seluruh album dihentikan, bukan cuma yang pertama", async () => {
+    const flushed: string[] = [];
+    const buf = new AlbumBuffer<string>(60, 5000, (key) => flushed.push(key));
+
+    buf.add("a", "1");
+    buf.add("b", "2");
+    buf.add("c", "3");
+    buf.stopAll();
+    await new Promise((r) => setTimeout(r, 120));
+
+    expect(flushed).toEqual([]);
+  });
+
+  test("stopAll di buffer kosong tidak meledak", () => {
+    const buf = new AlbumBuffer<string>(60, 5000, () => {});
+    expect(() => buf.stopAll()).not.toThrow();
+    expect(() => buf.stopAll()).not.toThrow();
+  });
+});
