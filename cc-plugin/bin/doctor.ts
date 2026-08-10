@@ -12,37 +12,37 @@
  * Satu bot, bukan armada: sesudah state per-folder, laporan tentang tetangga
  * hanya bisa dikarang. `ls workspace/-/bot.pid` menjawabnya tanpa berpura-pura.
  */
+import { existsSync } from "node:fs";
 import { loadConfig } from "../src/engine/config";
-import {
-  resolveBotHome,
-  configPathIn,
-  conversationsDbPathIn,
-  ensureBotDirs,
-} from "../src/engine/paths";
+import { resolveBotHome } from "../src/engine/paths";
 import { openConversationsDb } from "../src/engine/db/conversations-schema";
-import { buildDoctorReport } from "../src/engine/doctor";
+import { runDoctor } from "../src/engine/doctor";
 import pkg from "../package.json";
 
+/**
+ * Adapter tipis di atas `runDoctor`. Seluruh urutannya -- termasuk aturan
+ * "periksa dulu, jangan tulis apa pun" -- hidup di sana, di mana ia bisa diuji.
+ *
+ * `ensureBotDirs` sengaja TIDAK ada lagi di sini. Membuat folder adalah
+ * pekerjaan engine, yang melakukannya karena ia memang akan memakainya; doctor
+ * hanya memeriksa, dan laporan yang meninggalkan jejak di tempat yang sedang ia
+ * periksa bukan laporan.
+ */
 function main(): void {
-  try {
-    const botHome = resolveBotHome(process.env, process.cwd());
-    ensureBotDirs(botHome);
-    // Dibaca meski hasilnya tidak masuk laporan: config yang rusak atau berbentuk
-    // lama adalah temuan, dan doctor yang melaporkan "sehat" di atasnya lebih
-    // buruk daripada doctor yang tidak ada.
-    loadConfig(configPathIn(botHome));
-    const report = buildDoctorReport(
-      botHome,
-      openConversationsDb(conversationsDbPathIn(botHome)),
-      pkg.version
-    );
-    console.log(JSON.stringify({ ok: true, ...report }, null, 2));
-  } catch (err) {
-    // Still valid JSON, still exit 1: doctor is read by humans in a hurry and by
-    // scripts, and both are worse off with a stack trace.
-    console.log(JSON.stringify({ ok: false, error: (err as Error).message }, null, 2));
-    process.exit(1);
-  }
+  const botHome = resolveBotHome(process.env, process.cwd());
+  const result = runDoctor(botHome, {
+    loadConfig,
+    // `null` kalau berkasnya belum ada: `openConversationsDb` akan MEMBUATNYA,
+    // dan "siap" untuk database yang baru saja dibuat doctor sendiri adalah
+    // jawaban yang benar secara harfiah dan menyesatkan sepenuhnya.
+    openDb: (path) => (existsSync(path) ? openConversationsDb(path) : null),
+    version: pkg.version,
+  });
+
+  // Selalu JSON yang sah, dan exit 1 pada kegagalan: doctor dibaca manusia yang
+  // sedang buru-buru DAN oleh skrip, dan keduanya lebih buruk dengan stack trace.
+  console.log(JSON.stringify(result, null, 2));
+  if (!result.ok) process.exit(1);
 }
 
 if (import.meta.main) main();

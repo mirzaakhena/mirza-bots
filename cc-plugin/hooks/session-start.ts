@@ -78,42 +78,78 @@ export function botNameOf(cwd: string): string {
   return n.slice(n.lastIndexOf("/") + 1);
 }
 
-function main(): void {
-  // cwd dihitung PERTAMA, karena sekarang ia juga menentukan ke mana log
-  // ditulis. Tanpa itu tidak ada tempat untuk mencatat "fired".
-  const cwd = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-  note(cwd, "fired");
+export type HookDeps = {
+  cwd: string;
+  readStdin: () => string;
+  env: NodeJS.ProcessEnv;
+  note: (line: string) => void;
+  writeSessionId: (path: string, id: string) => void;
+};
+
+/**
+ * Seluruh alur hook, dengan efek sampingnya disuntik.
+ *
+ * ## Kenapa `isBotFolder` naik ke baris pertama
+ *
+ * Sampai 0.39.0 urutannya `note(cwd, "fired")` DULU, lalu baca stdin, lalu cek
+ * folder. Dan `note()` sendiri melakukan `mkdirSync(<cwd>/logs)` -- jadi
+ * berkasnya lahir sebelum ada yang tahu folder itu bot atau bukan. Setiap
+ * project yang user buka mendapat `logs/session-hook.log`, isinya satu baris
+ * yang mengaku "nothing to record".
+ *
+ * Terukur di workspace nyata 2026-08-10: enam folder tanpa `config.json`
+ * memilikinya. Yang membuat ini pantas diperbaiki bukan ukurannya, melainkan
+ * bahwa komentar di berkas ini sendiri sudah menyatakan niat yang berlawanan --
+ * *"saying so here would mean shouting in every unrelated project the user
+ * opens"*. Niatnya benar sejak awal; yang bocor berkasnya, bukan kalimatnya.
+ *
+ * ## Yang TIDAK hilang bersamanya
+ *
+ * "fired" tetap dicatat untuk folder bot, dan di situlah ia memang berguna:
+ * membedakan hook yang gagal dari hook yang tidak pernah menyala. Untuk folder
+ * yang bukan bot, tidak ada yang bisa gagal -- jadi tidak ada yang perlu
+ * dibedakan.
+ */
+export function runHook(deps: HookDeps): void {
+  // Baris pertama, sebelum apa pun -- termasuk sebelum stdin dibaca. Folder yang
+  // bukan bot tidak punya apa pun untuk dicatat dan tidak boleh menerima apa pun.
+  if (!isBotFolder(deps.cwd)) return;
+
+  deps.note("fired");
 
   let raw = "";
   try {
-    raw = readFileSync(0, "utf8");
+    raw = deps.readStdin();
   } catch {
-    note(cwd, "stdin unreadable (falling back to env)");
+    deps.note("stdin unreadable (falling back to env)");
   }
 
   const payload = parseHookInput(raw) ?? {};
-  const id = sessionIdFrom(payload, process.env);
+  const id = sessionIdFrom(payload, deps.env);
   if (id === undefined) {
-    note(cwd, "no session id in payload or env -- leaving the previous value alone");
-    return;
-  }
-
-  if (!isBotFolder(cwd)) {
-    // Not a bot folder. Nothing to record, and nothing to complain about either:
-    // saying so here would mean shouting in every unrelated project the user
-    // opens, which is how a useful signal turns into noise people filter out.
-    note(cwd, `no config.json in ${cwd} -- nothing to record`);
+    deps.note("no session id in payload or env -- leaving the previous value alone");
     return;
   }
 
   try {
-    writeFileSync(join(cwd, "session.id"), id);
-    note(cwd, `wrote ${botNameOf(cwd)} = ${id} (source=${payload?.source ?? "-"})`);
+    deps.writeSessionId(join(deps.cwd, "session.id"), id);
+    deps.note(`wrote ${botNameOf(deps.cwd)} = ${id} (source=${payload?.source ?? "-"})`);
   } catch (err) {
     // Worst case the engine keeps using the previous id -- exactly where it
     // would have been without this hook, never worse.
-    note(cwd, `write failed for ${botNameOf(cwd)}: ${err}`);
+    deps.note(`write failed for ${botNameOf(deps.cwd)}: ${err}`);
   }
+}
+
+function main(): void {
+  const cwd = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  runHook({
+    cwd,
+    readStdin: () => readFileSync(0, "utf8"),
+    env: process.env,
+    note: (line) => note(cwd, line),
+    writeSessionId: (path, id) => writeFileSync(path, id),
+  });
 }
 
 if (import.meta.main) main();
