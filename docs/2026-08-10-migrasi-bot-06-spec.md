@@ -231,8 +231,10 @@ punya cadangan; tujuannya memastikan tidak ada berkas sistem lama yang masih di
 jalur yang dibacanya. Salinan meninggalkan aslinya di tempat, dan aslinya itu
 yang bisa menghidupkan poller kedua.
 
-Token berakhir tersimpan **dua kali**: di `config.json` (tempat kerjanya) dan
-utuh di `_arsip-migrasi-<ts>/telegram/.env`.
+`channels/` dipindah **utuh**, bukan dibongkar per berkas — rollback jadi satu
+`Move-Item` dan bukan rekonstruksi. Token karena itu berakhir tersimpan **dua
+kali**: di `config.json` (tempat kerjanya) dan utuh di
+`_arsip-migrasi-<ts>/channels/telegram/.env`.
 
 **Rollback, tiga langkah:** hapus `config.json` → pindahkan balik `channels/` dan
 `settings.json` dari arsip → jalankan `mirza-cc`. Karena tokennya tidak pernah
@@ -297,8 +299,13 @@ saat `bot-06` diminta ikut estafet.
 
 ## 9. Batas klaim
 
-- Spec ini **belum dijalankan** saat ditulis. Semua angka berasal dari membaca
-  berkas dan kode, bukan dari uji hidup.
+- **Langkah 1–4 sudah dijalankan** 2026-08-10 10:24 WIB; arsipnya
+  `_arsip-migrasi-2026-08-10T10-24-49/` (39 item). Token di `config.json`
+  diperiksa **identik byte-per-byte** dengan yang di arsip, dan `bun run doctor`
+  menjawab `{"ok": true, "bot": "bot-06", "version": "0.41.0"}` dengan
+  `lock.pid: null` — config lolos schema zod, belum ada sesi yang memegangnya.
+- **Langkah 5 (`mirza-bot -u`) belum dijalankan**, jadi seluruh §7 masih
+  rencana. Tidak satu pun dari tujuh baris itu terbukti.
 - `enabledPlugins` lapisan project terbukti bekerja di `mirza_01_bot`/`mirza_02_bot`,
   tapi **belum diverifikasi apakah ia juga mematikan MCP server** plugin lama
   atau hanya skill-nya. §5.1 pagar (2) ada justru karena pertanyaan itu belum
