@@ -188,5 +188,13 @@ Write-Host "  [ok] token identik byte-per-byte; settings.json valid JSON" -Foreg
 
 Write-Host "`nBerikutnya:" -ForegroundColor Cyan
 Write-Host "  cd $botHome"
-Write-Host "  mirza-bot -u"
-Write-Host "  (lalu force-close + buka ulang Telegram di HP supaya menunya disegarkan)"
+Write-Host "  mirza-bot        <- pertama: engine memasang statusLine ke .claude\settings.json"
+Write-Host "  (tutup, lalu)"
+Write-Host "  mirza-bot        <- KEDUA: baru di sini Claude Code memuat statusLine itu"
+Write-Host ""
+Write-Host "  DUA KALI, dan itu bukan mubazir. Claude Code membaca settings.json saat sesi" -ForegroundColor Yellow
+Write-Host "  LAHIR; engine memasang statusLine SESUDAH itu. Jadi di nyala pertama tidak ada" -ForegroundColor Yellow
+Write-Host "  yang memanggil bridge, status.json tidak lahir, dan /context menunggu berkas" -ForegroundColor Yellow
+Write-Host "  yang tidak mungkin datang di sesi itu. Terukur pada bot-03 + bot-04 2026-08-10." -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  Lalu force-close + buka ulang Telegram di HP supaya menunya disegarkan."

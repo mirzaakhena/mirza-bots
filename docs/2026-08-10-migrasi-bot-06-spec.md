@@ -385,7 +385,44 @@ ditolak saat dijalankan ulang.
 bukan test melainkan dry-run sebagai default plus gerbang yang menolak sebelum
 apa pun bergerak.
 
-### 10.4 Urutan yang diusulkan, dan kenapa `bot-02` terakhir
+### 10.4 Langkah kelima yang tidak ada di §4: **nyalakan DUA kali**
+
+Ditemukan 2026-08-10 dari laporan user: *"bot-04 dan bot-03 kesulitan mereturn
+/context"*. Bukti, dan kontrasnya yang menentukan:
+
+```
+bot-03  statusLine terpasang · chained-statusline ADA · status.json TIDAK ADA
+bot-04  statusLine terpasang · chained-statusline ADA · status.json TIDAK ADA
+bot-06  statusLine terpasang · chained-statusline ADA · status.json ADA
+```
+
+Bedanya `bot-06` sudah dinyalakan **dua kali** (10:28, lalu 10:53); `bot-03` dan
+`bot-04` baru sekali.
+
+**Sebabnya urutan pembacaan, bukan kesalahan `installBridge`.** Claude Code
+membaca `settings.json` **saat sesi lahir**. Engine memasang `statusLine` ke situ
+**sesudah** sesi lahir — jadi sesi yang sedang jalan tidak pernah memuatnya, tidak
+ada yang memanggil bridge, `status.json` tidak pernah lahir, dan `/context`
+menunggu berkas yang **secara struktural tidak mungkin muncul di sesi itu**.
+
+Ini kambuhan §5.2 dari arah lain: di sana bahayanya rantai yang salah, di sini
+rantai yang benar tapi belum dimuat. Keduanya lahir dari fakta yang sama —
+`statusLine` project ditulis oleh engine, dibaca oleh Claude Code, dan keduanya
+tidak pernah bertemu dalam satu sesi yang sama saat pemasangan pertama.
+
+**Langkah 5 karena itu berbunyi: jalankan `mirza-bot` DUA kali** pada migrasi
+pertama sebuah bot. Biaya sekali per bot, bukan tiap hari.
+
+**Keputusan user 2026-08-10: tidak diperbaiki di kode**, cukup dicatat. Perbaikan
+yang dipertimbangkan lalu ditolak: `/context` menjawab *"bridge baru dipasang,
+sesi ini belum memuatnya"* ketika `installBridge` mengembalikan `installed`.
+Alasannya restart sekali memang murah. ⚠️ Tapi catat bentuk kegagalannya, karena
+ia bertentangan dengan doktrin repo ini sendiri (*"gagal diam-diam adalah
+kegagalan yang paling mahal"*): `/context` **menunggu tanpa batas dan tanpa
+petunjuk**, padahal engine sudah memegang jawabannya. Kalau ini muncul lagi pada
+orang yang tidak membaca dokumen ini, perbaikan di kode jadi pilihan yang benar.
+
+### 10.5 Urutan yang diusulkan, dan kenapa `bot-02` terakhir
 
 `bot-05` → `bot-04` → `bot-03` → `bot-01` → **`bot-02` paling akhir**.
 
