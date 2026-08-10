@@ -32,6 +32,19 @@ export type SlashDeps = { botHome: string; newId: () => string };
 /** Nama lama, dipertahankan supaya pemanggil tidak perlu diubah dua kali. */
 export type ConfirmDeps = SlashDeps;
 
+/**
+ * Namespace `callback_data` milik lapisan ini. SATU sumber, dan itu yang
+ * membuatnya bisa dijaga di dua arah sekaligus: `parseSlashCallback` memakainya
+ * untuk mengenali tombolnya sendiri, dan `prepareReply` memakainya untuk
+ * MENOLAK tombol AI yang memakai namespace ini.
+ *
+ * Kenapa penolakan itu perlu: tombol yang datanya diawali prefiks ini tidak
+ * pernah sampai ke AI (`pushToAi: false`) dan langsung ditulis ke `slash/`,
+ * jadi cc-wrapper mengetikkannya ke Claude Code -- melewati prompt konfirmasi
+ * yang justru satu-satunya alasan jalur itu ada.
+ */
+export const SLASH_CALLBACK_NAMESPACE = "slash:";
+
 /** Prefiks tombol "Kirim". Dihitung: 9 byte. */
 export const SLASH_CALLBACK_GO = "slash:go:";
 /** Tombol "Batal". Tidak membawa muatan apa pun. */
@@ -65,13 +78,27 @@ export function confirmFits(command: string): boolean {
  * `null` berarti bukan milik lapisan ini -- tombol fitur lain harus tetap
  * sampai ke AI seperti sebelumnya.
  */
+/**
+ * Bentuk id sesi Claude Code. Diperiksa, tidak dipercaya.
+ *
+ * `handleSwitch` menerjemahkan apa pun yang lolos dari sini menjadi
+ * `/resume <isinya>` lalu menyuntikkannya ke Claude Code. Sebelum pagar ini,
+ * satu-satunya yang menjaga isi perintah itu adalah keyakinan bahwa tombolnya
+ * pasti lahir dari `sendListing` -- dan `reply` menerima `buttons` yang datanya
+ * ditulis AI, jadi keyakinan itu tidak punya dasar.
+ */
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function parseSlashCallback(
   data: string | undefined
 ): { kind: "go"; command: string } | { kind: "cancel" } | { kind: "switch"; sessionId: string } | null {
   if (data === undefined) return null;
   if (data === SLASH_CALLBACK_CANCEL) return { kind: "cancel" };
   if (data.startsWith(SLASH_CALLBACK_SWITCH)) {
-    return { kind: "switch", sessionId: data.slice(SLASH_CALLBACK_SWITCH.length) };
+    const sessionId = data.slice(SLASH_CALLBACK_SWITCH.length);
+    // `null`, bukan error: bentuk yang asing diperlakukan seperti tombol milik
+    // fitur lain -- diteruskan ke AI, bukan dieksekusi.
+    return SESSION_ID.test(sessionId) ? { kind: "switch", sessionId } : null;
   }
   if (data.startsWith(SLASH_CALLBACK_GO)) {
     return { kind: "go", command: data.slice(SLASH_CALLBACK_GO.length) };

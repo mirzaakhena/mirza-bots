@@ -13,7 +13,7 @@
  * berkas sebelum mem-parse-nya; kalau kedua payload berbagi folder, wrapper
  * menghapus pesan antar-bot lalu menolaknya, dan pesannya lenyap tanpa gejala.
  */
-import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { IPty } from "node-pty";
@@ -21,7 +21,7 @@ import { spawnClaude, runPlan, sleep } from "./pty";
 import { InjectionQueue } from "./queue";
 import { planCommand, planDurationMs } from "./typer";
 import { specFor } from "./registry";
-import { parsePayload } from "./inbox";
+import { parsePayload, isStalePayload, STALE_PAYLOAD_MS } from "./inbox";
 import { describeDispatchFailure } from "./report";
 import { acquireWrapperLock, releaseWrapperLock } from "./lock";
 import {
@@ -155,6 +155,16 @@ setInterval(() => {
     } catch {
       continue; // tick lain sudah mengambilnya
     }
+    // Umur berkas dibaca SEBELUM ia dihapus. `mtime` yang tidak terbaca
+    // dijawab "sekarang", jadi arah salahnya menjalankan — sama seperti
+    // isStalePayload memperlakukan mtime di masa depan.
+    let mtimeMs = Date.now();
+    try {
+      mtimeMs = statSync(path).mtimeMs;
+    } catch {
+      /* berkasnya boleh hilang di antara read dan stat */
+    }
+
     // Hapus lebih dulu supaya crash di tengah penanganan tidak memproses ganda.
     try {
       rmSync(path);
@@ -165,6 +175,24 @@ setInterval(() => {
     const parsed = parsePayload(raw);
     if (parsed.kind === "invalid") {
       console.error(`[cc-wrapper] payload ditolak (${f}): ${parsed.error}`);
+      continue;
+    }
+
+    // Dibuang SESUDAH di-parse, bukan sebelum: yang dibuang harus bisa
+    // DISEBUT. Baris log yang cuma memuat nama berkas menyuruh pembacanya
+    // menebak perintah apa yang hilang — pelajaran yang sama dengan
+    // describeDispatchFailure.
+    if (isStalePayload(mtimeMs, Date.now())) {
+      const commands =
+        parsed.kind === "single"
+          ? parsed.item.command
+          : parsed.items.map((i) => i.command).join(", ");
+      const menit = Math.round((Date.now() - mtimeMs) / 60_000);
+      console.error(
+        `[cc-wrapper] payload BASI dibuang (${menit} menit menunggu, batas ` +
+          `${STALE_PAYLOAD_MS / 60_000}): ${commands}. Wrapper tidak berjalan saat ` +
+          `perintah ini dikirim; menjalankannya sekarang akan mengenai sesi yang salah.`
+      );
       continue;
     }
     if (parsed.kind === "single") {

@@ -8,6 +8,7 @@ import {
   buildAlbumMessage,
   buildTappedMessageEdit,
   findMissingButtonNarration,
+  findUnsafeButtonData,
   handleHistoryRequest,
   handleSearchRequest,
 } from "../../src/engine/messages";
@@ -480,5 +481,67 @@ describe("history and search (satu database per bot)", () => {
 
     expect(res).toMatchObject({ ok: false });
     expect((res as { ok: false; error: string }).error).toContain("bad_search_query");
+  });
+});
+
+describe("findUnsafeButtonData (apa yang Telegram dan lapisan slash tidak terima)", () => {
+  const btn = (data: string) => [[{ text: "Ya", data }]];
+
+  test("callback_data biasa dilewatkan", () => {
+    expect(findUnsafeButtonData(btn("confirm_yes"))).toBeNull();
+  });
+
+  test("64 byte masih sah -- batasnya inklusif", () => {
+    expect(findUnsafeButtonData(btn("x".repeat(64)))).toBeNull();
+  });
+
+  test("65 byte ditolak, dan errornya menyebut labelnya", () => {
+    // Telegram menjawab 400 BUTTON_DATA_INVALID. Kalau baru ketahuan di sana,
+    // potongan-potongan teks sebelumnya SUDAH mendarat di HP user.
+    const error = findUnsafeButtonData(btn("x".repeat(65)));
+    expect(error).not.toBeNull();
+    expect(error).toContain("Ya");
+    expect(error).toContain("64");
+  });
+
+  test("dihitung per BYTE, bukan per karakter", () => {
+    // 17 emoji 4-byte = 68 byte tapi hanya 34 unit UTF-16 dan 17 code point.
+    // Menghitung panjang string akan meloloskan yang Telegram tolak.
+    const emoji = "😀".repeat(17);
+    expect(emoji.length).toBeLessThan(65);
+    expect(findUnsafeButtonData(btn(emoji))).not.toBeNull();
+  });
+
+  test("prefiks `slash:` ditolak -- namespace itu milik lapisan slash", () => {
+    // Tanpa pagar ini, tap-nya TIDAK sampai ke AI dan langsung ditulis ke
+    // slash/, jadi cc-wrapper mengetikkannya ke Claude Code tanpa satu pun
+    // prompt konfirmasi -- justru langkah yang dilewatinya.
+    const error = findUnsafeButtonData(btn("slash:go:/clear"));
+    expect(error).not.toBeNull();
+    expect(error).toContain("slash:");
+  });
+
+  test("prefiks `slash:` ditolak apa pun sisanya, termasuk yang tidak dikenal", () => {
+    expect(findUnsafeButtonData(btn("slash:apa-saja"))).not.toBeNull();
+  });
+
+  test("kata `slash` yang bukan prefiks tidak kena", () => {
+    // Yang dijaga adalah namespace-nya, bukan kata-katanya.
+    expect(findUnsafeButtonData(btn("backslash:x"))).toBeNull();
+    expect(findUnsafeButtonData(btn("slashdot"))).toBeNull();
+  });
+
+  test("seluruh baris diperiksa, bukan cuma yang pertama", () => {
+    expect(
+      findUnsafeButtonData([
+        [{ text: "Aman", data: "ok" }],
+        [{ text: "Bahaya", data: "slash:go:/clear" }],
+      ])
+    ).not.toBeNull();
+  });
+
+  test("balasan tanpa tombol tidak pernah kena", () => {
+    expect(findUnsafeButtonData()).toBeNull();
+    expect(findUnsafeButtonData([])).toBeNull();
   });
 });

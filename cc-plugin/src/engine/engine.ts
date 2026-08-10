@@ -71,6 +71,7 @@ import {
   buildTappedMessageEdit,
   deliverIncoming,
   findMissingButtonNarration,
+  findUnsafeButtonData,
   buildInlineKeyboard,
   handleHistoryRequest,
   handleSearchRequest,
@@ -331,6 +332,13 @@ export function prepareReply(
   // alasan lengkapnya di komentar findMissingButtonNarration.
   const unnarrated = findMissingButtonNarration(text, buttons);
   if (unnarrated) throw new Error(unnarrated);
+
+  // Sebelum apa pun berangkat, sama seperti pagar di atasnya: `callback_data`
+  // yang ditolak Telegram (>64 byte) atau yang membajak namespace lapisan slash
+  // baru ketahuan SESUDAH potongan-potongan teks sebelumnya mendarat, dan yang
+  // sudah mendarat tidak bisa ditarik.
+  const unsafeData = findUnsafeButtonData(buttons);
+  if (unsafeData) throw new Error(unsafeData);
 
   assertNoButtonsWithFiles(buttons, files);
 
