@@ -471,6 +471,15 @@ datang.
 Batas `callback_data` dijaga **55 byte** (prefiks `slash:go:` memakan 9 dari 64
 yang Telegram izinkan), dihitung **per byte** dan bukan per karakter.
 
+**Perintah yang basi dibuang, tidak dijalankan.** `cc-plugin` menulis ke `slash/`
+tanpa tahu ada wrapper atau tidak — dan memang tidak bisa tahu; ia hidup di dalam
+sesi CC, bukan di luar. Kalau kamu membuka `claude` langsung, slash dari Telegram
+tetap ditulis dan menumpuk. Tanpa pagar, tick pertama `mirza-bot` besok pagi akan
+menyuntik **semuanya** ke sesi baru — termasuk `/clear` yang menghapus konteks
+yang belum sempat dipakai. Payload yang menunggu lebih dari **10 menit** karena
+itu dibuang, dan **perintahnya disebut di log** supaya yang hilang bisa
+diketahui, bukan ditebak.
+
 #### `/context` dan pagar statusline
 
 Payload statusline di-**push** Claude Code ke command-nya dan tidak bisa ditarik
@@ -516,6 +525,22 @@ cocok — ditolak sebelum apa pun terkirim, dan pesan errornya menyebutkan cara
 memperbaikinya. Aturan ini dulu hanya hidup sebagai teks yang meminta AI
 mengingatnya, dan bocor **tiga kali dalam dua hari**, sekali dengan permintaan
 maaf in-band karena sudah melakukannya dua kali.
+
+**`callback_data` divalidasi sebelum berangkat.** Telegram hanya menerima 1–64
+**byte** dan menjawab 400 di atasnya — dihitung per byte, jadi satu emoji
+memakan empat. Diperiksa di `prepareReply`, bukan dibiarkan Telegram yang
+menolak: tombol menempel di potongan **terakhir**, jadi pada balasan yang
+terpotong, potongan sebelumnya sudah mendarat di HP user ketika errornya datang,
+dan yang sudah mendarat tidak bisa ditarik.
+
+**Namespace `slash:` tertutup untuk tombol AI.** `parseSlashCallback` mengenali
+tombolnya sendiri dari **prefiks string**, jadi tombol AI yang datanya kebetulan
+diawali `slash:` tidak akan pernah sampai ke AI — ia langsung ditulis ke `slash/`
+dan diketikkan cc-wrapper ke Claude Code, **melewati prompt konfirmasi** yang
+justru satu-satunya alasan jalur itu ada. Di sini ia ditolak, bukan diam-diam
+diambil alih. Tombol pindah sesi juga wajib membawa UUID yang sah; yang bentuknya
+asing diperlakukan seperti tombol fitur lain — diteruskan ke AI, bukan
+dieksekusi.
 
 **`buttons` dan `files` tidak boleh satu panggilan.** Bukan batasan teknis:
 berkas dikirim sesudah teks, jadi keyboardnya menempel pada pesan yang sekarang

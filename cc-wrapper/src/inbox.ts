@@ -11,6 +11,47 @@ import type { QueueItem } from "./queue";
 
 export const MAX_BATCH_ITEMS = 8;
 
+/**
+ * Seberapa lama sebuah payload boleh menunggu di `slash/` sebelum dianggap
+ * bukan lagi maksud siapa pun.
+ *
+ * Wrapper yang berjalan menguras folder itu dalam 500 ms, jadi apa pun yang
+ * berumur menit berarti wrapper-nya memang tidak ada saat perintahnya ditulis.
+ * Sepuluh menit dipilih karena ia jauh di atas semua jeda yang wajar (boot CC,
+ * gerbang trust, satu percobaan ulang `--continue`) dan jauh di bawah "sesi
+ * berikutnya".
+ */
+export const STALE_PAYLOAD_MS = 10 * 60_000;
+
+/**
+ * Apakah payload ini sudah terlalu tua untuk dijalankan.
+ *
+ * ## Kenapa ini perlu ada
+ *
+ * `cc-plugin` menulis ke `slash/` tanpa tahu ada wrapper atau tidak -- dan
+ * memang tidak bisa tahu; ia hidup di dalam sesi CC, bukan di luar. Kalau user
+ * membuka `claude` langsung (cara yang README dokumentasikan sebagai sah), slash
+ * dari Telegram tetap ditulis dan menumpuk. Saat `mirza-bot` akhirnya
+ * dijalankan, tick pertama menemukan SEMUANYA dan mengantrekan semuanya --
+ * termasuk `/clear` yang menghapus konteks sesi baru yang belum sempat dipakai.
+ *
+ * ## Kenapa mtime, bukan stempel di dalam payload
+ *
+ * Bentuk payload adalah kontrak antara dua paket yang dirilis terpisah, dan
+ * kontrak yang tidak perlu diubah lebih baik tidak diubah. `mtime` menjawab
+ * pertanyaan yang sama persis -- kapan berkas ini ditulis -- tanpa satu pun
+ * penulis payload harus tahu pagar ini ada.
+ *
+ * ## Arah salahnya dipilih
+ *
+ * `mtime` di masa depan (jam bergeser, berkas disalin) dijawab "tidak basi".
+ * Perintah yang dibuang tanpa sebab lebih membingungkan daripada perintah yang
+ * berjalan sedikit telat.
+ */
+export function isStalePayload(mtimeMs: number, nowMs: number): boolean {
+  return nowMs - mtimeMs > STALE_PAYLOAD_MS;
+}
+
 export type ParsedPayload =
   | { kind: "single"; item: QueueItem }
   | { kind: "batch"; items: QueueItem[] }

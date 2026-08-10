@@ -8,6 +8,7 @@ import {
   type NormalizedMessage,
   type PollerDeps,
 } from "./telegram/poller";
+import { SLASH_CALLBACK_NAMESPACE } from "./slash";
 import type { ButtonRow, MessagesResult } from "./types";
 
 export function apiRoot(): string {
@@ -276,6 +277,65 @@ export function findMissingButtonNarration(text: string, buttons?: ButtonRow[]):
     `(e.g. "1. Lanjut backup" / "2. Batalkan"), or drop the numbers and use short descriptive ` +
     `labels instead (e.g. "✅ Ya" / "❌ Tidak"). Nothing was sent -- fix and resend.`
   );
+}
+
+/**
+ * Batas Telegram untuk `callback_data`: 1-64 **byte**. Di atasnya API menjawab
+ * 400 `BUTTON_DATA_INVALID`.
+ */
+export const MAX_CALLBACK_DATA_BYTES = 64;
+
+/**
+ * Dua hal yang membuat sebuah tombol tidak boleh berangkat. `null` berarti
+ * kirim.
+ *
+ * ## Kenapa di sini, bukan dibiarkan Telegram yang menolak
+ *
+ * Tombol menempel pada potongan TERAKHIR (lihat `planSendOptionsFor`), jadi
+ * pada balasan yang terpotong, potongan-potongan sebelumnya SUDAH mendarat di
+ * HP user ketika 400-nya datang. Yang AI terima adalah
+ * `reply failed after N of M parts sent`, dan tidak ada cara menarik kembali
+ * yang terlanjur terkirim. Diperiksa di `prepareReply` berarti tidak ada satu
+ * byte pun yang berangkat.
+ *
+ * ## Kenapa BYTE, bukan panjang string
+ *
+ * Satu emoji memakan empat byte tapi dihitung satu code point (dan dua unit
+ * UTF-16). Menghitung `data.length` akan meloloskan data yang Telegram tolak.
+ * Pelajaran yang sama sudah dibayar di `confirmFits` (lapisan slash); yang
+ * kurang cuma penerapannya di jalur ini -- satu-satunya jalur yang datanya
+ * ditulis AI, bukan mesin.
+ *
+ * ## Kenapa namespace `slash:` ikut ditolak
+ *
+ * `parseSlashCallback` mengenali tombolnya sendiri dari PREFIKS string saja.
+ * Tombol AI yang datanya kebetulan diawali `slash:` karena itu tidak pernah
+ * sampai ke AI, langsung ditulis ke `slash/`, dan diketikkan cc-wrapper ke
+ * Claude Code -- melewati prompt konfirmasi yang justru satu-satunya alasan
+ * jalur itu ada. Namespace itu milik lapisan slash; di sini ia ditolak, bukan
+ * diam-diam diambil alih.
+ */
+export function findUnsafeButtonData(buttons?: ButtonRow[]): string | null {
+  for (const btn of (buttons ?? []).flat()) {
+    const bytes = Buffer.byteLength(btn.data, "utf8");
+    if (bytes > MAX_CALLBACK_DATA_BYTES) {
+      return (
+        `callback_data_too_long: tombol "${btn.text}" membawa data ${bytes} byte, ` +
+        `sementara Telegram hanya menerima ${MAX_CALLBACK_DATA_BYTES}. Dihitung per BYTE, ` +
+        `jadi satu emoji memakan empat. Pendekkan datanya -- ia cuma penanda pilihan, ` +
+        `bukan tempat menaruh isi. Tidak ada yang terkirim.`
+      );
+    }
+    if (btn.data.startsWith(SLASH_CALLBACK_NAMESPACE)) {
+      return (
+        `reserved_callback_data: tombol "${btn.text}" memakai awalan ` +
+        `"${SLASH_CALLBACK_NAMESPACE}", yang milik lapisan slash Telegram. Tap-nya tidak akan ` +
+        `pernah sampai kepadamu -- ia langsung disuntikkan ke Claude Code tanpa konfirmasi. ` +
+        `Pakai awalan lain. Tidak ada yang terkirim.`
+      );
+    }
+  }
+  return null;
 }
 
 export function buildInlineKeyboard(rows: ButtonRow[]): InlineKeyboard {

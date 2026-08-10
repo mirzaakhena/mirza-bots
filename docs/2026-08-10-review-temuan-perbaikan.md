@@ -10,6 +10,10 @@ Temuan diurut dari yang paling bisa dibuktikan ke yang paling spekulatif. Setiap
 entri menyebut **bukti**, bukan kecurigaan — dan yang belum diverifikasi
 dinyatakan begitu apa adanya.
 
+> **Status per 2026-08-10 (0.39.0):** **A-2, A-3, dan A-10 sudah diperbaiki**
+> (keputusan user: dahulukan yang bisa meledak sewaktu-waktu). Sisanya masih
+> terbuka. Lihat catatan **✅ SUDAH DIPERBAIKI** di masing-masing entri.
+
 ---
 
 ## A. Bug yang bisa dibuktikan sekarang
@@ -69,10 +73,17 @@ ditulis **AI**, tidak dijaga sama sekali.
 Dua batas Telegram lain yang juga tidak dijaga: maksimum **8 tombol per baris**
 dan **100 baris**.
 
-**Perbaikan:** tambahkan pagar di `prepareReply` — tempat yang sama
+**✅ SUDAH DIPERBAIKI (0.39.0).** `findUnsafeButtonData` di
+`engine/messages.ts`, dipanggil dari `prepareReply` — tempat yang sama
 `findMissingButtonNarration` dan `assertNoButtonsWithFiles` sudah duduk, dan
 tempat yang kontraknya berbunyi *"kalau ada yang salah, tidak ada satu pun pesan
-yang terlanjur berangkat"*. Hitung `Buffer.byteLength(data, "utf8")`.
+yang terlanjur berangkat"*. Dihitung `Buffer.byteLength(data, "utf8")`, dan
+errornya menyebut label tombolnya supaya AI tahu yang mana.
+
+**Yang sengaja TIDAK ikut dipasang:** batas jumlah tombol per baris. Saya tidak
+menemukan angka yang bisa saya buktikan di Bot API — dan memasang batas yang
+ditebak akan menolak balasan yang sebenarnya sah. Batas 64 byte itu tertulis di
+dokumentasi resmi (`1-64 bytes`); yang lain tidak.
 
 ---
 
@@ -106,10 +117,15 @@ Ini bukan lubang keamanan terhadap orang luar (allowlist tetap berdiri), tapi ia
 **jalur eskalasi dari isi balasan AI ke perintah Claude Code**, dan ia diam-diam
 mencuri tombol dari fitur yang mengirimnya.
 
-**Perbaikan, dua-duanya murah:**
-- tolak `data` berprefiks `slash:` di `prepareReply` (namespace itu milik
-  lapisan slash, bukan milik AI), dan
-- validasi bentuk UUID di cabang `switch` `parseSlashCallback`.
+**✅ SUDAH DIPERBAIKI (0.39.0).** Dua pagar:
+
+- `data` berprefiks `slash:` ditolak di `prepareReply` (lewat
+  `findUnsafeButtonData`). Prefiksnya kini satu konstanta bersama,
+  `SLASH_CALLBACK_NAMESPACE`, dipakai oleh yang **mengenali** dan yang
+  **menolak** — jadi keduanya tidak bisa berbeda pendapat.
+- `parseSlashCallback` memvalidasi bentuk UUID di cabang `switch`. Yang tidak
+  cocok dijawab `null`, bukan error: bentuk asing diperlakukan seperti tombol
+  fitur lain — diteruskan ke AI, bukan dieksekusi.
 
 ---
 
@@ -263,10 +279,22 @@ tahu wrapper ada atau tidak, dan memang tidak bisa tahu. Lima `/rename`, tiga
 dijalankan, dan sepuluh perintah itu **semuanya** disuntik berurutan ke sesi
 baru, dengan jarak 1,5 detik.
 
-**Perbaikan:** stempel `ts` di payload, dan wrapper membuang yang lebih tua dari
-ambang (mis. 10 menit) saat start — dengan **mencatat** berapa yang dibuang.
-Perintah basi yang dieksekusi lebih berbahaya daripada perintah basi yang
-dilaporkan hilang.
+**✅ SUDAH DIPERBAIKI (0.39.0).** `isStalePayload` + `STALE_PAYLOAD_MS`
+(10 menit) di `cc-wrapper/src/inbox.ts`, dipakai loop pemindai `slash/`.
+
+Yang dipakai **`mtime` berkasnya**, bukan stempel `ts` di dalam payload seperti
+usul awal di atas. Alasannya: bentuk payload adalah kontrak antara dua paket
+yang dirilis terpisah, dan `mtime` menjawab pertanyaan yang persis sama —
+kapan berkas ini ditulis — tanpa satu pun penulis payload harus tahu pagar ini
+ada. Kontrak yang tidak perlu diubah lebih baik tidak diubah.
+
+Payload basi **di-parse dulu, baru dibuang**, supaya baris lognya bisa
+**menyebut perintahnya**. Log yang cuma memuat nama berkas menyuruh pembacanya
+menebak apa yang hilang — pelajaran yang sama dengan `describeDispatchFailure`.
+
+`mtime` di masa depan (jam bergeser, berkas disalin) dijawab "tidak basi":
+perintah yang dibuang tanpa sebab lebih membingungkan daripada perintah yang
+berjalan sedikit telat.
 
 ---
 
@@ -479,16 +507,19 @@ sesi otomatis, pengingat mesin `[from: system]`, aturan bernama +
 Bukan daftar keinginan — urutannya mengikuti "berapa yang hilang kalau tidak
 dikerjakan", bukan "berapa mudah dikerjakan".
 
-1. **A-2, A-3** — keduanya di jalur `reply`, keduanya bisa merusak sesuatu yang
-   user lihat, keduanya satu fungsi (`prepareReply`).
-2. **A-1, A-7, A-8** — tiga efek samping yang menulis ke tempat yang bukan
+1. ~~**A-2, A-3**~~ ✅ **selesai 0.39.0** — keduanya di jalur `reply`, keduanya
+   bisa merusak sesuatu yang user lihat, keduanya satu fungsi (`prepareReply`).
+2. ~~**A-10**~~ ✅ **selesai 0.39.0** — dinaikkan dari urutan 5 setelah dipikir
+   ulang: pemicunya bukan skenario eksotis melainkan cara pakai yang README
+   sendiri dokumentasikan (`claude` langsung, tanpa wrapper).
+3. **A-1, A-7, A-8** — tiga efek samping yang menulis ke tempat yang bukan
    haknya. Kecil satu-satu, dan justru karena itu tidak pernah dikerjakan.
-3. **A-5 + A-6 bersamaan** — jangan diperbaiki terpisah; A-5 sendirian
+4. **A-5 + A-6 bersamaan** — jangan diperbaiki terpisah; A-5 sendirian
    memunculkan A-6.
-4. **A-9, C-7 (script `test`/`typecheck`), CI** — memasang pagar sebelum
+5. **A-9, C-7 (script `test`/`typecheck`), CI** — memasang pagar sebelum
    menambah apa pun di atasnya.
-5. **A-4, A-10, C-3, C-5** — empat bentuk "hilang tanpa jejak", persis kelas
-   kegagalan yang repo ini paling mahal membayarnya.
-6. **B-1..B-5** — beban yang belum menggigit tapi tumbuh setiap hari.
-7. **C-1, C-2** — utang struktur; kerjakan saat menyentuh berkasnya, jangan
+6. **A-4, C-3, C-5** — tiga bentuk "hilang tanpa jejak", persis kelas kegagalan
+   yang repo ini paling mahal membayarnya.
+7. **B-1..B-5** — beban yang belum menggigit tapi tumbuh setiap hari.
+8. **C-1, C-2** — utang struktur; kerjakan saat menyentuh berkasnya, jangan
    dijadikan proyek sendiri.

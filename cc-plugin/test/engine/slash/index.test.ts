@@ -217,3 +217,34 @@ describe("tombol pindah sesi di bawah pohon /branch", () => {
     expect(isi.command).toBe("/resume 11111111-2222-3333-4444-555555555555");
   });
 });
+
+describe("parseSlashCallback: tombol pindah sesi harus membawa UUID", () => {
+  // `handleSwitch` menerjemahkan apa pun yang lolos di sini menjadi
+  // `/resume <isinya>` dan menyuntikkannya ke Claude Code. Tanpa pemeriksaan
+  // bentuk, satu-satunya yang menjaga isi perintah itu adalah keyakinan bahwa
+  // tombolnya pasti lahir dari `sendListing` -- dan `reply` menerima `buttons`
+  // yang datanya ditulis AI, jadi keyakinan itu tidak punya dasar.
+  test("UUID yang sah diterima", () => {
+    const id = "1aaadf06-d9ad-40e2-b2d7-39404c273f5c";
+    expect(parseSlashCallback(`${SLASH_CALLBACK_SWITCH}${id}`)).toEqual({
+      kind: "switch",
+      sessionId: id,
+    });
+  });
+
+  test("yang bukan UUID bukan milik lapisan ini sama sekali", () => {
+    // `null`, bukan error: tombol yang bentuknya asing diperlakukan seperti
+    // tombol fitur lain -- diteruskan ke AI, bukan dieksekusi.
+    expect(parseSlashCallback(`${SLASH_CALLBACK_SWITCH}--dangerously`)).toBeNull();
+    expect(parseSlashCallback(`${SLASH_CALLBACK_SWITCH}`)).toBeNull();
+    expect(parseSlashCallback(`${SLASH_CALLBACK_SWITCH}1aaadf06`)).toBeNull();
+  });
+
+  test("UUID huruf besar tetap diterima", () => {
+    const id = "1AAADF06-D9AD-40E2-B2D7-39404C273F5C";
+    expect(parseSlashCallback(`${SLASH_CALLBACK_SWITCH}${id}`)).toEqual({
+      kind: "switch",
+      sessionId: id,
+    });
+  });
+});

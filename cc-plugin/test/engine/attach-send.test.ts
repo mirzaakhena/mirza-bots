@@ -158,3 +158,24 @@ test("buttons bersama files dibatalkan di sini juga", () => {
     )
   ).toThrow(/cannot be combined/);
 });
+
+// Pagar tombol yang kedua, dan alasannya sama dengan yang pertama: kalau
+// penolakannya baru terjadi di Telegram, potongan teks sebelumnya SUDAH
+// mendarat di HP user dan tidak bisa ditarik kembali.
+test("callback_data di atas 64 byte ditolak lewat prepareReply", () => {
+  expect(() =>
+    prepareReply("Pilih:", [[{ text: "Ya", data: "x".repeat(65) }]], undefined, sizer({}))
+  ).toThrow(/callback_data_too_long/);
+});
+
+test("tombol AI tidak boleh memakai namespace lapisan slash", () => {
+  expect(() =>
+    prepareReply("Pilih:", [[{ text: "Bersihkan", data: "slash:go:/clear" }]], undefined, sizer({}))
+  ).toThrow(/reserved_callback_data/);
+});
+
+test("tombol yang sah tetap lewat", () => {
+  expect(() =>
+    prepareReply("Pilih:", [[{ text: "Ya", data: "confirm_yes" }]], undefined, sizer({}))
+  ).not.toThrow();
+});

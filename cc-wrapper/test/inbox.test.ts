@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { parsePayload, MAX_BATCH_ITEMS } from "../src/inbox";
+import { parsePayload, MAX_BATCH_ITEMS, isStalePayload, STALE_PAYLOAD_MS } from "../src/inbox";
 
 describe("parsePayload", () => {
   test("objek tunggal jadi satu item", () => {
@@ -53,5 +53,43 @@ describe("parsePayload", () => {
   test("BOM di depan tidak merusak parsing", () => {
     const r = parsePayload("﻿" + JSON.stringify({ command: "/compact" }));
     expect(r.kind).toBe("single");
+  });
+});
+
+describe("isStalePayload (perintah yang menunggu terlalu lama)", () => {
+  // Kenapa pagar ini ada: cc-plugin menulis ke `slash/` tanpa tahu ada wrapper
+  // atau tidak -- dan memang tidak bisa tahu. Buka `claude` langsung (cara yang
+  // README sendiri dokumentasikan), kirim slash dari Telegram sepanjang sore,
+  // dan semuanya menumpuk. Besok pagi `mirza-bot` dijalankan dan SEMUANYA
+  // disuntik berurutan ke sesi baru -- termasuk `/clear` yang menghapus konteks
+  // yang belum sempat dipakai.
+  //
+  // Yang dipakai mtime berkasnya, bukan stempel di dalam payload: bentuk
+  // payload adalah kontrak antar-paket, dan kontrak yang tidak perlu diubah
+  // lebih baik tidak diubah.
+  const now = 1_000_000_000_000;
+
+  test("payload yang baru ditulis tidak basi", () => {
+    expect(isStalePayload(now, now)).toBe(false);
+    expect(isStalePayload(now - 1_000, now)).toBe(false);
+  });
+
+  test("tepat di ambang belum basi", () => {
+    expect(isStalePayload(now - STALE_PAYLOAD_MS, now)).toBe(false);
+  });
+
+  test("lewat ambang berarti basi", () => {
+    expect(isStalePayload(now - STALE_PAYLOAD_MS - 1, now)).toBe(true);
+  });
+
+  test("payload semalam basi", () => {
+    expect(isStalePayload(now - 12 * 3600_000, now)).toBe(true);
+  });
+
+  test("mtime di masa depan tidak dianggap basi", () => {
+    // Jam yang bergeser atau berkas yang mtimenya disunting: arah salahnya
+    // dipilih ke MENJALANKAN, bukan membuang. Perintah yang dibuang tanpa
+    // sebab lebih membingungkan daripada perintah yang berjalan sedikit telat.
+    expect(isStalePayload(now + 60_000, now)).toBe(false);
   });
 });
