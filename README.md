@@ -694,7 +694,7 @@ CLAUDE_PROJECT_DIR=C:/Users/Mirza/workspace/mirza_01_bot bun run doctor
   "bot": "mirza_01_bot",
   "lock": { "bot": "mirza_01_bot", "pid": 41234, "alive": true },
   "conversationsReady": true,
-  "version": "0.40.0"
+  "version": "0.41.0"
 }
 ```
 
@@ -702,6 +702,12 @@ CLAUDE_PROJECT_DIR=C:/Users/Mirza/workspace/mirza_01_bot bun run doctor
 melayani bot ini sekarang, dan `alive: false` dengan `pid` terisi berarti kuncinya
 basi. Membedakan "tidak berjalan" dari "aman" adalah seluruh guna laporan ini,
 jadi keadaan kosong pun dilaporkan alih-alih dihilangkan.
+
+Sejak 0.41.0, `bot.pid` benar-benar **dilepas** saat sesi ditutup — engine
+memasang handler `SIGINT`/`SIGTERM`/`SIGHUP`/`exit` yang menjalankan
+pembersihnya. Jadi `alive: false` dengan `pid` terisi kembali berarti apa yang
+seharusnya: sesi yang mati mendadak. Sebelum itu ia keadaan sehari-hari, karena
+pembersihnya tidak pernah dipanggil sama sekali.
 
 **Doctor tidak menulis apa pun.** Ia memeriksa config **lebih dulu**, dan
 database yang belum ada dilaporkan `conversationsReady: false` alih-alih dibuat

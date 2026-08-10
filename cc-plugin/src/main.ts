@@ -1,6 +1,7 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { startEngine } from "./engine/engine";
 import { buildServer } from "./server";
+import { installShutdown } from "./engine/shutdown";
 
 // Claude Code sets CLAUDE_PROJECT_DIR for MCP servers precisely so they can
 // resolve the session's project directory without depending on the process's
@@ -32,6 +33,21 @@ export async function main(): Promise<void> {
   }
 
   console.error(`cc-plugin: engine running for bot "${started.engine.bot}"`);
+
+  // Sebelum 0.41.0 tidak ada baris ini, dan `Engine.close()` karena itu tidak
+  // pernah berjalan sama sekali di produksi -- seluruh pembersihnya
+  // (`releaseBotLock`, pemindai inbox, keepalive typing, pemantau nama sesi)
+  // adalah kode mati, dan `bot.pid` tertinggal basi tiap kali sesi ditutup.
+  // Aturan-aturannya ada di engine/shutdown.ts, di mana ia bisa diuji.
+  installShutdown({
+    close: () => started.engine.close(),
+    on: (event, handler) => {
+      process.on(event as NodeJS.Signals, handler);
+    },
+    exit: (code) => process.exit(code),
+    onError: (err) => console.error(`cc-plugin: gagal menutup engine dengan rapi: ${err}`),
+  });
+
   const server = buildServer(started.engine, botHome);
   await server.connect(new StdioServerTransport());
 }

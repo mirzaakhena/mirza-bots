@@ -1213,6 +1213,12 @@ export function startEngine(botHome: string): EngineStart {
       // Sebelum db ditutup: pemindai yang masih berjalan akan mendorong ke
       // sink yang tujuannya sudah pergi.
       stopInboxScanner();
+      // Alasan yang SAMA PERSIS, dan sebelum 0.41.0 ia satu-satunya yang
+      // ketinggalan: buffer ini memegang dua timer per album (debounce 1,5 dtk
+      // dan hard cap 8 dtk) yang memanggil `deliver()` -> `insertMessage`.
+      // Album yang tiba tepat sebelum sesi ditutup akan menulis ke database yang
+      // sudah pergi. `stopAll`, bukan `flush`: yang dibatalkan memang isinya.
+      albumBuffer.stopAll();
       releaseBotLock(botPidPathIn(botHome), process.pid);
       conversationsDb.close();
     },

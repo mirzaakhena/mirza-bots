@@ -10,9 +10,9 @@ Temuan diurut dari yang paling bisa dibuktikan ke yang paling spekulatif. Setiap
 entri menyebut **bukti**, bukan kecurigaan — dan yang belum diverifikasi
 dinyatakan begitu apa adanya.
 
-> **Status per 2026-08-10 (0.40.0):** **A-1, A-2, A-3, A-7, A-8, dan A-10 sudah
-> diperbaiki.** Sisanya masih terbuka. Lihat catatan **✅ SUDAH DIPERBAIKI** di
-> masing-masing entri.
+> **Status per 2026-08-10 (0.41.0):** seluruh **kelompok A sudah diperbaiki
+> kecuali A-4 dan A-9.** Sisanya (B dan C) masih terbuka. Lihat catatan
+> **✅ SUDAH DIPERBAIKI** di masing-masing entri.
 
 ---
 
@@ -180,11 +180,29 @@ Konsekuensinya:
 - Indikator "typing…" yang sedang menyala ikut mati bersama proses, jadi tidak
   ada gejala — tapi itu keberuntungan, bukan desain.
 
-**Perbaikan — pilih satu, jangan biarkan menggantung:**
-pasang `process.on("SIGTERM"|"SIGINT"|"exit", () => engine.close())` di
-`main.ts`, **atau** hapus `close()` dan nyatakan di komentar bahwa siklus hidup
-engine = siklus hidup proses. Yang tidak boleh adalah membiarkan fungsi
-pembersih yang terlihat dipanggil padahal tidak.
+**✅ SUDAH DIPERBAIKI (0.41.0).** Dipilih menyambungkan, bukan menghapus:
+`installShutdown` di `engine/shutdown.ts`, dipasang dari `main.ts` pada cabang
+yang enginenya benar-benar hidup.
+
+Empat aturan, semuanya diuji dan tiga di antaranya diperiksa dengan mutation
+check:
+
+- **`exit` harus dipanggil sendiri.** Node MENGGANTIKAN perilaku bawaan begitu
+  handler sinyal dipasang; handler yang lupa keluar membuat proses bertahan
+  hidup sesudah diminta berhenti — kerusakan yang lebih besar daripada yang
+  sedang diperbaiki.
+- **`exit` ikut didaftar, bukan cuma sinyal**, karena di Windows sinyal POSIX
+  tidak selalu benar-benar sampai ke proses anak.
+- **`close` berjalan sekali saja.** `conversationsDb.close()` dua kali melempar,
+  dan sinyal memang datang berpasangan (Ctrl+C ke seluruh grup proses, lalu
+  handler `exit` menyusul).
+- **`close` yang melempar tidak menahan `exit`**, tapi kegagalannya
+  **dilaporkan** — pembersihan yang gagal diam-diam meninggalkan kunci basi
+  tanpa ada yang tahu kenapa.
+
+Efek sampingnya bisa diperiksa langsung: `bot.pid` kini benar-benar dilepas saat
+sesi ditutup, jadi `doctor` yang melaporkan `alive: false` dengan `pid` terisi
+kembali menjadi temuan (sesi mati mendadak), bukan keadaan sehari-hari.
 
 ---
 
@@ -198,8 +216,26 @@ yaitu `RangeError: Cannot use a closed database`.
 Hari ini tersembunyi karena A-5 (close tidak pernah dipanggil). Begitu A-5
 diperbaiki, ini muncul.
 
-**Perbaikan:** tambahkan `AlbumBuffer.stopAll()` (clear semua timer, buang semua
-bucket) dan panggil dari `close()` **sebelum** db ditutup.
+**✅ SUDAH DIPERBAIKI (0.41.0).** `AlbumBuffer.stopAll()` — membersihkan KEDUA
+timer tiap bucket lalu membuang semuanya — dipanggil dari `close()` sebelum db
+ditutup. `stopAll`, bukan `flush`: yang dibatalkan memang isinya.
+
+**Catatan jujur soal testnya, karena ia hampir lolos untuk alasan yang salah.**
+Versi pertama test-nya hijau, dan mutation check membuktikan itu tidak berarti
+apa-apa: mencabut `clearTimeout` mana pun **tidak** membuatnya merah. Sebabnya
+`buckets.clear()` sendirian sudah cukup membuat `flush()` pulang lebih awal,
+jadi `onFlush` memang tidak pernah dipanggil — entah timernya dibersihkan atau
+tidak.
+
+Yang benar-benar dibeli `clearTimeout` baru terlihat kalau ada bucket **baru**
+dengan kunci yang sama sesudahnya: timer basi milik bucket lama menembak
+`flush()` ke bucket baru itu dan mengirimnya jauh sebelum waktunya. Testnya
+ditulis ulang mengelilingi bentuk itu, dan kini kedua mutasi membuatnya merah.
+
+Untuk **panggilannya di dalam `close()`** dipasang pagar sumber, meniru pola
+yang sudah dipakai `reply-stored.test.ts`: daftar apa saja yang wajib disebut di
+badan `close()`. Batasnya disadari — ia menahan **pencabutan**, bukan
+penambahan; komponen bertimer baru harus ikut didaftarkan tangan.
 
 ---
 
@@ -540,8 +576,8 @@ dikerjakan", bukan "berapa mudah dikerjakan".
 3. ~~**A-1, A-7, A-8**~~ ✅ **selesai 0.40.0** — tiga efek samping yang menulis
    ke tempat yang bukan haknya. Kecil satu-satu, dan justru karena itu tidak
    pernah dikerjakan.
-4. **A-5 + A-6 bersamaan** — jangan diperbaiki terpisah; A-5 sendirian
-   memunculkan A-6.
+4. ~~**A-5 + A-6 bersamaan**~~ ✅ **selesai 0.41.0** — dan memang benar tidak
+   boleh terpisah: A-5 sendirian yang memunculkan A-6.
 5. **A-9, C-7 (script `test`/`typecheck`), CI** — memasang pagar sebelum
    menambah apa pun di atasnya.
 6. **A-4, C-3, C-5** — tiga bentuk "hilang tanpa jejak", persis kelas kegagalan

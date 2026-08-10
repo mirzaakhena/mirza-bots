@@ -48,4 +48,30 @@ export class AlbumBuffer<T> {
     this.buckets.delete(key);
     this.onFlush(key, bucket.items);
   }
+
+  /**
+   * Membuang semua yang menunggu TANPA memanggil `onFlush` sekali pun.
+   *
+   * Dipakai `Engine.close()`. Perbedaannya dengan `flush()` adalah seluruh
+   * gunanya: `flush` mengirimkan isinya, `stopAll` membatalkannya. Saat engine
+   * ditutup, database sudah (atau akan segera) tertutup -- memanggil `onFlush`
+   * di sana berarti `deliver()` menulis ke db yang sudah pergi, yaitu
+   * `RangeError: Cannot use a closed database`.
+   *
+   * Konsekuensi yang diterima sadar: album yang tiba di detik terakhir sebelum
+   * sesi ditutup HILANG. Itu memang sudah begitu sebelum ini -- prosesnya mati
+   * bersama timernya -- jadi yang berubah bukan nasib albumnya, melainkan
+   * apakah kepergiannya meninggalkan galat yang membingungkan.
+   *
+   * Kedua timer dibersihkan, bukan salah satu. Menghentikan debounce saja
+   * meninggalkan hard cap menembak beberapa detik kemudian -- bentuk kegagalan
+   * yang paling sulit dilacak, karena jarak antara sebab dan gejalanya jauh.
+   */
+  stopAll(): void {
+    for (const bucket of this.buckets.values()) {
+      clearTimeout(bucket.debounceTimer);
+      clearTimeout(bucket.hardCapTimer);
+    }
+    this.buckets.clear();
+  }
 }
