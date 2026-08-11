@@ -15,3 +15,6 @@ node_modules/
 
 # Scratch milik subagent-driven-development (ledger, brief, review package)
 .superpowers/
+
+# Worktree terisolasi (superpowers:using-git-worktrees)
+.worktrees/
