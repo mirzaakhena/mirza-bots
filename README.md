@@ -574,6 +574,25 @@ Guard yang sama menegakkan arah sebaliknya: giliran yang **sudah** membalas tapi
 tetap menulis prosa ke transcript ditegur sekali — prosa itu tidak dibaca
 siapa pun dan terus dibayar tokennya di setiap giliran berikutnya.
 
+**Larangan prosa itu hanya berlaku untuk giliran Telegram, dan guard harus tahu
+kapan giliran itu selesai.** Ada **tiga** pintu masuk, bukan dua: Telegram, bot
+lain, dan orang yang mengetik langsung di terminal ini. Selama pintu ketiga tidak
+dicatat, jangkar "pesan masuk terakhir" tidak pernah bergeser saat user pindah ke
+terminal — dan prosa yang justru **diminta** di sana dihitung sebagai prosa milik
+giliran Telegram yang sudah lama dijawab. Terukur di `bot-02` 2026-08-11: prompt
+terminal 02:12, jawabannya 02:51, dan `no-prose` menyuruh giliran itu diam dengan
+satu titik — padahal transcript satu-satunya tempat jawabannya bisa mendarat.
+
+Sejak 0.43.0 guard mencatat giliran terminal lewat cap `origin.kind === "human"`
+dari Claude Code, dan mengecek cap itu **paling dulu** — prompt yang kebetulan
+menempelkan tag `<channel source="…cc-plugin">` (hal yang wajar saat menanyakan
+bug pada guard ini) tidak lagi bisa menyamar jadi pesan Telegram. Yang gugur
+**hanya** larangan prosanya: pesan Telegram yang belum dijawab tetap ditagih,
+karena orang yang AFK tidak kehilangan haknya atas jawaban cuma karena sesudah
+pesannya ada yang membuka terminal. Capnya juga tidak disimpulkan dari "tidak ada
+tanda channel" — entri `<command-name>` milik slash datang tanpa origin juga, dan
+`send_slash` menerbitkan satu tiap kali bot mengganti nama sesinya sendiri.
+
 **Aturan punya nama, dan pelanggarannya dicatat.** Tiap aturan di
 `INSTRUCTION_BLOCKS` membawa `id` (`reply-required`, `no-prose`, `ack-first`,
 `reply-length`, `inter-bot-channel`, `expects-reply-only`). Teguran hook menyebut

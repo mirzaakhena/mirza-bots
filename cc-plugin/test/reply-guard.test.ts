@@ -39,8 +39,19 @@ const replyTurn = () =>
     },
   });
 
+// `origin: { kind: "human" }` BUKAN hiasan. Itulah satu-satunya cap yang Claude
+// Code bubuhkan pada giliran yang benar-benar DIKETIK orang di terminal, dan
+// bentuk ini disalin dari transcript asli
+// (~/.claude/projects/<project>/<session>.jsonl, 2026-08-11 02:12), bukan
+// dikarang. Versi lama helper ini tidak memuatnya, dan akibatnya test yang
+// seharusnya menjaga giliran terminal justru menguji sesuatu yang tidak pernah
+// ada di dunia nyata -- hijau tanpa menjaga apa pun.
 const typedByUser = (text: string) =>
-  JSON.stringify({ type: "user", message: { role: "user", content: text } });
+  JSON.stringify({
+    type: "user",
+    message: { role: "user", content: text },
+    origin: { kind: "human" },
+  });
 
 const plainAssistantTurn = () =>
   JSON.stringify({
@@ -294,6 +305,117 @@ describe("pelanggaran terse-turn", () => {
     );
 
     expect(decision.block).toBe(false);
+  });
+});
+
+// Pengulangan KETIGA dari satu kekeliruan yang sama: guard hanya mengenal dua
+// pintu masuk -- Telegram dan bot lain -- lalu memperlakukan SEMUA prosa
+// sesudahnya sebagai milik giliran Telegram terakhir. Pintu ketiga, orang yang
+// duduk di depan terminal ini dan mengetik sendiri, tidak pernah dicatat, jadi
+// jangkar `latestInboundIdx` tidak pernah bergerak dan giliran terminal
+// mewarisi kewajiban milik giliran Telegram yang sudah lama selesai.
+//
+// Terukur, bukan dugaan: transcript bot-02 `6ad8b29d` 2026-08-11 -- pesan
+// Telegram di baris 1012, `reply` di 1022, giliran yang diketik di terminal di
+// 1052 (02:12), prosa jawabannya di 1107 (02:51). `decideStop` atas transcript
+// itu memulangkan `no-prose`, menyuruh giliran terminal DIAM dan menutup diri
+// dengan satu titik -- padahal transcript adalah satu-satunya tempat jawaban
+// giliran itu bisa mendarat. Rule `no-prose` justru memakan jawaban yang benar.
+describe("giliran yang diketik di terminal", () => {
+  test("giliran terminal tercatat posisinya, terpisah dari inbound Telegram", () => {
+    const a = analyzeTranscript([inbound("32"), replyTurn(), typedByUser("lanjut yang tadi")]);
+
+    expect(a.latestLocalInboundIdx).toBe(2);
+    // Jangkar Telegram TIDAK boleh ikut bergeser: kalau ikut, pesan Telegram
+    // yang belum dijawab akan terhapus kewajibannya cuma karena user membuka
+    // terminal.
+    expect(a.latestInboundIdx).toBe(0);
+  });
+
+  test("prosa di giliran terminal TIDAK melanggar no-prose", () => {
+    const decision = decideStop(
+      analyzeTranscript([
+        inbound("32"),
+        replyTurn(),
+        typedByUser("kenapa hook-nya nyala?"),
+        proseTurn("Karena guard-nya tidak mengenal giliran terminal."),
+      ]),
+      false
+    );
+
+    expect(decision.block).toBe(false);
+  });
+
+  // Kesempitan yang disengaja, sama persis dengan precedent antar-bot: yang
+  // digugurkan HANYA larangan prosanya. Orang yang AFK di Telegram tidak
+  // kehilangan haknya atas jawaban cuma karena sesudah pesannya ada orang yang
+  // mengetik di terminal.
+  test("pesan Telegram yang belum dijawab tetap ditagih meski disusul giliran terminal", () => {
+    const decision = decideStop(
+      analyzeTranscript([inbound("32"), typedByUser("sebentar, kerjakan ini dulu")]),
+      false
+    );
+
+    expect(decision.block).toBe(true);
+    expect(decision.rule).toBe(RULE_REPLY_REQUIRED);
+  });
+
+  // Arah sebaliknya, dan ini yang paling mudah rusak: begitu pesan Telegram
+  // BARU datang sesudah giliran terminal, larangan prosa harus hidup lagi.
+  // Pengecualian yang tidak bisa dimatikan kembali sama saja dengan mencabut
+  // aturannya.
+  test("inbound Telegram yang lebih baru menghidupkan lagi larangan prosa", () => {
+    const decision = decideStop(
+      analyzeTranscript([
+        typedByUser("kerjakan ini"),
+        inbound("32"),
+        replyTurn(),
+        proseTurn("Jadi begini penjelasannya"),
+      ]),
+      false
+    );
+
+    expect(decision.block).toBe(true);
+    expect(decision.rule).toBe(RULE_NO_PROSE);
+  });
+
+  // Yang dipercaya cuma cap `origin.kind === "human"` dari Claude Code, bukan
+  // "tidak ada tanda channel maka berarti terminal". Entri `<command-name>`
+  // milik slash command juga datang tanpa origin dan tanpa isMeta, dan
+  // `send_slash` menerbitkan satu setiap kali bot mengganti nama sesinya
+  // sendiri. Menghitungnya sebagai giliran terminal akan membuat bot mematikan
+  // guard-nya sendiri, dengan satu panggilan tool yang terlihat tidak berbahaya.
+  test("entri slash command bukan giliran terminal", () => {
+    const slashEntry = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: "<command-name>/rename</command-name>\n<command-args>halo</command-args>",
+      },
+    });
+
+    const a = analyzeTranscript([inbound("32"), replyTurn(), slashEntry]);
+
+    expect(a.latestLocalInboundIdx).toBe(-1);
+  });
+
+  // Teks yang diketik user tidak boleh bisa menyamar jadi pesan Telegram cuma
+  // karena ia MENYEBUT tag channel -- dan menempelkan tag itu ke prompt adalah
+  // hal yang wajar terjadi saat orang menanyakan bug pada guard ini sendiri.
+  test("user yang menempelkan tag channel ke prompt tetap dihitung giliran terminal", () => {
+    const pasted = JSON.stringify({
+      type: "user",
+      message: {
+        role: "user",
+        content: 'kenapa `<channel source="plugin:cc-plugin:cc-plugin">` bikin hook nyala?',
+      },
+      origin: { kind: "human" },
+    });
+
+    const a = analyzeTranscript([pasted]);
+
+    expect(a.channelDriven).toBe(false);
+    expect(a.latestLocalInboundIdx).toBe(0);
   });
 });
 

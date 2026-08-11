@@ -51,6 +51,21 @@ export interface TranscriptAnalysis {
    * pengecualian yang menjaga pintu sambil membuka jendela.**
    */
   latestAgentInboundIdx: number;
+  /**
+   * Posisi giliran yang DIKETIK langsung di terminal ini oleh orangnya.
+   *
+   * Pintu masuk ketiga, dan yang paling lama tidak terlihat: guard hanya
+   * mengenal Telegram dan bot lain, jadi `latestInboundIdx` tidak pernah
+   * bergeser saat user pindah ke terminal -- dan prosa jawaban giliran terminal
+   * ditimpakan ke giliran Telegram yang sudah lama selesai.
+   *
+   * Terukur: transcript bot-02 `6ad8b29d` 2026-08-11 -- pesan Telegram di baris
+   * 1012, `reply` di 1022, prompt terminal di 1052, prosanya di 1107. Guard
+   * memvonis `no-prose` dan menyuruh giliran itu DIAM, padahal transcript satu-
+   * satunya tempat jawabannya bisa mendarat. Aturan yang memakan jawaban benar
+   * lebih buruk daripada aturan yang tidak ada.
+   */
+  latestLocalInboundIdx: number;
   latestReplyIdx: number;
   /**
    * Posisi giliran assistant terakhir yang menulis PROSA ke transcript.
@@ -83,6 +98,7 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
   let channelDriven = false;
   let latestInboundIdx = -1;
   let latestAgentInboundIdx = -1;
+  let latestLocalInboundIdx = -1;
   let latestReplyIdx = -1;
   let latestProseIdx = -1;
 
@@ -98,6 +114,26 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
 
     if (obj?.type === "user") {
       const content = textOf(obj?.message?.content);
+
+      // Orang yang mengetik sendiri di terminal ini. Diperiksa PALING DULU
+      // karena capnya yang paling bisa dipercaya: `origin.kind` dibubuhkan
+      // Claude Code, bukan disimpulkan dari isi teks. Prompt yang MENYEBUT tag
+      // `<channel source="...cc-plugin">` -- persis yang terjadi saat orang
+      // menanyakan bug pada guard ini -- akan lolos sebagai inbound Telegram
+      // kalau urutannya dibalik.
+      //
+      // Yang sengaja TIDAK dipakai: "tidak ada tanda channel maka berarti
+      // terminal". Entri `<command-name>` milik slash command juga datang tanpa
+      // origin, dan `send_slash` menerbitkan satu setiap kali bot mengganti nama
+      // sesinya sendiri -- guard akan mematikan dirinya sendiri lewat satu
+      // panggilan tool yang terlihat tidak berbahaya. Kalau suatu hari Claude
+      // Code berhenti membubuhkan `origin`, cek ini berhenti mengenali giliran
+      // terminal dan guard kembali terlalu galak; itu arah gagal yang benar,
+      // karena arah sebaliknya adalah kesunyian yang tidak dijaga siapa pun.
+      if (obj?.origin?.kind === "human") {
+        latestLocalInboundIdx = idx;
+        return;
+      }
 
       // Pesan dari bot lain TIDAK PERNAH menjadi "inbound yang menunggu
       // jawaban": tujuannya bot lain, bukan Telegram. Menghitungnya akan
@@ -160,6 +196,7 @@ export function analyzeTranscript(lines: string[]): TranscriptAnalysis {
     channelDriven,
     latestInboundIdx,
     latestAgentInboundIdx,
+    latestLocalInboundIdx,
     latestReplyIdx,
     latestProseIdx,
   };
@@ -204,6 +241,17 @@ export function decideStop(
   // satu-satunya tempat isinya boleh mendarat.
   const proseMilikGiliranAgent =
     a.latestAgentInboundIdx > a.latestInboundIdx && a.latestProseIdx > a.latestAgentInboundIdx;
+  // Hal yang sama, pintu ketiga: prosa itu milik giliran TERMINAL, bukan
+  // lanjutan giliran Telegram. Bentuknya sengaja dijiplak dari baris di atas --
+  // dua pengecualian yang seharusnya bersaudara tapi ditulis dengan bentuk
+  // berbeda akan menyimpang diam-diam saat salah satunya disentuh.
+  //
+  // Dan sama sempitnya: yang gugur HANYA larangan prosanya. Giliran terminal
+  // tidak boleh memaafkan pesan Telegram yang belum dijawab -- orang yang AFK
+  // tidak kehilangan haknya atas jawaban cuma karena ada yang membuka terminal
+  // sesudah pesannya. Kesempitan itu dijaga satu test yang mengujinya langsung.
+  const proseMilikGiliranTerminal =
+    a.latestLocalInboundIdx > a.latestInboundIdx && a.latestProseIdx > a.latestLocalInboundIdx;
   // Positions, not a boolean: answering the first message and then going quiet
   // on the second is the exact failure worth catching.
   // Sudah membalas -- kewajiban utamanya terpenuhi. Tersisa satu pelanggaran
@@ -216,7 +264,7 @@ export function decideStop(
   // adalah PENGULANGANNYA, dan `stopHookActive` di atas menjamin teguran ini
   // datang paling banyak sekali per giliran.
   if (a.latestReplyIdx > a.latestInboundIdx) {
-    if (a.latestProseIdx > a.latestInboundIdx && !proseMilikGiliranAgent) {
+    if (a.latestProseIdx > a.latestInboundIdx && !proseMilikGiliranAgent && !proseMilikGiliranTerminal) {
       // NAMA ATURAN + IMPERATIF, tanpa mengulang alasannya (spec 2026-08-10
       // K-5). Alasannya sudah dibayar sekali di `instructions`, dan kalimat
       // aslinya masih ada di context AI di bawah judul `Rule no-prose:` --
