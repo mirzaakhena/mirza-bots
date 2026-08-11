@@ -1,7 +1,9 @@
 # Spec — tombol fallback `✏️ Explain manually` yang diinjeksi mesin
 
 Tanggal keputusan: 2026-08-11. Berlaku untuk `mirza-bots/cc-plugin`.
-Sesudah ini setiap keyboard yang AI kirim lewat `reply` **selalu** berakhir dengan satu baris `✏️ Explain manually` yang ditempelkan kode, dan dua aturan bernama baru menjaga sisi yang tidak bisa ditempelkan kode.
+Sesudah ini setiap keyboard yang AI kirim lewat `reply` **selalu** berakhir dengan satu baris `✏️ Explain manually` yang ditempelkan kode. Sisi yang tidak bisa ditempelkan kode — kebiasaan **menawarkan** tombol — dijaga dua aturan bernama baru plus satu klausa umpan balik di hasil tool.
+
+Tiga lapisan, dan pembagiannya adalah inti spec ini: mesin menjamin baris terakhir (K-1..K-5), teks aturan mengajarkan kapan menawarkan (K-6..K-7), dan hasil tool memberi tahu sesudah kejadian (K-9). Tidak ada satu pun yang memblokir.
 
 ---
 
@@ -65,9 +67,21 @@ Terbukti pada uji hidup 2026-08-11: tap menghasilkan `→ manual` di layar user,
 
 Aturan lamanya "diakhiri `?` → tombol, tanpa kecuali". Vonis user 2026-08-01, dikutip di `SKILL.md:28-29`: *"cukup mengganggu juga kalau setiap saat keluar buttons."* Menghidupkan detektor `?` berarti membatalkan keputusan yang sudah diambil dengan bukti.
 
-**T-8. Bukti hidup dari sesi brainstorming spec ini sendiri.**
+**T-8. Bukti hidup dari sesi brainstorming spec ini sendiri — tiga kejadian.**
 
-AI mengirim pertanyaan biner sebagai teks polos **dua kali** di dalam sesi yang seluruh isinya membahas tombol — ditangkap user, bukan oleh mesin. Ini menutup argumen "cukup diingatkan sekali": lupa terjadi di sesi yang paling sadar sekalipun.
+AI mengirim pertanyaan yang jawabannya bisa dipilih dari daftar pendek sebagai **teks polos**, tiga kali, di dalam sesi yang seluruh isinya membahas tombol. Ketiganya ditangkap **user**, tidak satu pun oleh mesin.
+
+| # | pertanyaannya | diakhiri `?` |
+|---|---|---|
+| 1 | *"Mau aku tulis spec-nya dulu, atau kita putuskan ketiga ini di chat lalu langsung kerja?"* | ya |
+| 2 | *"Setuju, atau mau semuanya Indonesia dengan penanda?"* | ya |
+| 3 | *"Kalau ada yang mau diubah, bilang — kalau sudah oke, aku lanjut bikin implementation plan."* | **tidak** |
+
+Ini menutup argumen "cukup diingatkan sekali": lupa terjadi di sesi yang paling sadar sekalipun.
+
+**Polanya, dan ini yang berguna:** ketiganya muncul saat pertanyaan menempel di **ekor** giliran yang pekerjaan utamanya hal lain — memutuskan urutan kerja, menutup pembahasan bahasa, melaporkan commit. Tombol diingat ketika pertanyaannya **adalah** pekerjaan giliran itu; ia terlupa ketika pertanyaannya cuma penutup. Yang bocor bukan pengetahuannya, melainkan perhatiannya — dan justru di giliran yang paling padat, yaitu giliran yang paling jauh dari `instructions` yang dibaca sekali di awal sesi.
+
+**Dan satu angka yang menentukan K-9:** dari tiga kejadian, hanya **dua** yang diakhiri tanda tanya. Detektor `?` apa pun karena itu berjangkauan 2 dari 3 pada data nyata sesi ini — bukan tebakan, dan bukan pula jaminan.
 
 ---
 
@@ -166,6 +180,26 @@ Alternatif yang ditolak untuk sekarang: menyimpan keyboard saat dikirim (`conver
 
 *Alasan menolak sekarang:* ia menyentuh skema DB dan handler tap, dua permukaan yang tidak perlu disentuh untuk menyelesaikan keluhan yang memicu spec ini. Ia layak jadi spec sendiri, dan K-3 justru mengurangi urgensinya — data yang bicara sudah menutup sebagian besar kerugiannya.
 
+**K-9. Aturan `buttons-when-pickable` mendapat UMPAN BALIK di hasil tool, bukan penegak yang memblokir.**
+
+Keputusan user 2026-08-11, sesudah alternatif "instruksi saja" disajikan dan ditolak.
+
+Bentuknya: `reply` yang **tidak** membawa `buttons` dan teksnya **berakhir** tanda tanya (karakter bukan-spasi terakhir) menghasilkan satu klausa tambahan di hasil tool.
+
+```
+sent (642 chars, asked without buttons)
+```
+
+*Kenapa bentuk ini, dan kenapa ia bukan pengulangan kesalahan 2026-08-01:* yang user bunuh waktu itu adalah aturan yang **memaksa tombol muncul** — keluhannya *"cukup mengganggu juga kalau setiap saat keluar buttons"* (T-7). Umpan balik di hasil tool tidak memunculkan tombol apa pun, tidak menolak kiriman, dan tidak sampai ke layar user. Ia cuma memberi tahu AI apa yang baru saja ia lakukan. Dua hal yang berbeda: satu mengubah yang user lihat, satu tidak.
+
+*Kenapa di hasil tool, bukan di `reminders.ts` atau hook:* T-1 spec 2026-08-10 sudah menilai bentuk ini *"paling murah dan paling kurang dihargai — datang di momen tindakan, tidak memakan giliran, dan tidak bernada menghakimi."* T-8 menunjukkan bahwa yang bocor adalah **perhatian pada giliran padat**, dan hanya bentuk inilah yang berbicara tepat pada saat tindakannya terjadi, bukan sebelum atau sesudah giliran.
+
+*Tempatnya `formatSendResult` di `server.ts:99`,* dengan detektornya sebagai fungsi murni di berkas yang sama. *Kenapa bukan di `messages.ts`* yang menampung pagar tombol lain: ini urusan lapisan server — teks hasil tool — dan satu-satunya pemakainya ada di `server.ts:296`. Test-nya pun sudah bertempat di `server.test.ts`.
+
+*Kenapa klausanya terse, tanpa mengajarkan apa pun:* klausa `formatSendResult` yang sudah ada semuanya fakta pendek (`over the 1000 guideline`, `2 files`), dan alasan aturannya sudah dibayar sekali di `instructions`. Ini juga sejalan dengan K-5 spec 2026-08-10: pesan di momen kejadian membawa tindakan, bukan pemahaman.
+
+*Yang TIDAK dilakukan:* memblokir, menolak, atau menambahkan tombol sendiri. Aturan ini tetap penilaian AI (bagian 5).
+
 ---
 
 ## 4. Test yang wajib ada
@@ -196,6 +230,16 @@ Suntingan pada test yang sudah ada:
 
 11. `test/engine/messages.test.ts:391` sekarang menulis `"✏️ Explain manually"` sebagai string mentah. Ia harus memakai `MANUAL_FALLBACK_BUTTON`. Tanpa itu, dua literal yang harus sama duduk di dua berkas dan bebas menyimpang — dan yang menyimpang di sini akan membuat test itu menjaga tombol yang sudah tidak ada.
 
+Umpan balik hasil tool (K-9), di `test/server.test.ts`:
+
+12. `reply` tanpa `buttons`, teks berakhir `?` → hasilnya memuat `asked without buttons`.
+13. `reply` **dengan** `buttons`, teks berakhir `?` → hasilnya **tidak** memuat klausa itu. Ini yang menjaga agar giliran yang sudah benar tidak ditegur.
+14. `reply` tanpa `buttons`, teks **tidak** berakhir `?` → juga tidak memuat klausa itu.
+
+Nomor 13 dan 14 lebih penting daripada 12: klausa yang muncul di saat yang salah adalah bentuk kegagalan yang membunuh seluruh kanal umpan balik ini, sama seperti ambang longgar membunuh `[from: system]` (K-7).
+
+15. Klausa lama tidak berubah bentuknya. Empat test `formatSendResult` yang sudah ada (`server.test.ts:418-450`) harus tetap hijau **kata per kata** — termasuk `sent (642 chars)` yang polos. Balasan tanpa tombol dan tanpa tanda tanya adalah mayoritas mutlak, dan barisnya tidak boleh jadi lebih berisik hanya karena fitur ini ada. Komentar di `server.test.ts:430-432` sudah menyatakan doktrin itu untuk berkas; di sini ia berlaku untuk tombol.
+
 ---
 
 ## 5. Batas yang diterima sadar
@@ -203,7 +247,8 @@ Suntingan pada test yang sudah ada:
 - **`findUnsafeButtonData` tidak memeriksa tombol injeksi saat runtime.** Injeksi terjadi sesudah `prepareReply`, jadi yang menjaganya adalah test nomor 7, bukan pemeriksaan tiap kirim. Wajar: datanya konstanta milik kode sendiri, bukan masukan dari luar.
 - **Injeksi menambah satu baris, dan batas jumlah baris Telegram tidak diverifikasi.** Skill lama mengklaim "max 8 baris × 8 tombol"; klaim itu **tidak** diuji ulang, dan pagar jumlah tombol per baris memang sengaja tidak dipasang (`docs/2026-08-10-review-temuan-perbaikan.md:96`). Yang diketahui pasti hanya batas 100 tombol per pesan. Risikonya kecil — butuh keyboard 8+ baris dalam satu balasan chat — dan bila terjadi ia **tidak diam**: Telegram menjawab 400 dan `sendOutgoing` sudah membungkusnya menjadi `reply failed after N of M parts sent`. Memasang pagar atas batas yang belum diukur hanya memindahkan tebakan ke dalam kode.
 - **`buttons: []` tetap menghasilkan `reply_markup` kosong seperti hari ini.** Array kosong bersifat truthy di JS, jadi ternary di `:1065` tetap masuk; K-5 nomor 1 mengembalikannya apa adanya. Perilakunya tidak berubah, dan sengaja tidak diperbaiki di spec ini — itu keanehan yang sudah ada sebelumnya dan bukan bagian dari keluhan yang memicu spec ini.
-- **`buttons-when-pickable` tidak punya penegak mesin, dan tidak akan punya.** T-7 menutup jalur itu dengan keputusan user yang berdasar bukti. Yang menjaganya hanya teks aturan di context — dan T-8 membuktikan itu bocor. Diterima sadar: yang bisa dijamin mesin sudah dijamin (baris terakhir), dan yang tersisa adalah penilaian yang memang milik AI.
+- **`buttons-when-pickable` tidak akan pernah punya penegak yang MEMBLOKIR.** T-7 menutup jalur itu dengan keputusan user yang berdasar bukti. Yang menjaganya adalah teks aturan (K-6) plus umpan balik sesudah kejadian (K-9) — dua-duanya bisa diabaikan AI, dan itu memang bentuknya. Yang bisa dijamin mesin sudah dijamin: baris **terakhir**. Baris **pertama** tetap penilaian yang memang milik AI.
+- **Detektor K-9 berjangkauan 2 dari 3 pada data nyata.** Diukur, bukan diperkirakan: dari tiga kejadian di T-8, satu tidak diakhiri tanda tanya sama sekali dan karena itu lolos. Melebarkan detektornya (mis. "memuat `?` di mana pun") akan menyalakannya pada balasan yang cuma **membahas** pertanyaan, dan klausa yang terlalu sering menyala berhenti terbaca — kerugiannya lebih besar daripada satu kejadian yang lolos. Kelas yang lolos punya nama: pertanyaan yang ditulis sebagai kalimat berita (*"kalau ada yang mau diubah, bilang"*), dan tidak ada pola yang bisa mengenalinya tanpa mengenali maksud.
 
 ---
 
@@ -215,3 +260,5 @@ Suntingan pada test yang sudah ada:
 - **Pagar jumlah tombol per baris atau per keyboard.** Batasnya belum diukur (bagian 5).
 - **Memindahkan aturan apa pun antara `INSTRUCTION_BLOCKS` dan `reminders.ts`** selain menambah dua penghuni baru di yang pertama (K-7).
 - **Menyentuh keyboard milik lapisan slash** (`engine.ts:644`, `:771`). Tombol "explain manually" di daftar sesi tidak berarti apa-apa.
+- **Memblokir atau menolak `reply` yang tidak membawa tombol** (K-9). Umpan baliknya memberi tahu, bukan menggerbangi. Menjadikannya gerbang berarti menghidupkan ulang aturan yang user bunuh 2026-08-01 (T-7), kali ini dengan pakaian berbeda.
+- **Menaruh aturan tombol sebagai skill.** Bentuk itu sudah dicoba di sistem lama dengan kondisi terbaiknya — `description`-nya memuat seluruh aturan dan diawali *"MANDATORY before sending every Telegram reply"*, jadi ia hadir di context tanpa perlu di-invoke — dan tetap bocor (T-2). Skill juga tidak bisa punya rule-id, sehingga pelanggarannya tak bisa disebut namanya maupun dihitung.
