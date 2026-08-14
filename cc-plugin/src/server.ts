@@ -202,6 +202,41 @@ export const INSTRUCTION_BLOCKS: InstructionBlock[] = [
     id: "reply-length",
     text: `Keep replies short: aim for about ${REPLY_LENGTH_GUIDELINE} characters. This is a chat on someone's phone, not a document. If a topic needs more room, send several focused \`reply\` calls that each stand on their own rather than one long block. Nothing is ever rejected for being long -- a reply past Telegram's hard limit is split into several messages automatically -- so this is about what is worth reading, not about what fits.`,
   },
+  // DUA ENTRI, BUKAN SATU. Alasannya doktrin yang sama yang memecah
+  // `reply-required` dari `no-prose` (spec 2026-08-10 K-3): satu id untuk dua
+  // kewajiban membuat catatan pelanggaran tidak bisa membedakan dua kegagalan
+  // yang obatnya berlawanan. Di sini keduanya adalah LUPA MENAWARKAN dan SALAH
+  // MERESPONS TAP.
+  //
+  // Kalimat terakhir aturan pertama -- larangan menulis tombol jalan keluar
+  // sendiri -- adalah pasangan dedupe di `withManualFallback`: mesin yang sudah
+  // menjamin kehadirannya membuat tulisan tangan AI jadi risiko kembar, bukan
+  // cadangan.
+  {
+    id: "buttons-when-pickable",
+    text:
+      "Before sending a `reply`, ask one question about it: can the answer you want be picked " +
+      "from a short list? A confirmation where yes/no genuinely settles it, or a menu of 2-4 " +
+      "named options -- both qualify, so attach `buttons`. Anything whose real answer is prose " +
+      "does not: an opinion, an explanation, a preference you cannot enumerate. A question mark " +
+      "is not the trigger, and flattening a real question into a false binary to earn a keyboard " +
+      "is worse than sending it as text. Keep labels short: for menus, narrate the options as a " +
+      "numbered list in the body and let the buttons be the bare numbers. Never write the " +
+      "escape-hatch button yourself -- the engine appends it to every keyboard you send.",
+  },
+  // Kalimat terakhirnya memaku CAKUPANNYA ke satu balasan, dan itu keputusan
+  // user 2026-08-11 atas kekhawatiran yang ia ajukan sendiri: "jangan kirim
+  // tombol lagi" tidak menyebut sampai kapan, dan AI yang menebak "seterusnya"
+  // akan mematikan fitur tombol pelan-pelan gara-gara tombol yang seharusnya
+  // sekali pakai.
+  {
+    id: "manual-fallback-tap",
+    text:
+      "When `let me explain manually instead` arrives as the user's message, they tapped the " +
+      "escape hatch: the options you offered did not fit. Answer with a single `reply` carrying " +
+      "no buttons at all, inviting them to say it in their own words. That applies to THAT reply " +
+      "only -- on the next turn, offer buttons again as usual under the rule above.",
+  },
   {
     id: "inter-bot-channel",
     text: `A message prefixed with ${AGENT_TURN_MARKER} came from ANOTHER BOT, not from the user. Do NOT answer it with \`reply\` -- that tool writes to the user's Telegram chat, and inter-bot traffic must stay off it. Answer with \`agent_send\` instead, addressed back to \`from_bot\`, with \`in_reply_to\` set to the \`agent_message_id\` from the meta and \`hop_count\` one higher than the incoming one.`,

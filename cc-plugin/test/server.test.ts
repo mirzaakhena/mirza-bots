@@ -926,6 +926,30 @@ describe("aturan bernama di dalam instructions", () => {
     expect(RULE_IDS).toContain("no-prose");
   });
 
+  // Disebut satu per satu, bukan cuma diandalkan ke test "semua id muncul":
+  // aturan yang HILANG tidak akan membuat test itu merah, karena ia hanya
+  // memeriksa id yang ada. Yang dijaga di sini keberadaannya.
+  test("dua aturan tombol ada, dan keduanya sampai ke pembacanya", () => {
+    expect(RULE_IDS).toContain("buttons-when-pickable");
+    expect(RULE_IDS).toContain("manual-fallback-tap");
+  });
+
+  // Kalimat aturannya harus menyebut PARAMETERNYA, bukan cuma "tawarkan
+  // tombol". Pelajaran `name-session`: pengingat yang menyuruh sebuah tindakan
+  // tanpa menyebut alatnya membuat bot uji membaca source code repo sebelum
+  // menemukan tool-nya.
+  test("aturan tombol menyebut parameter yang harus dipakai", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("Rule buttons-when-pickable:");
+    expect(SERVER_INSTRUCTIONS).toContain("`buttons`");
+  });
+
+  // Data tombolnya adalah SATU-SATUNYA sinyal yang AI terima saat jalan keluar
+  // itu ditap (K-4: tidak ada penerjemah). Kalau aturannya tidak mengeja data
+  // itu, AI menerima kalimat yang tidak dikenalnya dan menebak.
+  test("aturan tap mengeja data tombolnya, karena tidak ada penerjemah", () => {
+    expect(SERVER_INSTRUCTIONS).toContain("let me explain manually instead");
+  });
+
   test("blok penjelasan TIDAK diberi judul aturan", () => {
     const penjelasan = INSTRUCTION_BLOCKS.filter((b) => b.id === undefined);
 
