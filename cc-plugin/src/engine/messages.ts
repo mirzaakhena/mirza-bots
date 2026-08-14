@@ -9,7 +9,7 @@ import {
   type PollerDeps,
 } from "./telegram/poller";
 import { SLASH_CALLBACK_NAMESPACE } from "./slash";
-import type { ButtonRow, MessagesResult } from "./types";
+import type { Button, ButtonRow, MessagesResult } from "./types";
 
 export function apiRoot(): string {
   return process.env.TELEGRAM_API_ROOT ?? "https://api.telegram.org";
@@ -345,5 +345,61 @@ export function buildInlineKeyboard(rows: ButtonRow[]): InlineKeyboard {
     for (const btn of row) kb.text(btn.text, btn.data);
   }
   return kb;
+}
+
+/**
+ * Tombol jalan keluar yang mesin tempelkan ke SETIAP keyboard yang AI kirim.
+ *
+ * Kenapa mesin, bukan aturan: sistem lama sudah meminta AI menempelkannya
+ * sendiri lewat "self-check ritual", dan berkas aturannya sendiri mencatat
+ * hasilnya -- "the single most forgotten rule in this skill". Aturan ini sudah
+ * pernah gagal dalam bentuk instruksi, di sistem yang instruksinya masih hidup.
+ *
+ * Kenapa `data`-nya sepanjang ini, bukan `manual`: data dibaca DUA pembaca.
+ * `buildTappedMessageEdit` di atas menempelkannya ke pesan yang ditap, jadi
+ * user melihatnya di layar; dan tap mendaratkannya di context AI sebagai pesan
+ * user. Data bisu gagal di dua-duanya -- di layar terbaca seperti kebocoran
+ * internal, di context ia satu token tanpa arti begitu sesi berganti.
+ *
+ * Kenapa berbentuk "let me ...", bukan "explain manually": ia mendarat SEBAGAI
+ * PESAN USER. "explain manually" dari mulut user terbaca sebagai perintah
+ * kepada AI untuk menjelaskan -- arahnya terbalik dari maksudnya.
+ *
+ * 31 byte, jauh di bawah batas 64 byte `callback_data`. Yang menjaga angka itu
+ * adalah test yang menjalankan `findUnsafeButtonData` atas konstanta ini, bukan
+ * salinan kedua dari angka 64 di dalam test.
+ */
+export const MANUAL_FALLBACK_BUTTON: Button = {
+  text: "✏️ Explain manually",
+  data: "let me explain manually instead",
+};
+
+/**
+ * Menempelkan `MANUAL_FALLBACK_BUTTON` sebagai baris TERAKHIR, dan tidak
+ * melakukan apa-apa pada keyboard kosong.
+ *
+ * Keyboard kosong dilewati bukan demi kerapian: `assertNoButtonsWithFiles`
+ * melempar bila `buttons` dan `files` sama-sama terisi, jadi injeksi tanpa
+ * syarat akan membuat SETIAP balasan yang mengirim berkas gagal.
+ *
+ * Dedupe-nya berdasarkan `data` dan mengabaikan posisi. Label bisa berubah
+ * tanpa mengubah arti tombolnya; data adalah identitasnya. Dan memeriksa
+ * posisi menuntut keputusan kedua -- pindahkan atau biarkan -- sementara
+ * memindahkan tombol yang AI tulis sendiri adalah mesin menyunting maksud AI.
+ * Konsekuensinya diterima sadar: fallback yang AI tulis di tengah tetap di
+ * tengah. Aturan `buttons-when-pickable` melarang AI menulisnya, jadi dedupe
+ * ini jaring, bukan jalan utama.
+ *
+ * Idempoten, dan itu yang membuatnya aman dipanggil dari titik kedua kalau
+ * suatu hari ada.
+ */
+export function withManualFallback(rows: ButtonRow[]): ButtonRow[] {
+  if (rows.length === 0) return rows;
+  for (const r of rows) {
+    for (const b of r) {
+      if (b.data === MANUAL_FALLBACK_BUTTON.data) return rows;
+    }
+  }
+  return [...rows, [MANUAL_FALLBACK_BUTTON]];
 }
 

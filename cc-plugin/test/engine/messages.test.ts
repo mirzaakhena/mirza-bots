@@ -11,6 +11,8 @@ import {
   findUnsafeButtonData,
   handleHistoryRequest,
   handleSearchRequest,
+  MANUAL_FALLBACK_BUTTON,
+  withManualFallback,
 } from "../../src/engine/messages";
 import { insertMessage } from "../../src/engine/db/conversations-schema";
 import { openConversationsDb, searchMessages } from "../../src/engine/db/conversations-schema";
@@ -388,7 +390,7 @@ describe("findMissingButtonNarration (U-5: numbered buttons must be explained in
     expect(
       findMissingButtonNarration(
         "Pilih:\n1. Lanjut backup\n2. Batalkan",
-        row("1", "2", "✏️ Explain manually")
+        row("1", "2", MANUAL_FALLBACK_BUTTON.text)
       )
     ).toBeNull();
   });
@@ -543,5 +545,71 @@ describe("findUnsafeButtonData (apa yang Telegram dan lapisan slash tidak terima
   test("balasan tanpa tombol tidak pernah kena", () => {
     expect(findUnsafeButtonData()).toBeNull();
     expect(findUnsafeButtonData([])).toBeNull();
+  });
+});
+
+describe("withManualFallback", () => {
+  const row = (...texts: string[]) => texts.map((text) => ({ text, data: `d_${text}` }));
+
+  test("keyboard kosong tidak mendapat tombol apa pun", () => {
+    // K-1: tombol jalan keluar sendirian adalah keyboard yang menawarkan jalan
+    // keluar dari nol pilihan. Dan `assertNoButtonsWithFiles` melempar kalau
+    // buttons terisi bersama files -- injeksi tanpa syarat mematikan jalur berkas.
+    expect(withManualFallback([])).toEqual([]);
+  });
+
+  test("satu baris tombol mendapat satu baris fallback di bawahnya", () => {
+    const out = withManualFallback([row("1", "2")]);
+    expect(out.length).toBe(2);
+    expect(out[1]).toEqual([MANUAL_FALLBACK_BUTTON]);
+  });
+
+  test("baris tombol yang sudah ada tidak diubah", () => {
+    const asli = row("1", "2");
+    const out = withManualFallback([asli]);
+    expect(out[0]).toEqual(row("1", "2"));
+  });
+
+  test("fallback yang sudah ada di baris terakhir tidak jadi kembar", () => {
+    const out = withManualFallback([row("1", "2"), [MANUAL_FALLBACK_BUTTON]]);
+    expect(out.length).toBe(2);
+  });
+
+  test("fallback yang sudah ada di baris TENGAH juga tidak jadi kembar", () => {
+    // K-5: dedupe berdasarkan keberadaan, bukan posisi. Memeriksa posisi
+    // menuntut keputusan kedua -- pindahkan atau biarkan -- dan memindahkan
+    // tombol yang AI tulis sendiri adalah mesin menyunting maksud AI.
+    const out = withManualFallback([[MANUAL_FALLBACK_BUTTON], row("1")]);
+    expect(out.length).toBe(2);
+    expect(out[0]).toEqual([MANUAL_FALLBACK_BUTTON]);
+  });
+
+  test("dedupe memakai data, bukan label", () => {
+    // Label bisa berubah kapan saja tanpa mengubah arti tombolnya; data adalah
+    // identitasnya. Doktrin yang sama dipakai skill lama: "labels can change;
+    // ids are stable".
+    const berlabelLain = [{ text: "apa saja", data: MANUAL_FALLBACK_BUTTON.data }];
+    expect(withManualFallback([berlabelLain]).length).toBe(1);
+  });
+
+  test("idempoten", () => {
+    const sekali = withManualFallback([row("1")]);
+    expect(withManualFallback(sekali)).toEqual(sekali);
+  });
+
+  test("masukan tidak dimutasi", () => {
+    const masukan = [row("1")];
+    withManualFallback(masukan);
+    expect(masukan.length).toBe(1);
+  });
+
+  // Pengganti pemeriksaan runtime, dan bentuknya yang penting: ia menjalankan
+  // PAGAR YANG SEBENARNYA, bukan menyalin ambangnya. `expect(byteLength).
+  // toBeLessThan(64)` akan melahirkan salinan kedua dari angka 64, yaitu persis
+  // kelas kegagalan yang doktrin repo ini larang -- dua literal yang harus sama
+  // akan menyimpang diam-diam. Dengan bentuk ini, memperketat pagarnya membuat
+  // test ini ikut tahu.
+  test("tombol injeksi lolos pagar callback_data yang sebenarnya", () => {
+    expect(findUnsafeButtonData([[MANUAL_FALLBACK_BUTTON]])).toBeNull();
   });
 });
