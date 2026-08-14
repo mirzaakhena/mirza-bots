@@ -10,6 +10,16 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run \"${CLAUDE_PLUGIN_ROOT}/hooks/turn-reminder.ts\""
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
