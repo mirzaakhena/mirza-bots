@@ -72,6 +72,7 @@ import {
   buildTappedMessageEdit,
   deliverIncoming,
   findMissingButtonNarration,
+  findWordyButtonLabels,
   findUnsafeButtonData,
   buildInlineKeyboard,
   withManualFallback,
@@ -334,6 +335,14 @@ export function prepareReply(
   // alasan lengkapnya di komentar findMissingButtonNarration.
   const unnarrated = findMissingButtonNarration(text, buttons);
   if (unnarrated) throw new Error(unnarrated);
+
+  // Pasangannya, dan urutannya sengaja SESUDAH: keyboard berlabel kata tidak
+  // pernah punya angka untuk dinarasikan, jadi guard di atas selalu diam di
+  // sana. Yang di bawah ini yang punya kalimatnya. Dibalik urutannya, keyboard
+  // campur (satu angka tanpa baris, satu kata) akan dikeluhkan soal kata lebih
+  // dulu, dan AI memperbaiki yang bukan pelanggaran pertamanya.
+  const wordy = findWordyButtonLabels(buttons);
+  if (wordy) throw new Error(wordy);
 
   // Sebelum apa pun berangkat, sama seperti pagar di atasnya: `callback_data`
   // yang ditolak Telegram (>64 byte) atau yang membajak namespace lapisan slash

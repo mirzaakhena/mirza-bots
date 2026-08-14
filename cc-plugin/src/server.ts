@@ -220,9 +220,15 @@ export const INSTRUCTION_BLOCKS: InstructionBlock[] = [
       "named options -- both qualify, so attach `buttons`. Anything whose real answer is prose " +
       "does not: an opinion, an explanation, a preference you cannot enumerate. A question mark " +
       "is not the trigger, and flattening a real question into a false binary to earn a keyboard " +
-      "is worse than sending it as text. Keep labels short: for menus, narrate the options as a " +
-      "numbered list in the body and let the buttons be the bare numbers. Never write the " +
-      "escape-hatch button yourself -- the engine appends it to every keyboard you send.",
+      "is worse than sending it as text. For a menu, the options are written out in the body as a " +
+      "numbered list and the buttons carry BARE NUMBERS -- `1`, `2`, `3`, nothing else, no words " +
+      "and no emoji on the button itself. Mark the option you recommend with a ✅ on its line in " +
+      "the BODY, never on the button: a button that stops reading as a pure number silently " +
+      "disables the guard that keeps numbered keyboards readable. The single exception is a plain " +
+      "yes/no confirmation, where two short descriptive labels (`✅ Ya` / `❌ Tidak`) are right. " +
+      "This is enforced, not merely asked: a keyboard carrying two or more worded labels is " +
+      "rejected before anything is sent. Never write the escape-hatch button yourself -- the " +
+      "engine appends it to every keyboard you send.",
   },
   // Kalimat terakhirnya memaku CAKUPANNYA ke satu balasan, dan itu keputusan
   // user 2026-08-11 atas kekhawatiran yang ia ajukan sendiri: "jangan kirim

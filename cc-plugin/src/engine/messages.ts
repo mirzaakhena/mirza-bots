@@ -248,7 +248,10 @@ export async function deliverIncoming(
  * Deliberately fires only where the intent is unambiguous:
  *   - non-numeric labels are ignored entirely, so the convention's own required
  *     escape hatch (`✏️ Explain manually`) can never trip it, and a descriptive
- *     keyboard (`✅ Ya` / `❌ Tidak`) is none of this rule's business;
+ *     keyboard (`✅ Ya` / `❌ Tidak`) is none of this rule's business -- that
+ *     direction belongs to `findWordyButtonLabels` below, which is the pair of
+ *     this one: this guard makes numbers meaningful, that one makes them
+ *     mandatory;
  *   - 2+ numeric labels are required, because a lone `1` is as likely to be a
  *     quantity as an option, and blocking a send on that guess costs more than
  *     it saves.
@@ -274,8 +277,99 @@ export function findMissingButtonNarration(text: string, buttons?: ButtonRow[]):
     `numbered_buttons_without_list: numeric button labels need a matching numbered line in the ` +
     `message text, and ${missing.map((n) => `"${n}"`).join(", ")} ` +
     `${missing.length === 1 ? "has" : "have"} none. Either add one line per number to the text ` +
-    `(e.g. "1. Lanjut backup" / "2. Batalkan"), or drop the numbers and use short descriptive ` +
-    `labels instead (e.g. "✅ Ya" / "❌ Tidak"). Nothing was sent -- fix and resend.`
+    `(e.g. "1. Lanjut backup" / "2. Batalkan"), or -- only if this is really a yes/no ` +
+    `confirmation -- drop the numbers and use two short descriptive labels instead ` +
+    `(e.g. "✅ Ya" / "❌ Tidak"). Nothing was sent -- fix and resend.`
+  );
+}
+
+/**
+ * Kosakata konfirmasi: satu-satunya keyboard yang boleh berlabel kata.
+ *
+ * Dipisah jadi dua daftar karena yang dicari BUKAN "labelnya pendek" melainkan
+ * "keyboardnya sepasang, satu setuju satu tolak". Dua tombol pendek yang
+ * sama-sama setuju ("Ya" / "Oke") bukan konfirmasi, itu menu yang kebetulan
+ * kembar -- dan menu wajib berangka.
+ *
+ * `\b` memperlakukan emoji sebagai batas kata, jadi "✅ Ya" tetap cocok tanpa
+ * satu baris pun untuk membersihkannya lebih dulu.
+ */
+const CONFIRM_YES = /\b(ya|iya|yes|y|ok|oke|okay|sip|siap|gas|lanjut|jalan|kirim|setuju|benar)\b/i;
+const CONFIRM_NO = /\b(tidak|ga|gak|nggak|enggak|no|jangan|batal|batalkan|cancel|stop|skip|nanti)\b/i;
+
+/** `null` kalau labelnya tidak terbaca sebagai setuju MAUPUN tolak. */
+function confirmSide(label: string): "yes" | "no" | null {
+  const yes = CONFIRM_YES.test(label);
+  const no = CONFIRM_NO.test(label);
+  // Label yang memuat keduanya ("ya, jangan") ambigu bagi mesin, dan kalau
+  // ambigu bagi mesin ia juga ambigu di layar HP. Diperlakukan sebagai bukan
+  // konfirmasi, bukan ditebak.
+  if (yes === no) return null;
+  return yes ? "yes" : "no";
+}
+
+/**
+ * Pasangan `findMissingButtonNarration`, dan arahnya berlawanan: guard itu
+ * menuntut daftar bernomor SEKALI label berupa angka, guard ini menuntut
+ * labelnya berupa angka sejak awal.
+ *
+ * ## Kenapa ada (keputusan user 2026-08-14)
+ *
+ * Konvensinya sudah tertulis sejak spec 2026-08-11 -- "let the buttons be the
+ * bare numbers" -- tapi hanya sebagai teks. Akibatnya satu arah dijaga mesin
+ * dan arah sebaliknya tidak: AI yang menulis label berupa kata tidak pernah
+ * ditegur siapa pun, dan itulah yang user temukan di layar. Doktrin repo ini
+ * sudah menjawabnya sekali di guard sebelah: teks yang meminta baik-baik itu
+ * bocor; apa yang mesin bisa jamin, mesin jamin.
+ *
+ * Tanda ✅ untuk opsi rekomendasi SENGAJA tidak ikut dijaga di sini. Ia hidup
+ * di BADAN pesan, bukan di tombol -- keputusan user pada hari yang sama, dan
+ * bukan sekadar selera: centang di tombol membuat label berhenti terbaca
+ * sebagai angka murni, yang berarti `findMissingButtonNarration` mati diam
+ * persis di keyboard yang paling ramai. Dan "ada rekomendasi" memang tidak bisa
+ * dipaksakan mesin, karena tidak setiap menu punya satu.
+ *
+ * ## Ambangnya, dan pengecualian tunggalnya
+ *
+ * Dua label berkata baru menyala, alasan yang sama dengan ambang 2 di guard
+ * sebelah: satu tombol berkata bukan menu, ia tombol tindakan ("Kirim
+ * sekarang"), dan memblokirnya lebih mahal dari yang diselamatkan.
+ *
+ * Konfirmasi ya/tidak dua tombol dikecualikan. Bukan kompromi: "✅ Ya" /
+ * "❌ Tidak" sudah menjelaskan dirinya di layar, dan menomorinya justru menambah
+ * satu lapisan terjemahan pada pertanyaan yang paling tidak butuh.
+ *
+ * Tombol jalan keluar dibuang dari hitungan lebih dulu. Mesin menempelkannya
+ * SESUDAH guard ini (lihat urutan di `prepareReply`), jadi normalnya ia tidak
+ * pernah terlihat di sini -- tapi dedupe di `withManualFallback` ada justru
+ * karena AI kadang menulisnya sendiri, dan keyboard yang lolos dedupe tidak
+ * boleh mati di guard ini.
+ */
+export function findWordyButtonLabels(buttons?: ButtonRow[]): string | null {
+  const labels = (buttons ?? [])
+    .flat()
+    .filter(
+      (b) => b.data !== MANUAL_FALLBACK_BUTTON.data && b.text.trim() !== MANUAL_FALLBACK_BUTTON.text
+    )
+    .map((b) => b.text.trim());
+
+  const wordy = labels.filter((t) => !/^\d+$/.test(t));
+  if (wordy.length < 2) return null;
+
+  // Diperiksa atas SELURUH label, bukan cuma yang berkata: "1" / "❌ Tidak"
+  // bukan konfirmasi, itu menu setengah jadi.
+  if (labels.length === 2) {
+    const [a, b] = labels.map(confirmSide);
+    if (a !== null && b !== null && a !== b) return null;
+  }
+
+  return (
+    `wordy_button_labels: tombol menu harus berlabel ANGKA saja, sementara ` +
+    `${wordy.map((t) => `"${t}"`).join(", ")} berupa kata. Tulis opsinya sebagai daftar bernomor ` +
+    `di badan pesan (mis. "1. Lanjut backup" / "2. Batalkan"), taruh tanda ✅ pada BARIS yang kamu ` +
+    `rekomendasikan -- bukan pada tombolnya -- lalu kirim ulang dengan tombol "1" dan "2". ` +
+    `Pengecualian satu-satunya adalah konfirmasi ya/tidak dua tombol ("✅ Ya" / "❌ Tidak"). ` +
+    `Tidak ada yang terkirim.`
   );
 }
 

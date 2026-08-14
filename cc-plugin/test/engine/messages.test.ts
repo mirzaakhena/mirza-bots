@@ -8,6 +8,7 @@ import {
   buildAlbumMessage,
   buildTappedMessageEdit,
   findMissingButtonNarration,
+  findWordyButtonLabels,
   findUnsafeButtonData,
   handleHistoryRequest,
   handleSearchRequest,
@@ -437,6 +438,83 @@ describe("findMissingButtonNarration (U-5: numbered buttons must be explained in
     // cannot comply with -- it just retries the same thing.
     expect(error).toContain("1.");
     expect(error.toLowerCase()).toContain("descriptive");
+  });
+});
+
+describe("findWordyButtonLabels (menu wajib berangka, keputusan user 2026-08-14)", () => {
+  const row = (...labels: string[]) => [labels.map((text) => ({ text, data: `d_${text}` }))];
+
+  test("menu berlabel angka lewat", () => {
+    expect(findWordyButtonLabels(row("1", "2", "3"))).toBeNull();
+  });
+
+  test("menu berlabel kata ditolak", () => {
+    // Persis yang user temukan di layar 2026-08-14: keyboardnya terbaca, tapi
+    // konvensinya cuma hidup sebagai teks yang minta baik-baik.
+    expect(findWordyButtonLabels(row("Lanjut backup", "Pakai cadangan"))).not.toBeNull();
+  });
+
+  test("konfirmasi ya/tidak dikecualikan", () => {
+    expect(findWordyButtonLabels(row("✅ Ya", "❌ Tidak"))).toBeNull();
+    expect(findWordyButtonLabels(row("Lanjut", "Batal"))).toBeNull();
+  });
+
+  test("dua tombol yang sama-sama setuju BUKAN konfirmasi", () => {
+    // "Ya" / "Oke" bukan pertanyaan ya-tidak, itu menu yang kebetulan pendek --
+    // dan menu wajib berangka.
+    expect(findWordyButtonLabels(row("Ya", "Oke"))).not.toBeNull();
+  });
+
+  test("label yang memuat kedua sisi tidak ditebak", () => {
+    expect(findWordyButtonLabels(row("Ya, jangan", "Tidak"))).not.toBeNull();
+  });
+
+  test("satu tombol berkata bukan menu, jadi lewat", () => {
+    // Tombol tindakan tunggal ("Kirim sekarang"). Memblokirnya lebih mahal dari
+    // yang diselamatkan -- ambang yang sama dengan guard sebelah.
+    expect(findWordyButtonLabels(row("Kirim sekarang"))).toBeNull();
+  });
+
+  test("tombol jalan keluar tidak ikut dihitung", () => {
+    // Mesin menempelkannya sesudah guard ini, tapi dedupe di withManualFallback
+    // ada justru karena AI kadang menulisnya sendiri. Keyboard yang lolos dedupe
+    // tidak boleh mati di sini.
+    expect(
+      findWordyButtonLabels([
+        [{ text: "1", data: "a" }, { text: "2", data: "b" }],
+        [MANUAL_FALLBACK_BUTTON],
+      ])
+    ).toBeNull();
+    expect(findWordyButtonLabels(row("✅ Ya", "❌ Tidak", MANUAL_FALLBACK_BUTTON.text))).toBeNull();
+  });
+
+  test("keyboard campur angka dan kata masih di bawah ambang", () => {
+    expect(findWordyButtonLabels(row("1", "Batalkan saja"))).toBeNull();
+  });
+
+  test("baris tidak mengubah hitungan", () => {
+    expect(
+      findWordyButtonLabels([
+        [{ text: "Lanjut backup", data: "a" }],
+        [{ text: "Pakai cadangan", data: "b" }],
+      ])
+    ).not.toBeNull();
+  });
+
+  test("balasan tanpa tombol tidak pernah kena", () => {
+    expect(findWordyButtonLabels()).toBeNull();
+    expect(findWordyButtonLabels([])).toBeNull();
+  });
+
+  test("errornya mengajarkan perbaikannya, termasuk di mana ✅ ditaruh", () => {
+    const error = findWordyButtonLabels(row("Lanjut backup", "Pakai cadangan"))!;
+
+    // Penolakan yang tidak menyebut jalan keluarnya adalah aturan yang tidak
+    // bisa dipatuhi -- AI cuma mengulang kiriman yang sama.
+    expect(error).toContain("Lanjut backup");
+    expect(error).toContain("1.");
+    expect(error).toContain("✅");
+    expect(error).toContain("BARIS");
   });
 });
 

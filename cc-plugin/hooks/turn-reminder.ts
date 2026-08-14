@@ -78,7 +78,10 @@ export function buildTurnReminder(prompt: string): string | null {
   return (
     `Rule \`${RULE_BUTTONS_WHEN_PICKABLE}\` for THIS turn: if the answer you want can be picked ` +
     `from a short list -- a confirmation, or a menu of 2-4 named options -- attach the ` +
-    `\`buttons\` parameter to your \`reply\` call. If its real answer is prose, send it without ` +
+    `\`buttons\` parameter to your \`reply\` call. For a menu, write the options out as a numbered ` +
+    `list in the body and let the buttons be bare numbers (\`1\`, \`2\`, ...), with a ✅ marking ` +
+    `your recommended option on its line in the BODY, never on the button; a plain yes/no ` +
+    `confirmation may use two short labels instead. If its real answer is prose, send it without ` +
     `buttons. The engine appends the escape hatch itself; never write that one yourself.`
   );
 }

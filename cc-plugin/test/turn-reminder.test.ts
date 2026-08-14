@@ -37,6 +37,18 @@ describe("buildTurnReminder", () => {
     expect(r!).toContain("`reply`");
   });
 
+  // Pengingat inilah yang benar-benar dibaca saat giliran padat -- `instructions`
+  // cuma dibaca sekali di awal sesi. Sampai 2026-08-14 ia menyebut "attach
+  // buttons" tanpa menyebut konvensi angkanya sama sekali, jadi salinan yang
+  // menang justru salinan yang lupa aturannya. Dikunci di sini supaya kedua
+  // salinan tidak menyimpang diam-diam lagi.
+  test("menyebut konvensi angka dan letak tanda rekomendasi", () => {
+    const r = buildTurnReminder(promptKanal("[from: user]"))!;
+    expect(r).toContain("bare numbers");
+    expect(r).toContain("✅");
+    expect(r).toContain("BODY");
+  });
+
   // BUKAN bug yang ditest sebagai fitur. Hook UserPromptSubmit hanya menerima
   // { prompt }, tanpa transcript, jadi sinyal `origin` yang dipakai reply-guard
   // tidak tersedia di sini -- yang tersisa cuma regex tag. Harganya satu baris

@@ -543,6 +543,17 @@ memperbaikinya. Aturan ini dulu hanya hidup sebagai teks yang meminta AI
 mengingatnya, dan bocor **tiga kali dalam dua hari**, sekali dengan permintaan
 maaf in-band karena sudah melakukannya dua kali.
 
+**Menu wajib berlabel angka.** Pagar di atas menjaga satu arah saja — ia menuntut
+daftar bernomor *sekali* labelnya angka, tapi diam total pada keyboard berlabel
+kata. Sejak 2026-08-14 arah sebaliknya ikut dijaga: keyboard dengan **dua label
+berkata atau lebih** ditolak, dengan satu pengecualian, yaitu konfirmasi ya/tidak
+dua tombol (`✅ Ya` / `❌ Tidak`) yang memang sudah menjelaskan dirinya di layar.
+Opsi yang **direkomendasikan** ditandai `✅` pada barisnya di **badan pesan**,
+bukan di tombol: centang di tombol membuat labelnya berhenti terbaca sebagai
+angka murni, dan pagar bernomor di atas akan **mati diam** persis di keyboard
+yang paling ramai. Keberadaan rekomendasi itu sendiri tidak bisa dipaksakan mesin
+— tidak setiap menu punya satu — jadi bagian itu tetap hidup sebagai aturan teks.
+
 **`callback_data` divalidasi sebelum berangkat.** Telegram hanya menerima 1–64
 **byte** dan menjawab 400 di atasnya — dihitung per byte, jadi satu emoji
 memakan empat. Diperiksa di `prepareReply`, bukan dibiarkan Telegram yang
@@ -784,7 +795,7 @@ versi plugin lama. Restart sesinya.
 ## Testing
 
 ```bash
-cd cc-plugin  && bun test    # 671 test
+cd cc-plugin  && bun test    # 774 test
 cd cc-wrapper && bun test    #  61 test
 ```
 
@@ -836,7 +847,7 @@ cc-plugin/
 ├── src/main.ts                 titik masuk MCP; identitas bot dari folder sesi
 ├── src/server.ts               tool MCP, instructions, penanda sumber, aturan bernama
 ├── src/engine/engine.ts        perakitan: poller, handler grammy, jalur kirim
-├── src/engine/messages.ts      normalisasi pesan, keyboard, pagar narasi tombol
+├── src/engine/messages.ts      normalisasi pesan, keyboard, pagar narasi + label tombol
 ├── src/engine/chunk.ts         pemotongan balasan + penjahitan fence
 ├── src/engine/markdown.ts      CommonMark → MarkdownV2
 ├── src/engine/reminders.ts     pengingat mesin ([from: system])

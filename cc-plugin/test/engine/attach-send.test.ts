@@ -148,6 +148,33 @@ test("pagar tombol tak ternarasi tetap berlaku lewat prepareReply", () => {
   ).toThrow(/numbered_buttons_without_list/);
 });
 
+// Pagar arah sebaliknya, dan ia harus hidup di jalur yang sama: menu berlabel
+// kata ditolak sebelum satu byte pun berangkat, bukan sesudah potongan pertama
+// mendarat di HP.
+test("menu berlabel kata ditolak lewat prepareReply", () => {
+  expect(() =>
+    prepareReply(
+      "Pilih:",
+      [[{ text: "Lanjut backup", data: "a" }, { text: "Pakai cadangan", data: "b" }]],
+      undefined,
+      sizer({})
+    )
+  ).toThrow(/wordy_button_labels/);
+});
+
+// Pengecualian tunggalnya, dijaga di jalur nyata supaya konfirmasi ya/tidak
+// tidak ikut mati karena guard yang lewat di atasnya.
+test("konfirmasi ya/tidak tetap lewat prepareReply", () => {
+  expect(() =>
+    prepareReply(
+      "Jadi lanjut?",
+      [[{ text: "✅ Ya", data: "y" }, { text: "❌ Tidak", data: "n" }]],
+      undefined,
+      sizer({})
+    )
+  ).not.toThrow();
+});
+
 test("buttons bersama files dibatalkan di sini juga", () => {
   expect(() =>
     prepareReply(
