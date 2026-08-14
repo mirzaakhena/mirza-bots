@@ -212,18 +212,28 @@ pernah dijalankan.
 
 **`claude plugin install` TIDAK cukup.** Kalau plugin sudah terpasang, ia
 menjawab *"already installed"* dan diam-diam tetap memakai build lama. Urutan
-yang benar, ketiganya:
+yang benar, keempatnya:
 
 1. **Naikkan versi** di `cc-plugin/.claude-plugin/plugin.json` **dan**
    `package.json`. Tanpa ini, `update` tidak melihat ada yang perlu diambil.
-2. **Segarkan lalu update:**
+2. **Push ke GitHub.** Marketplace `mirza-bots` terdaftar sebagai **source
+   github** (`mirzaakhena/mirza-bots`), bukan folder lokal — lihat
+   `~/.claude/plugins/known_marketplaces.json`. `marketplace update` menarik dari
+   sana, jadi commit yang belum di-push **tidak terlihat olehnya**, dan repo
+   lokal bisa maju sendirian tanpa satu pun error.
+3. **Segarkan lalu update:**
    ```bash
    claude plugin marketplace update mirza-bots
    claude plugin update cc-plugin@mirza-bots
    ```
-3. **Restart sesi Claude Code** yang memakainya.
+4. **Restart sesi Claude Code** yang memakainya.
 
-⚠️ **Langkah 3 bukan formalitas, dan tidak ada apa pun yang mengingatkanmu kalau
+⚠️ **Gejala langkah 2 yang terlewat menyesatkan.** Yang muncul bukan error
+melainkan *"already at the latest version (0.45.0)"* — kalimat yang terbaca
+seperti "tidak ada yang perlu diambil", padahal versinya sudah dinaikkan di repo
+lokal beberapa menit sebelumnya. Terjadi 2026-08-14.
+
+⚠️ **Langkah 4 bukan formalitas, dan tidak ada apa pun yang mengingatkanmu kalau
 ia terlewat.** Claude Code mengunci versi plugin saat sesi dibuka. Sesi yang
 mulai 14 menit sebelum sebuah perbaikan dipasang akan terus menjalankan versi
 lama — termasuk hook-nya, yang bisa memblokir giliran dengan logika yang sudah
