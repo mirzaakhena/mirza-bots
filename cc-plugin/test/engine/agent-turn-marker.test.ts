@@ -365,6 +365,102 @@ test("pengumuman ganti nama sesi tidak pernah membawa penanda antar-bot", async 
   });
 }, 30000);
 
+/** Satu entri transcript yang Claude Code tulis saat monitor periodik memicu giliran. */
+function taskNotificationLine(): string {
+  return JSON.stringify({
+    type: "user",
+    origin: { kind: "task-notification" },
+    message: { role: "user", content: "<task-notification>\n<summary>Monitor event</summary>\n" },
+  });
+}
+
+/** Satu entri transcript untuk push antar-bot sungguhan. */
+function agentPushLine(fromBot: string): string {
+  return JSON.stringify({
+    type: "user",
+    isMeta: true,
+    origin: { kind: "channel", server: "plugin:cc-plugin:cc-plugin" },
+    message: {
+      role: "user",
+      content:
+        `<channel source="plugin:cc-plugin:cc-plugin" origin="agent" from_bot="${fromBot}" ` +
+        `agent_message_id="x" hop_count="0">\n[from: agent]\nkerjakan ini`,
+    },
+  });
+}
+
+/** Folder bot + transcript CC palsu yang isinya diatur test. */
+function botWithTranscript(lines: string[]): { home: string; transcript: string } {
+  const home = botFolder("bot-uji", { token: "123:fake", allowFrom: ["555"] });
+  const sessionId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  writeFileSync(sessionIdPathIn(home), sessionId, "utf8");
+  const ccDir = mkdtempSync(join(tmpdir(), "cc-transcript-"));
+  const transcript = join(ccDir, `${sessionId}.jsonl`);
+  writeFileSync(transcript, `${lines.join("\n")}\n`, "utf8");
+  writeCapturedStatus(statusPathIn(home), { transcript_path: transcript }, Date.now());
+  return { home, transcript };
+}
+
+// REGRESI PRODUKSI, dan alasan seluruh perubahan ini ada.
+//
+// Terukur `bot-02` 2026-08-13: push dari bot-04 masuk pukul 04:16, lalu SELAMA
+// 1,5 JAM setiap laporan monitor sweep milik bot itu sendiri (conversations.db
+// #178..#183) terbit dengan penanda "Dipicu oleh bot lain (bot-04)". User
+// akhirnya bertanya sendiri (#184), dan sudah mengonfirmasi ke bot-04 bahwa dia
+// tidak memicu apa pun (#187).
+//
+// Monitor periodik tidak pernah lewat `sink.push`, jadi `lastPushOrigin` masih
+// mengingat bot-04 -- ingatan proses tidak tahu batas giliran. Transcript tahu:
+// pemicu giliran itu `origin.kind === "task-notification"`.
+test("regresi: monitor periodik sesudah push antar-bot -> nol penanda", async () => {
+  await withFakeTelegram(async ({ enqueue }) => {
+    const { home } = botWithTranscript([taskNotificationLine()]);
+    const res = startEngine(home);
+    if (!res.ok) throw new Error(res.message);
+
+    const pushes = collectPushes(res.engine);
+    enqueue(textUpdate(555, "halo dari user"));
+    await pushes.wait((m) => m.text === "halo dari user");
+
+    // Push antar-bot SUNGGUHAN masuk -- ingatan proses sekarang menyebut bot-04.
+    dropAgentMessage(home, "u-1.json", "bot-04", "titipan kerjaan");
+    await pushes.wait((m) => m.meta.origin === AGENT_ORIGIN && m.meta.from_bot === "bot-04");
+
+    // ...tapi giliran yang menerbitkan laporan ini dipicu monitornya sendiri.
+    await res.engine.reply("django__django-13321 → FAIL (wrong_patch)");
+
+    const stored = lastAssistantText(home);
+    expect(stored).not.toContain(MARKER_PREFIX);
+    expect(stored).not.toContain("bot-04");
+
+    res.engine.close();
+  });
+});
+
+// Sisi sebaliknya, dan yang menjaga perbaikan di atas tidak berubah menjadi
+// "penanda dimatikan": giliran yang transcriptnya MEMANG dipicu push antar-bot
+// tetap wajib ditandai -- bahkan ketika ingatan proses berkata "user", yang
+// membuktikan transcript benar-benar sudah menjadi sumbernya.
+test("transcript berpemicu antar-bot -> tetap ditandai walau push terakhir dari user", async () => {
+  await withFakeTelegram(async ({ enqueue }) => {
+    const { home } = botWithTranscript([agentPushLine("bot-03")]);
+    const res = startEngine(home);
+    if (!res.ok) throw new Error(res.message);
+
+    const pushes = collectPushes(res.engine);
+    enqueue(textUpdate(555, "halo dari user"));
+    await pushes.wait((m) => m.text === "halo dari user");
+
+    await res.engine.reply("balasan untuk titipan bot-03");
+
+    const stored = lastAssistantText(home);
+    expect(stored.startsWith(MARKER_PREFIX)).toBe(true);
+    expect(stored).toContain("bot-03");
+
+    res.engine.close();
+  });
+});
+
 // Reset -- inilah yang mengunci "tidak nyangkut" (bukan flag ala
 // `telegramDriven` lama, audit area-10 §10.2). Tanpa test ini bug sistem
 // lama bisa lahir kembali diam-diam.

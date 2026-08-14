@@ -27,6 +27,7 @@ import { waitForCapture } from "./context/wait";
 import { loadConfig } from "./config";
 import { identifyBot } from "./identity";
 import { startInboxScanner, AGENT_ORIGIN } from "./agent/receive";
+import { readTurnOrigin, type TurnOrigin } from "./turn-origin";
 import { sendToPeer, type SendResult } from "./agent/send";
 import { listPeers } from "./agent/peers";
 import { buildReminderContext, collectReminders, renderReminders } from "./reminders";
@@ -359,8 +360,18 @@ export function prepareReply(
  * berikutnya SELALU mengembalikannya ke "user", apa pun yang terjadi sebelum
  * itu. Lihat `nextPushOrigin` di bawah untuk aturan resetnya, dan komentar di
  * `sink.push` (di dalam `startEngine`) untuk di mana ia benar-benar dipanggil.
+ *
+ * Sejak 2026-08-14 ia bukan lagi SUMBER penanda, melainkan jawaban CADANGAN --
+ * yang menjawab lebih dulu adalah `currentTurnOrigin` (transcript Claude Code).
+ * Alasannya di `turn-origin.ts`: "push terakhir" dan "pemicu giliran ini"
+ * ternyata dua pertanyaan berbeda, dan monitor periodik memperlihatkan bedanya.
+ *
+ * Bentuknya sengaja SATU tipe dengan `TurnOrigin`, bukan tipe kembar yang
+ * kebetulan mirip: keduanya menjawab pertanyaan yang sama dan mengalir ke
+ * fungsi yang sama, jadi dua definisi hanya menunggu hari di mana salah satunya
+ * disentuh sendirian.
  */
-export type LastPushOrigin = { kind: "user" } | { kind: "agent"; fromBot: string };
+export type LastPushOrigin = TurnOrigin;
 
 /**
  * Origin BERIKUTNYA sesudah satu push baru masuk. Murni dan diekspor supaya
@@ -595,6 +606,29 @@ export function startEngine(botHome: string): EngineStart {
   const sessionsNow = (): SessionInfo[] => {
     const dir = transcriptDir();
     return dir === null ? [] : listSessions(dir);
+  };
+
+  /**
+   * Origin giliran yang SEDANG BERJALAN -- pertanyaan yang penanda AB-4
+   * benar-benar tanyakan, dan yang `lastPushOrigin` tidak pernah bisa jawab.
+   *
+   * Alasan lengkapnya, beserta angka produksinya, ada di `turn-origin.ts`.
+   * Ringkasnya: `lastPushOrigin` menjawab "push TERAKHIR yang masuk ke proses
+   * ini", dan monitor periodik tidak pernah lewat `sink.push` sama sekali --
+   * jadi origin lama nyangkut berjam-jam dan menandai laporan bot itu sendiri
+   * sebagai titipan bot lain (`bot-02` conversations.db #178..#183).
+   *
+   * `lastPushOrigin` TETAP DIPERTAHANKAN sebagai jawaban cadangan, bukan
+   * dihapus: transcript bisa belum tertulis (status CC belum tertangkap tepat
+   * sesudah start, sesi baru yang belum menulis apa pun). Saat itu terjadi,
+   * arah gagalnya sengaja tetap seperti semula -- kelebihan menandai cuma
+   * berisik, kekurangan menandai mengembalikan masalah yang fitur ini tutup.
+   */
+  const currentTurnOrigin = (): LastPushOrigin => {
+    const dir = transcriptDir();
+    const sid = readCurrentSessionId(botHome);
+    if (dir === null || sid === undefined) return lastPushOrigin;
+    return readTurnOrigin(join(dir, `${sid}.jsonl`)) ?? lastPushOrigin;
   };
 
   /**
@@ -1052,7 +1086,7 @@ export function startEngine(botHome: string): EngineStart {
         // kode, bukan kesopanan) dan supaya chunking (planParts di bawah)
         // menghitung penandanya sebagai bagian dari teks yang dipotong,
         // bukan tempelan sesudahnya yang bisa merusak batas potongan.
-        const marker = withOriginMarker ? buildAgentOriginMarker(lastPushOrigin) : null;
+        const marker = withOriginMarker ? buildAgentOriginMarker(currentTurnOrigin()) : null;
         const outgoingText = marker ? `${marker}\n\n${text}` : text;
 
         // Satu panggilan, di atas segalanya: pagar narasi tombol, larangan
