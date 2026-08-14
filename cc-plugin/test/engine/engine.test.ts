@@ -14,6 +14,7 @@ import {
 } from "../../src/engine/paths";
 import { buildBridgeCommand } from "../../src/engine/context/install";
 import { openConversationsDb, insertMessage } from "../../src/engine/db/conversations-schema";
+import { MANUAL_FALLBACK_BUTTON } from "../../src/engine/messages";
 
 /**
  * Sebuah folder bot: sebuah folder, dan config.json di dalamnya. Itu saja
@@ -161,8 +162,13 @@ test("reply before any message has arrived explains itself instead of guessing a
 // bisa memverifikasi chat_id yang benar-benar dipakai lewat body request),
 // endpoint lain (getMe, getUpdates, setMyCommands) dijawab OK generik supaya
 // polling latar belakang milik startEngine tidak berisik gagal di tengah test.
-function withFakeTelegram<T>(fn: (baseUrl: string, sentTo: string[]) => Promise<T>): Promise<T> {
+function withFakeTelegram<T>(
+  fn: (baseUrl: string, sentTo: string[], bodies: Record<string, unknown>[]) => Promise<T>
+): Promise<T> {
   const sentTo: string[] = [];
+  // Body request yang UTUH. `sentTo` menjawab "ke chat mana", dan itu cukup
+  // untuk W-27; keyboard butuh pertanyaan lain -- "apa yang dikirim".
+  const bodies: Record<string, unknown>[] = [];
   const server = Bun.serve({
     port: 0,
     fetch: async (req) => {
@@ -170,6 +176,7 @@ function withFakeTelegram<T>(fn: (baseUrl: string, sentTo: string[]) => Promise<
       if (path.endsWith("/sendMessage")) {
         const body = (await req.json()) as { chat_id: string | number };
         sentTo.push(String(body.chat_id));
+        bodies.push(body as Record<string, unknown>);
         return Response.json({
           ok: true,
           result: { message_id: sentTo.length, date: 0, chat: { id: body.chat_id }, text: "" },
@@ -189,7 +196,7 @@ function withFakeTelegram<T>(fn: (baseUrl: string, sentTo: string[]) => Promise<
   const prevRoot = process.env.TELEGRAM_API_ROOT;
   process.env.TELEGRAM_API_ROOT = `http://localhost:${server.port}`;
 
-  return fn(process.env.TELEGRAM_API_ROOT, sentTo).finally(() => {
+  return fn(process.env.TELEGRAM_API_ROOT, sentTo, bodies).finally(() => {
     server.stop();
     if (prevRoot === undefined) delete process.env.TELEGRAM_API_ROOT;
     else process.env.TELEGRAM_API_ROOT = prevRoot;
@@ -261,6 +268,59 @@ test("reply still refuses when conversations.db is genuinely empty, without blam
   expect(message).toContain("no_known_chat");
   expect(message).not.toContain("Telegram");
   res.engine.close();
+});
+
+// Test unit di messages.test.ts TIDAK membuktikan ini: fungsi murni yang benar
+// tapi tidak pernah dipanggil lolos semuanya. Yang dijaga di sini adalah TITIK
+// PANGGILNYA, dan satu-satunya bukti yang sah adalah body yang benar-benar
+// berangkat ke Telegram.
+test("keyboard yang benar-benar dikirim berakhir dengan tombol jalan keluar", async () => {
+  await withFakeTelegram(async (_baseUrl, _sentTo, bodies) => {
+    const home = botFolder("bot-uji", { token: "123:fake", allowFrom: ["1"] });
+
+    const db = openConversationsDb(conversationsDbPathIn(home));
+    insertMessage(db, { ts: "t", bot: "bot-uji", chatId: "555", source: "user", text: "halo" });
+    db.close();
+
+    const res = startEngine(home);
+    if (!res.ok) throw new Error(res.message);
+
+    await res.engine.reply("Pilih:\n1. Lanjut\n2. Batal", [
+      [
+        { text: "1", data: "opt-1" },
+        { text: "2", data: "opt-2" },
+      ],
+    ]);
+
+    const markup = bodies.at(-1)!.reply_markup as { inline_keyboard: unknown[][] };
+    expect(markup.inline_keyboard.length).toBe(2);
+    expect(markup.inline_keyboard[1]).toEqual([
+      { text: MANUAL_FALLBACK_BUTTON.text, callback_data: MANUAL_FALLBACK_BUTTON.data },
+    ]);
+
+    res.engine.close();
+  });
+});
+
+// Cabang `undefined` di titik injeksi. Kalau ia ikut disentuh, balasan biasa
+// mulai membawa keyboard berisi satu tombol jalan keluar dari nol pilihan --
+// dan balasan biasa adalah mayoritas mutlak.
+test("balasan tanpa tombol tetap tanpa keyboard sama sekali", async () => {
+  await withFakeTelegram(async (_baseUrl, _sentTo, bodies) => {
+    const home = botFolder("bot-uji", { token: "123:fake", allowFrom: ["1"] });
+
+    const db = openConversationsDb(conversationsDbPathIn(home));
+    insertMessage(db, { ts: "t", bot: "bot-uji", chatId: "555", source: "user", text: "halo" });
+    db.close();
+
+    const res = startEngine(home);
+    if (!res.ok) throw new Error(res.message);
+
+    await res.engine.reply("cuma teks biasa");
+    expect(bodies.at(-1)!.reply_markup).toBeUndefined();
+
+    res.engine.close();
+  });
 });
 
 /**

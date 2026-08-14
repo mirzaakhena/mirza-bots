@@ -73,6 +73,7 @@ import {
   findMissingButtonNarration,
   findUnsafeButtonData,
   buildInlineKeyboard,
+  withManualFallback,
   handleHistoryRequest,
   handleSearchRequest,
 } from "./messages";
@@ -1062,7 +1063,24 @@ export function startEngine(botHome: string): EngineStart {
           statSync(p).size
         );
 
-        const replyMarkup = buttons ? buildInlineKeyboard(buttons) : undefined;
+        // Tombol jalan keluar ditempelkan DI SINI, sesudah `prepareReply`.
+        //
+        // Kenapa titik ini: `buildInlineKeyboard` punya satu pemanggil, yaitu
+        // baris ini, sementara menu milik lapisan slash menyusun
+        // `inline_keyboard` literalnya sendiri. Jadi injeksi di sini otomatis
+        // hanya kena tombol AI, dan menu mesin tidak ikut ketularan tombol
+        // yang tak berarti bagi mereka.
+        //
+        // Kenapa BUKAN di dalam `buildInlineKeyboard`: hari ini hasilnya
+        // identik, tapi pemanggil kedua besok akan kena tanpa penulisnya
+        // sadar -- dan nama fungsi itu berarti "ubah rows jadi keyboard".
+        // Menambah tombol di dalamnya membuat namanya berbohong.
+        //
+        // Cabang `undefined` sengaja tidak disentuh: itu yang membuat jalur
+        // berkas tetap aman tanpa satu baris tambahan.
+        const replyMarkup = buttons
+          ? buildInlineKeyboard(withManualFallback(buttons))
+          : undefined;
 
         let sentCount = 0;
         for (let i = 0; i < parts.length; i++) {
