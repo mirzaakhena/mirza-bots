@@ -25,6 +25,12 @@ import { parsePayload, isStalePayload, STALE_PAYLOAD_MS } from "./inbox";
 import { describeDispatchFailure } from "./report";
 import { acquireWrapperLock, releaseWrapperLock } from "./lock";
 import {
+  killQuietly,
+  parseOwnerPid,
+  stepOwnerWatch,
+  type OwnerWatchState,
+} from "./shutdown";
+import {
   firstAttemptArgs,
   retryArgs,
   looksLikeTrustGate,
@@ -36,6 +42,13 @@ const SLASH_DIR = join(BOT_HOME, "slash");
 const LOCK_FILE = join(BOT_HOME, "wrapper.pid");
 const QUEUE_POLL_MS = 200;
 const INBOX_POLL_MS = 500;
+/**
+ * Seberapa sering wrapper memeriksa apakah pemiliknya masih ada. Dengan ambang
+ * dua kali meleset, terminal yang hilang terdeteksi dalam ~2 detik — cukup
+ * cepat untuk tidak meninggalkan sesi yatim, cukup lambat untuk tidak jadi
+ * beban.
+ */
+const OWNER_POLL_MS = 1_000;
 /** Sebanyak ini keluaran awal disimpan untuk mengenali gerbang trust. */
 const BOOT_SNIFF_BYTES = 8_000;
 
@@ -101,11 +114,25 @@ function attach(p: IPty): void {
       start(retryArgs(extraArgs));
       return;
     }
-    process.stdin.setRawMode?.(false);
-    process.stdin.pause();
-    releaseWrapperLock(LOCK_FILE, process.pid);
-    process.exit(exitCode ?? 0);
+    closeSession(exitCode ?? 0);
   });
+}
+
+/**
+ * Satu-satunya jalan keluar. Urutannya penting dan pernah salah:
+ *
+ * `setRawMode(false)` + `pause()` HARUS dilakukan, bukan kerapian. stdin yang
+ * masih raw menahan proses tetap hidup — terukur 2026-08-13: wrapper yang
+ * melewatkan langkah ini menjalankan seluruh sisa shutdown-nya (PTY mati, lock
+ * terlepas) lalu **tetap tidak keluar**. Gejalanya persis bug yang sedang
+ * diperbaiki, jadi mudah salah baca sebagai "watchdog tidak jalan".
+ */
+function closeSession(code: number): never {
+  process.stdin.setRawMode?.(false);
+  process.stdin.pause();
+  killQuietly(pty);
+  releaseWrapperLock(LOCK_FILE, process.pid);
+  process.exit(code);
 }
 
 function start(args: string[]): void {
@@ -128,13 +155,53 @@ process.stdout.on("resize", () =>
 
 // Lock harus terlepas juga saat wrapper dimatikan dari luar, bukan hanya saat
 // CC keluar sendiri -- kalau tidak, Ctrl+C meninggalkan folder terkunci.
+//
+// PTY-nya ikut dimatikan, dan itu tambahan 2026-08-13. Sebelumnya jalur mati
+// hanya satu arah: "CC keluar -> wrapper ikut keluar" (lihat p.onExit). Arah
+// sebaliknya tidak ada, jadi wrapper yang berhenti meninggalkan `claude.exe`
+// hidup tanpa siapa pun yang membacanya -- lengkap dengan MCP server-nya.
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.on(sig, () => {
-    releaseWrapperLock(LOCK_FILE, process.pid);
-    process.exit(0);
-  });
+  process.on(sig, () => closeSession(0));
 }
-process.on("exit", () => releaseWrapperLock(LOCK_FILE, process.pid));
+// Jaring terakhir untuk jalan keluar yang tidak lewat closeSession (mis.
+// exception yang tidak tertangkap). `process.exit()` sendiri tidak memanggil
+// ini dua kali secara berbahaya: kill dan release dua-duanya idempoten.
+process.on("exit", () => {
+  killQuietly(pty);
+  releaseWrapperLock(LOCK_FILE, process.pid);
+});
+
+// --- pemilik yang hilang ----------------------------------------------------
+// Windows tidak mengirim apa pun ke anak saat induknya mati (diukur; lihat
+// src/shutdown.ts). Jadi satu-satunya cara tahu adalah bertanya berkala.
+//
+// Hanya menyala kalau ada yang MENGAKU memiliki wrapper ini lewat
+// CC_WRAPPER_OWNER_PID. Tanpa itu wrapper berperilaku persis seperti dulu:
+// bot yang sengaja dilepas dari terminal tidak boleh bunuh diri hanya karena
+// tidak ada yang mengaku memilikinya.
+const ownerPid = parseOwnerPid(process.env.CC_WRAPPER_OWNER_PID, process.pid);
+if (ownerPid !== null) {
+  let ownerState: OwnerWatchState = { consecutiveMisses: 0 };
+  setInterval(() => {
+    let alive: boolean;
+    try {
+      // Sinyal 0 memeriksa keberadaan tanpa mengirim apa pun -- alat yang sama
+      // yang dipakai lock.ts untuk mengenali pemegang lock yang sudah mati.
+      process.kill(ownerPid, 0);
+      alive = true;
+    } catch {
+      alive = false;
+    }
+    const r = stepOwnerWatch(ownerState, alive);
+    ownerState = r.state;
+    if (!r.shutdown) return;
+    console.error(
+      `[cc-wrapper] pemilik (PID ${ownerPid}) sudah tidak ada — menutup sesi ` +
+        `Claude Code di ${BOT_HOME}.`
+    );
+    closeSession(0);
+  }, OWNER_POLL_MS);
+}
 
 // --- membaca folder slash ---------------------------------------------------
 // Polling, bukan fs.watch: liputan event "create" milik fs.watch di Windows

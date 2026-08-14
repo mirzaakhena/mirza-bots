@@ -56,15 +56,16 @@ polling, dan berkas setengah tertulis ditolak sebagai JSON rusak.
 | `src/inbox.ts` | Parsing payload `slash/` | ✅ |
 | `src/lock.ts` | Satu wrapper per folder | ✅ |
 | `src/startup.ts` | `--continue` + fallback, deteksi gerbang kepercayaan folder | ✅ |
+| `src/shutdown.ts` | Mengenali pemilik yang hilang, mematikan PTY tanpa melempar | ✅ |
 | `src/pty.ts` | **Satu-satunya** yang menyentuh `node-pty` | ❌ |
 | `src/main.ts` | Perakitan | ❌ |
 
 Pembagian itu bukan kerapian: `main.ts` men-spawn CC saat di-import, jadi apa
 pun yang ada di dalamnya tidak bisa dimuat di dalam test. Semua yang bisa
-diputuskan tanpa terminal diputuskan di modul murni — itu sebabnya 57 test
+diputuskan tanpa terminal diputuskan di modul murni — itu sebabnya 79 test
 berjalan tanpa satu pun terminal.
 
-## Tiga perilaku yang mungkin mengejutkan
+## Empat perilaku yang mungkin mengejutkan
 
 **1. Wrapper kedua di folder yang sama ditolak, bukan mengambil alih.**
 Kebalikan dari `cc-plugin/src/engine/lock.ts` yang membunuh pemegang lama.
@@ -87,9 +88,34 @@ keluar; wrapper menangkapnya dan spawn ulang tanpa flag itu. Syaratnya dua —
 keluar cepat **dan** pesan itu — supaya kegagalan lain (binary tidak ketemu,
 folder tidak ada) tidak tersembunyi di balik percobaan kedua.
 
+**4. Wrapper bisa menutup sesinya sendiri kalau "pemilik"-nya hilang.**
+Windows tidak mengirim apa pun ke anak saat induknya mati — tidak ada SIGHUP,
+dan stdin pun **tidak** tertutup (diukur; lihat [`PROBE.md`](./PROBE.md) §Probe
+ketiga). Akibatnya terminal yang crash meninggalkan `claude.exe` hidup selamanya,
+memegang lock folder yang tidak bisa dilihat siapa pun.
+
+Penawarnya: isi `CC_WRAPPER_OWNER_PID` dengan PID proses yang "memiliki" sesi
+ini. Wrapper memeriksanya tiap detik dan menutup sesi setelah **dua** pembacaan
+hilang berturut-turut (~2 detik) — diambangkan karena harga false positive di
+sini adalah sesi kerja user.
+
+```bash
+CC_WRAPPER_OWNER_PID=$$ npx tsx src/main.ts     # POSIX
+```
+```cmd
+rem Windows: mirza-bot.cmd mengisinya sendiri dengan shell pemanggil
+```
+
+**Tanpa variabel itu, fitur ini mati** — dan itu default yang disengaja: bot
+yang sengaja dilepas dari terminal tidak boleh bunuh diri hanya karena tidak ada
+yang mengaku memilikinya.
+
+Batasnya jujur: `taskkill /F` pada wrapper tidak menjalankan kode apa pun, jadi
+cucu-cucunya (MCP server) bisa tetap yatim. Jaminan penuh butuh Job Object.
+
 ## Test
 
 ```bash
-bun test              # 57 test
+bun test              # 79 test
 bun run typecheck     # tsc --noEmit
 ```

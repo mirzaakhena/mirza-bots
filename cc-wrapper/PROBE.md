@@ -156,3 +156,77 @@ npx tsx probe/trust-probe.ts "<folder-baru>" --continue --dangerously-skip-permi
 Probe tidak mencerminkan keluaran PTY ke stdout (menyimpang dari rencana):
 menjalankannya dari dalam sesi CC lain membuat escape sequence TUI membanjiri
 dan menutupi hasilnya. Ringkasan dicetak; aliran bersih disimpan ke berkas.
+
+---
+
+# Probe ketiga — proses yatim saat induknya hilang
+
+**Tanggal:** 2026-08-13 · **Berkas:** `probe/orphan-probe.ts`
+
+Terminal user crash, tapi seluruh pohon `mirza-bot` jalan terus: wrapper,
+`claude.exe`, dan MCP server-nya. Empat folder bot berakhir memegang sesi hidup
+yang tidak bisa dilihat siapa pun, dan `mirza-bot` menolak start di sana karena
+lock-nya — benar — masih dipegang yang hidup.
+
+Sebelum menulis penawarnya, satu hal harus diukur: **apakah ada sesuatu yang
+bisa didengarkan?** Tebakan pertama yang wajar adalah "stdin akan tertutup".
+
+## Hasil — tidak ada apa pun yang bisa didengarkan
+
+Induk dibunuh paksa (`Stop-Process -Force`, tanpa `-T`) pada detik ke-2:
+
+| Yang ditunggu | Terjadi? |
+|---|---|
+| `end` di stdin | ❌ tidak pernah |
+| `close` di stdin | ❌ tidak pernah |
+| `error` di stdin | ❌ tidak pernah |
+| `SIGHUP` / `SIGTERM` / `SIGINT` / `SIGBREAK` | ❌ tidak satu pun |
+| proses ikut mati | ❌ hidup terus sampai probe menyerah sendiri |
+| `process.kill(ppid, 0)` mengenali induk hilang | ✅ **ya, di tick berikutnya (<1 detik)** |
+
+Potongan lognya:
+
+```
+alive tick=4 ppid(24108)=hidup
+alive tick=5 ppid(24108)=MATI      <- induk dibunuh di antara tick 4 dan 5
+alive tick=14 ppid(24108)=MATI     <- masih hidup, tanpa satu pun event
+```
+
+## Keputusan
+
+> **"Dengarkan stdin" mati sebagai pendekatan.** Yang dipakai adalah
+> **bertanya berkala** dengan `process.kill(ownerPid, 0)` — alat yang sama yang
+> sudah dipakai `lock.ts` untuk mengenali pemegang lock yang mati.
+
+Diimplementasikan di `src/shutdown.ts` + watchdog di `main.ts`, menyala hanya
+kalau `CC_WRAPPER_OWNER_PID` diisi.
+
+## Temuan kedua — stdin raw menahan proses tetap hidup
+
+Saat menguji watchdog hidup-hidup, satu percobaan menjalankan **seluruh** jalur
+shutdown (PTY mati ✅, lock terlepas ✅) lalu **tetap tidak keluar**. Penyebabnya
+`process.stdin` yang masih raw dan belum di-`pause()`.
+
+Ini menipu: gejalanya identik dengan "watchdog tidak jalan", padahal watchdog-nya
+justru sudah selesai bekerja. Karena itu semua jalan keluar sekarang lewat satu
+fungsi `closeSession()` yang melepas stdin lebih dulu.
+
+## Yang TIDAK diselesaikan, supaya tidak disangka selesai
+
+`taskkill /F` pada wrapper tidak menjalankan kode apa pun, jadi tidak ada
+jaminan untuk kasus itu. Anak langsung PTY memang ikut mati saat ConPTY-nya
+tertutup (terlihat di uji), tapi **cucu** — `plane-mcp`, `playwright`, `bun` —
+tidak dijamin. Satu-satunya jaminan penuh di Windows adalah **Job Object**
+(`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`), dan itu butuh native binding.
+
+## Cara mengulang
+
+```powershell
+$log = "$env:TEMP\orphan-probe.log"
+$owner = Start-Process powershell -PassThru -ArgumentList @(
+  "-NoProfile","-NoExit","-Command","npx tsx probe/orphan-probe.ts '$log'")
+Start-Sleep -Seconds 3
+Stop-Process -Id $owner.Id -Force    # induk saja, TANPA -T
+Start-Sleep -Seconds 5
+Get-Content $log
+```

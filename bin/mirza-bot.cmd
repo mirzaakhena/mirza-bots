@@ -30,10 +30,43 @@ if /i "%~1"=="-u" (
   call claude plugin update cc-plugin@mirza-bots >nul 2>&1
 )
 
-for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "((ConvertFrom-Json (Get-Content -Raw '%INSTALLED%')).plugins.'cc-plugin@mirza-bots')[0].version"`) do set "VER=%%v"
+rem  Satu panggilan powershell, DUA jawaban — versi plugin lalu PID shell yang
+rem  memanggil kita. Digabung karena panggilan powershell-nya sendiri yang
+rem  mahal (~0,3 detik); memisahnya menggandakan biaya start demi satu angka.
+rem
+rem  Angka kedua itu dipakai cc-wrapper sebagai "pemilik": kalau shell ini
+rem  hilang, wrapper menutup sesi CC-nya. Tanpa itu, terminal yang mati
+rem  meninggalkan claude.exe hidup selamanya — Windows tidak mengirim apa pun
+rem  ke anak saat induknya mati (diukur, lihat cc-wrapper/src/shutdown.ts).
+rem
+rem  Naik rantai sambil MELEWATI cmd.exe, bukan naik sekian tingkat tetap.
+rem  Jumlah tingkatnya tidak tetap: `for /f` menyisipkan satu cmd.exe sendiri,
+rem  dan cmd.exe menjalankan .cmd di prosesnya sendiri kalau dipanggil dari
+rem  Command Prompt tapi TIDAK kalau dipanggil dari PowerShell. Diukur di sini
+rem  2026-08-13: powershell -> cmd(for) -> cmd(skrip ini) -> shell pemanggil.
+rem  Yang dicari adalah leluhur pertama yang bukan cmd.exe, karena cmd.exe di
+rem  rantai ini selalu perkakas, tidak pernah pemilik sesungguhnya.
+set "VER="
+set "OWNER="
+rem  Kedua nilai SELALU dicetak, walau kosong: kalau baris pertama hilang,
+rem  baris kedua naik jadi baris pertama dan PID pemilik terbaca sebagai versi.
+for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "$v=((ConvertFrom-Json (Get-Content -Raw '%INSTALLED%')).plugins.'cc-plugin@mirza-bots')[0].version; if (-not $v) { $v='?' }; $o=0; try { $id=(Get-CimInstance Win32_Process -Filter ('ProcessId='+$PID)).ParentProcessId; for ($i=0; $i -lt 8; $i++) { $p=Get-CimInstance Win32_Process -Filter ('ProcessId='+$id); if (-not $p) { break }; if ($p.Name -ne 'cmd.exe') { $o=$p.ProcessId; break }; $id=$p.ParentProcessId } } catch {}; if (-not $o) { $o=0 }; $v; $o"`) do (
+  if not defined VER (set "VER=%%v") else if not defined OWNER (set "OWNER=%%v")
+)
+
+rem  Yang diset dari luar menang: launcher atau penjadwal lebih tahu siapa
+rem  pemilik sesungguhnya daripada tebakan naik-dua-tingkat di atas.
+if not defined CC_WRAPPER_OWNER_PID (
+  if defined OWNER if not "%OWNER%"=="0" set "CC_WRAPPER_OWNER_PID=%OWNER%"
+)
 
 echo [mirza-bot] project   : %CLAUDE_PROJECT_DIR%
 echo [mirza-bot] cc-plugin : %VER%
+if defined CC_WRAPPER_OWNER_PID (
+  echo [mirza-bot] pemilik   : PID %CC_WRAPPER_OWNER_PID% ^(sesi ditutup kalau shell ini hilang^)
+) else (
+  echo [mirza-bot] pemilik   : tidak diketahui - sesi TIDAK ikut tertutup otomatis
+)
 
 pushd "%WRAPPER%"
 call npx tsx src/main.ts --dangerously-skip-permissions --dangerously-load-development-channels "plugin:cc-plugin@mirza-bots"
